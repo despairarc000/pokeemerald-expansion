@@ -1,7 +1,7 @@
 # Technical feasibility audit: initial repository inspection
 
-**Date:** 2026-11-04 (CI result added 2026-11-05)  
-**Status:** SOURCE-INSPECTED. CI BUILD AND TEST PASSED. ROM/MEMORY NUMBERS AND EMULATOR TEST STILL PENDING.  
+**Date:** 2026-11-04 (CI result and measurements added 2026-11-05)  
+**Status:** SOURCE-INSPECTED. CI BUILD AND TEST PASSED. ROM/RAM NUMBERS RECORDED. EMULATOR SMOKE TEST STILL PENDING.  
 **Baseline commit:** `173dd8b43b9c578c68792b3cab9ee6eae1c8587c`  
 **Scope:** Actual fork source and configuration; this is not a claim of functional living-world implementation.
 
@@ -10,7 +10,7 @@
 | Area | Evidence | Implication |
 |---|---|---|
 | Toolchain | `.github/workflows/build.yml` uses ARM GCC/binutils, Python, libpng and `make`; Emerald/FRLG/test jobs are defined | Build pipeline exists and ran (see Gate A result below) |
-| Species | `include/config/species_enabled.h`: `P_GEN_1_POKEMON` through `P_GEN_9_POKEMON` all `TRUE` | Broad generation support configured; exact species count/ROM fit not measured |
+| Species | `include/config/species_enabled.h`: `P_GEN_1_POKEMON` through `P_GEN_9_POKEMON` all `TRUE` | Broad generation support configured; exact species count not measured |
 | Visible Pokemon graphics | `include/config/overworld.h`: `OW_POKEMON_OBJECT_EVENTS TRUE` | Necessary sprite infrastructure enabled |
 | Generated overworld wild encounters | `include/config/wild_encounter.h`: `WE_OW_ENCOUNTERS FALSE` | Built-in encounter system exists but is currently off |
 | Vanilla random encounters | `WE_VANILLA_RANDOM TRUE` | Existing random encounters remain on |
@@ -36,32 +36,36 @@ GitHub Actions run `41925848317` on pull request #1 (head `65946109a93431eb324f7
 | docs_validate | success |
 | build | success |
 
-**Gate A is PARTIALLY met.** Compiles and the project's test job pass on the unchanged fork. Still **not recorded**:
+**Measured from the build-emerald linker output** (full table and analysis in `design/root/baseline-measurements.md`):
 
-- Final ROM size and linker memory usage (ROM, EWRAM, IWRAM). The check summary does not show them; they must be read from the job log or a map file.
-- An emulator smoke test (movement, an ordinary wild battle, save and reload).
+| Region | Used | % of region | Free |
+|---|---|---|---|
+| EWRAM | 226,420 B of 256 KB | 86.37% | 35,724 B |
+| IWRAM | 28,392 B of 32 KB | 86.65% | 4,376 B |
+| ROM | 26,752,416 B of 32 MB | 79.73% | 6,802,016 B |
 
-Gate A is complete only when those two items are recorded from real output.
+**Gate A is MOSTLY met.** The unchanged fork compiles, its tests pass, and ROM/RAM usage is recorded. The one item left is an **emulator smoke test** (movement, an ordinary wild battle, save and reload), which needs a run of the built ROM.
 
 ## Immediate engineering implications
 
-1. **Do not rewrite overworld encounters first.** Inspect `src/wild_encounter_ow.c`, enable `WE_OW_ENCOUNTERS` on a controlled test branch, and test sprite/VRAM behavior.
-2. **Retain traditional battle compatibility.** Verify generated overworld Pokemon initiate and return from battles correctly; then identify extension points for observing, feeding and identity reconciliation.
-3. **Measure rather than guess.** Collect linker ROM/EWRAM/IWRAM usage, object-event occupancy, and `sizeof` save structures.
-4. **Do not confuse feature flags with complete functionality.** Generation toggles and sprite infrastructure are evidence of available code paths, not proof of performance, content coverage or living-world AI.
-5. **Separate baseline from custom work.** Existing Expansion mechanics are foundation; independent ecology, tiered individual persistence, autonomous NPC lives and world simulation still need implementation.
+1. **RAM is the tight resource.** About 35 KB of EWRAM and 4 KB of IWRAM are free in the default configuration. Budget every runtime structure against that.
+2. **Do not rewrite overworld encounters first.** Inspect `src/wild_encounter_ow.c`, enable `WE_OW_ENCOUNTERS` on a controlled test branch, and test sprite/VRAM behavior.
+3. **Retain traditional battle compatibility.** Verify generated overworld Pokemon initiate and return from battles correctly; then identify extension points for observing, feeding and identity reconciliation.
+4. **Measure rather than guess.** Next measurements: `sizeof` save structures, object-event occupancy, and the effect of disabling unused features.
+5. **Do not confuse feature flags with complete functionality.** Generation toggles and sprite infrastructure are evidence of available code paths, not proof of performance, content coverage or living-world AI.
+6. **Separate baseline from custom work.** Existing Expansion mechanics are foundation; independent ecology, tiered individual persistence, autonomous NPC lives and world simulation still need implementation.
 
 ## Test sequence and acceptance
 
 ### Gate A: reproducible baseline
-- Compile unchanged fork with documented toolchain; record exact commit, flags, ROM size and linker memory usage. **CI compile and tests: done. ROM size and memory: pending.**
+- Compile unchanged fork; record commit, ROM size and linker memory usage. **Done (CI).**
 - Run smoke test in a GBA emulator, including movement, ordinary wild battle and save/load. **Pending.**
-- Record pass/fail and actual build log, not inferred success.
+- Record pass/fail from the real run, not inferred success.
 
 ### Gate B: existing OWE system
 - Enable `WE_OW_ENCOUNTERS` in an isolated branch; compare `OW_GFX_COMPRESS` settings.
 - Verify Pokemon appear, move, engage, flee and resolve a traditional battle without crashes.
-- Count simultaneous active objects, sprites and memory use; repeat across map transitions.
+- Count simultaneous active objects, sprites and memory use; repeat across map transitions, and compare against the baseline numbers above.
 
 ### Gate C: persistence
 - Measure `SaveBlock1`, `SaveBlock2`, `SaveBlock3`, `PokemonStorage` with concrete build settings.
@@ -75,11 +79,10 @@ Gate A is complete only when those two items are recorded from real output.
 
 ## Open blockers
 
-- ROM size and RAM/VRAM headroom not yet recorded.
 - No emulator smoke test yet.
 - Exact free save bytes unknown.
 - Max practical simultaneous wild/NPC objects unknown.
 - Real OWE battle lifecycle and integration seams not yet traced.
 - Species count and sprite asset completeness not yet verified.
 
-**Next action:** record ROM size and memory from the build log and run the emulator smoke test to close Gate A, then Gate B. Do not promise all 14 regions or the full ecosystem before those results exist.
+**Next action:** run the emulator smoke test to close Gate A, then start Gate B. Do not promise all 14 regions or the full ecosystem before those results exist.
