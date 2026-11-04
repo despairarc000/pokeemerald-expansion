@@ -26,6 +26,7 @@ Why this exists: many systems were marked locked before the baseline build ran a
 | Tiered persistence: notable individuals are tracked, ordinary populations are abstracted | `root/individual-persistence.md` |
 | Everyone eats. Hunger never kills permanently and never erases a save | `survival.md` |
 | Climbable ledges, Pokemon-assisted traversal, mounts with stamina, hazards as the balance (not artificial rarity) | `traversal.md`, `riding-and-mounts.md`, `hazards.md` |
+| Process: `STATUS.md` is the status source of truth; 20 speculative specs are archived off-limits via `AGENTS.md` | `AGENTS.md` |
 
 ## Proposed (needs measurement)
 
@@ -65,12 +66,21 @@ These were written as locked decisions. They are well specified, but they stack 
 
 ## Open
 
-- Free save bytes, RAM, VRAM and object limits (Gate A and C).
-- Individual record layout, population caps, day length.
+- ROM size, RAM, VRAM and object limits (Gate A, B, C).
+- Free save bytes, individual record layout, population caps, day length.
 - Which of the 13 non-Ur-Kalah regions have gyms.
 - Species and habitat tagging, map topology and layouts.
 - Free flight implementation and player-facing menus.
 
+## Gate progress
+
+| Gate | State |
+|---|---|
+| A: reproducible baseline | **Partial.** CI compile and test jobs pass on the unchanged fork (run `41925848317`, 2026-11-05). ROM size, linker memory and emulator smoke test still to record. |
+| B: existing overworld encounters | Not started |
+| C: persistence and save measurement | Not started |
+| D: Meadowmere vertical slice | Not started |
+
 ## Next action
 
-Gate A: compile the unchanged fork, record ROM size and linker memory usage, and smoke-test in an emulator. Then Gate B (overworld encounters). Do not build against any Proposed or Aspirational item before the gate it waits on passes.
+Close Gate A: read ROM size and memory usage from the build log (or map file) and run an emulator smoke test (movement, a wild battle, save and reload). Then Gate B. Do not build against any Proposed or Aspirational item before the gate it waits on passes.

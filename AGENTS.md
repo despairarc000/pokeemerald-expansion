@@ -37,8 +37,9 @@ Topic docs in `design/` (for example `ecosystem-simulation.md`, `living-npcs.md`
 
 1. **Never mark anything "locked"** or change its level in STATUS.md without an explicit decision from the project owner.
 2. **Measure before specifying.** No byte counts, population caps or performance claims without a measured build.
-3. **Do not change engine code** before Gate A (an unchanged compile with recorded ROM size and memory use) passes.
+3. **Do not change engine code** before Gate A (an unchanged compile with recorded ROM size and memory use, plus an emulator smoke test) is complete.
 4. **Report build state honestly.** Never say something builds or works unless it was actually run.
 5. **Work on a branch and open a pull request.** Do not commit directly to the default branch.
-6. **Keep one source of truth.** Update STATUS.md when status changes, and do not duplicate status lists elsewhere.
-7. **Build in phases.** Prove the first vertical slice (a compact Meadowmere) before expanding.
+6. **Pull requests go to this fork only.** The base repository must be `despairarc000/pokeemerald-expansion`, never `rh-hideout/pokeemerald-expansion`. GitHub defaults fork pull requests to the upstream project, so check the repository name at the top of the page before creating one. Never send design docs or AI-written content upstream.
+7. **Keep one source of truth.** Update STATUS.md when status changes, and do not duplicate status lists elsewhere.
+8. **Build in phases.** Prove the first vertical slice (a compact Meadowmere) before expanding.
