@@ -4,7 +4,7 @@ Instructions for AI agents and contributors working in this fork of `rh-hideout/
 
 ## Scope
 
-This fork is the base for a living-world Pokemon game. The `design/` folder holds the design docs. Engine code is unchanged from upstream until Gate A passes (see `design/technical-feasibility-audit.md`).
+This fork is the base for a living-world Pokemon game. The `design/` folder holds the design docs. Engine code is unchanged from upstream until Gate A is complete (see `design/technical-feasibility-audit.md`).
 
 ## Where to start
 
@@ -21,6 +21,7 @@ This fork is the base for a living-world Pokemon game. The `design/` folder hold
 - `world-clock.md`
 - `individual-persistence.md`
 - `save-budget.md`
+- `baseline-measurements.md`
 
 ## ARCHIVED specs in `design/root/` (do NOT read, cite or implement)
 
@@ -37,8 +38,9 @@ Topic docs in `design/` (for example `ecosystem-simulation.md`, `living-npcs.md`
 
 1. **Never mark anything "locked"** or change its level in STATUS.md without an explicit decision from the project owner.
 2. **Measure before specifying.** No byte counts, population caps or performance claims without a measured build.
-3. **Do not change engine code** before Gate A (an unchanged compile with recorded ROM size and memory use) passes.
+3. **Do not change engine code** before Gate A is complete (compile, recorded ROM and RAM use, emulator smoke test).
 4. **Report build state honestly.** Never say something builds or works unless it was actually run.
-5. **Work on a branch and open a pull request.** Do not commit directly to the default branch.
-6. **Keep one source of truth.** Update STATUS.md when status changes, and do not duplicate status lists elsewhere.
-7. **Build in phases.** Prove the first vertical slice (a compact Meadowmere) before expanding.
+5. **Documentation changes (`design/`, `AGENTS.md`) may be committed directly to `master`.** The project owner asked to avoid pull-request overhead for docs. **Changes to engine code, build files or workflows go on a branch** so they can be tested before they reach `master`.
+6. **If a pull request is ever opened, it goes to this fork only.** The base repository must be `despairarc000/pokeemerald-expansion`, never `rh-hideout/pokeemerald-expansion`. GitHub defaults fork pull requests to upstream, so check the repository name at the top of the page. Never send design docs or AI-written content upstream.
+7. **Keep one source of truth.** Update STATUS.md when status changes, and do not duplicate status lists elsewhere.
+8. **Build in phases.** Prove the first vertical slice (a compact Meadowmere) before expanding.

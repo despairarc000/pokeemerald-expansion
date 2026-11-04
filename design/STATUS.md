@@ -26,6 +26,7 @@ Why this exists: many systems were marked locked before the baseline build ran a
 | Tiered persistence: notable individuals are tracked, ordinary populations are abstracted | `root/individual-persistence.md` |
 | Everyone eats. Hunger never kills permanently and never erases a save | `survival.md` |
 | Climbable ledges, Pokemon-assisted traversal, mounts with stamina, hazards as the balance (not artificial rarity) | `traversal.md`, `riding-and-mounts.md`, `hazards.md` |
+| Process: `STATUS.md` is the status source of truth; 20 speculative specs are archived off-limits via `AGENTS.md` | `AGENTS.md` |
 
 ## Proposed (needs measurement)
 
@@ -35,7 +36,7 @@ Why this exists: many systems were marked locked before the baseline build ran a
 | Utility-based wild AI | `root/utility-ai.md` | Gate B |
 | Hybrid navigation for Pokemon | `root/hybrid-navigation.md` | Gate B |
 | Sensory perception for wild Pokemon (simple version first) | `root/multi-sensory-perception.md` | Gate B |
-| Off-screen scheduler, catch-up, adaptive priority | `root/offscreen-scheduler.md`, `root/hybrid-catchup.md`, `root/adaptive-scheduling.md` | Gates A and C |
+| Off-screen scheduler, catch-up, adaptive priority | `root/offscreen-scheduler.md`, `root/hybrid-catchup.md`, `root/adaptive-scheduling.md` | Gates B and C, and the RAM budget |
 | Population ecology: abstract births, decline, recovery | `root/population-ecology.md`, `root/hybrid-reproduction.md` | Gate C |
 | Ecological migration | `root/ecological-migration.md` | Map topology |
 | Shared NPC and Pokemon events | `root/shared-world-events.md` | Gate C |
@@ -61,16 +62,25 @@ Why this exists: many systems were marked locked before the baseline build ran a
 | NPC resource management | `root/npc-resource-management.md` |
 | Regional dynamic economy | `root/regional-dynamic-economy.md` |
 
-These were written as locked decisions. They are well specified, but they stack a lot of simulation on a GBA save and RAM budget that has not been measured.
+These were written as locked decisions. They are well specified, but they stack a lot of simulation on a GBA save and RAM budget. Measured baseline headroom (see `root/baseline-measurements.md`) is about 35 KB of EWRAM and 4 KB of IWRAM, which supports keeping them aspirational.
 
 ## Open
 
-- Free save bytes, RAM, VRAM and object limits (Gate A and C).
-- Individual record layout, population caps, day length.
+- Free save bytes (flash sectors), individual record layout, population caps, day length.
+- Object-event and sprite limits (Gate B).
 - Which of the 13 non-Ur-Kalah regions have gyms.
 - Species and habitat tagging, map topology and layouts.
 - Free flight implementation and player-facing menus.
 
+## Gate progress
+
+| Gate | State |
+|---|---|
+| A: reproducible baseline | **Mostly met.** CI compile and tests pass on the unchanged fork (run `41925848317`). Measured: EWRAM 226,420 B (86.37%), IWRAM 28,392 B (86.65%), ROM 26,752,416 B (79.73%). Emulator smoke test still to do. See `root/baseline-measurements.md`. |
+| B: existing overworld encounters | Not started |
+| C: persistence and save measurement | Not started |
+| D: Meadowmere vertical slice | Not started |
+
 ## Next action
 
-Gate A: compile the unchanged fork, record ROM size and linker memory usage, and smoke-test in an emulator. Then Gate B (overworld encounters). Do not build against any Proposed or Aspirational item before the gate it waits on passes.
+Close Gate A with an emulator smoke test (movement, a wild battle, save and reload) on the built ROM. Then Gate B. Do not build against any Proposed or Aspirational item before the gate it waits on passes.
