@@ -38,15 +38,17 @@
 - Gym leaders can simply be elsewhere. Nothing is scripted to wait for you.
 - The ecosystem, weather and time keep going whether or not you are watching.
 
-## Under those (the feature docs)
+## Design rules
 
-| Core line | Main feature docs |
-|---|---|
-| Not story locked | `regions.md`, `exploration.md`, `root/hybrid-world-geography.md` |
-| Not battle locked | `trainers-and-gyms.md`, `root/hybrid-wild-encounters.md`, `root/balanced-pokemon-sandbox.md`, `root/parallel-player-progression.md` |
-| Semi survival | `survival.md`, `danger-and-ecosystem.md`, `hazards.md` |
-| Explore free | `traversal.md`, `riding-and-mounts.md`, `exploration.md` |
-| Doesn't revolve around the player | `living-npcs.md`, `ecosystem-simulation.md`, `root/individual-persistence.md`, `root/world-clock.md` |
+1. **No respawn.** There is no game-over screen and no teleport back to safety. The world continues, and what happens to you has a cause in the world.
+2. **Direct predecessor.** Every outcome needs a cause that already exists in the world. Nothing happens because the game needs it to.
+3. **Version ladders.** Every feature is a ladder of versions (see `features/README.md`). Only the Next version is specified in detail, and later versions stay parked sketches. A feature that cannot name a core line waits.
+
+## Features
+
+Each feature has a version ladder in `features/`. See the index in `features/README.md`.
+
+Older detailed designs in `design/` are background, not commitments.
 
 ## Constraint
 
@@ -54,4 +56,4 @@ The real hardware leaves only about 35 KB of free EWRAM and 4 KB of IWRAM (see `
 
 ## Known reconciliation needed
 
-- `trainers-and-gyms.md` says trainers "may challenge" and can be declined. The core adds that a **minority are persistent battlers**. That doc should be updated to match.
+- `trainers-and-gyms.md` says trainers "may challenge" and can be declined. The core adds that a **minority are persistent battlers**. The ladder in `features/trainers.md` now carries this.
