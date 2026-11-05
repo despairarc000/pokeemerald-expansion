@@ -1,6 +1,6 @@
 # PLACES.md: where things are and how the workflow works
 
-For any AI or contributor joining this project. Read `AGENTS.md` first, then this file. Everything here was observed in the repository or the work sessions, not assumed. If something has changed, fix this file.
+For any AI or contributor joining this project. Start with `ONBOARDING.md`, then read this file. Everything here was observed in the repository or the work sessions, not assumed. If something has changed, fix this file.
 
 ## The setup in one paragraph
 
@@ -19,8 +19,11 @@ The project is a fork of `rh-hideout/pokeemerald-expansion` owned by `despairarc
 
 | Path | Contents |
 |---|---|
-| `AGENTS.md` | Rules and reading order for AI agents. Start here. |
+| `AGENTS.md` | Rules for AI agents. |
+| `ONBOARDING.md` | The session routine and how to use the diary. Start here. |
 | `PLACES.md` | This file. |
+| `OPERATING.md` | How the owner and AI work together. |
+| `diary/` | The project story in order, `diary01.md`, `diary02.md` and so on, 10 logs per page. Read the latest page. |
 | `features/` | **What is being built.** One version-ladder file per feature, plus `README.md` (method and index). |
 | `design/CORE.md` | The five-line core game and design rules. Everything serves it. |
 | `design/STATUS.md` | Status (Locked, Proposed, Aspirational, Open) of the older detailed designs, plus gate progress. |
@@ -43,7 +46,7 @@ The project is a fork of `rh-hideout/pokeemerald-expansion` owned by `despairarc
 
 | Change | How |
 |---|---|
-| Docs (`design/`, `features/`, `AGENTS.md`, `PLACES.md`) | Commit directly to `master`. |
+| Docs (`design/`, `features/`, `diary/`, root `.md` files) | Commit directly to `master`. |
 | Engine code, build files, workflows | Use a branch, let CI run, report the real result, and ask the owner before merging. |
 | Recording a measurement | Only copy numbers actually seen in a log. Mark anything else as unmeasured. |
 

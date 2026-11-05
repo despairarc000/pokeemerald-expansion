@@ -2,6 +2,8 @@
 
 The owner and the AI work as a pair. This file says who does what, how ideas become plans, how plans become documentation, and how documentation becomes code. The planning and documentation parts describe what we actually did. The **implementation part is a proposal**, because nothing has been implemented yet. Revise it after the first real implementation.
 
+The session routine (what to read, the diary) is in `ONBOARDING.md`.
+
 ## Roles
 
 | Owner | AI |
@@ -30,8 +32,8 @@ The owner and the AI work as a pair. This file says who does what, how ideas bec
 | How did an older design stand? | `design/STATUS.md` | Update when status changes |
 | What did we measure? | `design/root/baseline-measurements.md` and the audit | Only numbers actually seen in a log |
 | Where are things, how does setup work? | `PLACES.md` | Update when setup changes |
-| How do we work? | `OPERATING.md` | Update when the process changes |
-| What happened and what is open? | `LOG.md` | Add a dated line per session |
+| How do we work, what is the routine? | `OPERATING.md`, `ONBOARDING.md` | Update when the process changes |
+| What happened, in order, and what is open? | `diary/` (latest page) | Add a log for important moments, update State |
 
 How documentation gets updated:
 
@@ -55,24 +57,12 @@ Once it is, a version moves from Next to Current like this:
 5. **Measure again** and compare with the baseline: ROM, EWRAM and IWRAM before and after.
 6. **Owner verifies in play** on emulator or device. The AI cannot do this.
 7. **Definition of done:** it compiles, CI is green, the size change is recorded, the owner confirmed the behavior, the ladder is updated, and the core line is still served.
-8. **Owner marks it Current.** The AI then updates the ladder and `LOG.md`.
+8. **Owner marks it Current.** The AI then updates the ladder and adds a diary log.
 9. **If it breaks the budget or the core,** revert the branch and park the version with a note about why.
 
 **Merging a code branch** needs a GitHub pull request, because the connector can only merge through one. To keep overhead low, use one pull request per version, with the base repository set to `despairarc000/pokeemerald-expansion` and never upstream.
 
-## 4. Start and end of every session
-
-**Start**
-1. Read `design/CORE.md`, `PLACES.md`, this file, the `features/` index, and `LOG.md`.
-2. Look at the repo for changes since the last log entry.
-3. Tell the owner what you found and what is waiting on them, then proceed.
-
-**End**
-1. Update the ladders and any affected docs.
-2. Add a dated line to `LOG.md`: what changed, what is open, what is next.
-3. Give the owner a short summary in the chat.
-
-## 5. Decision authority
+## 4. Decision authority
 
 | Decision | Who |
 |---|---|
@@ -82,7 +72,7 @@ Once it is, a version moves from Next to Current like this:
 | Engine code changes | Owner approves before merge |
 | Recording a measurement | AI, from real output only |
 
-## 6. Honest limits
+## 5. Honest limits
 
 - The AI cannot run builds, emulators, or shell commands on the repo, and cannot read Actions job logs.
 - The owner relays logs and tests in play.
