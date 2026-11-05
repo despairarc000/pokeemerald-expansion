@@ -49,6 +49,7 @@ One-liners.
 |---|---|---|---|
 | [Fainting](fainting.md) | Semi survival | v1: no respawn, no game over | none |
 | [Wild Pokemon](wild-pokemon.md) | Not battle locked | v1: visible Pokemon, touch to battle | none |
+| [Rare finds](rare-finds.md) | Explore free | none promoted yet (all Parked) | none |
 | [Survival and hunger](survival-hunger.md) | Semi survival | v1: player hunger states and berries | none |
 | [Traversal](traversal.md) | Explore free | v1: climbable ledges | none |
 | [Notable Pokemon](notable-pokemon.md) | Doesn't revolve around the player | v1: one remembered individual | none |

@@ -29,15 +29,22 @@ The owner disliked pull requests for every docs change, so docs now go straight 
 ## Log 9: The routine can be corrected (2026-11-05)
 The owner added a rule: if an AI notices the onboarding routine does not match how we really work, it tells the owner first and fixes the process once they agree, so a wrong process is not passed on to future AIs. Added to `ONBOARDING.md` (section 4) and `AGENTS.md` (rule 11). It covers process files only. The core, ladders and locked decisions still need the owner's explicit decision.
 
-## State (as of log 9)
+## Log 10: World first, and rare finds (2026-11-05)
+The owner chose to work on the world first, starting at a high level. The AI sketched a world layout (8 walkable mainland regions, 3 sea regions, 2 layers above and below, and Ur-Kalah at the edge), still a sketch to be confirmed. Asked to estimate how 1,000+ species spread across rarity tiers, the AI proposed six tiers (Common to Unique, about 1,025 species, estimates only) and concluded no more regions are needed. The owner wants rare finds to feel like finding a shiny or an easter egg, not a guaranteed stop, so a new ladder, `features/rare-finds.md`, holds the rules: no guaranteed place or schedule, clues instead of markers, conditions caused by the world.
+
+## State (as of log 10)
 
 **Open**
 - Owner to confirm the world clock policy (in-game time only, no offline catch-up).
 - Emulator smoke test to close Gate A.
 - Confirm upstream pull request #11032 is closed.
+- Owner to confirm the world layout sketch, and how continuous the mainland is (walkable end to end, or broken by barriers).
+- Rarity tier numbers are AI estimates. The real species count and list are unchecked.
 - Decide which regions have gyms.
 - Ladder rows were drafted by the AI and need owner review.
 - `design/trainers-and-gyms.md` still needs the "minority are persistent battlers" line.
 
 **Next**
-- Review the feature ladders with the owner, then promote the first row to Next and specify only that.
+- Confirm the world layout, then write region profiles, starting with Meadowmere. Review the feature ladders and promote the first row to Next.
+
+_This page is full (logs 1 to 10). The next log goes on `diary02.md`, with this State block copied forward._
