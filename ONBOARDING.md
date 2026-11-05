@@ -54,6 +54,16 @@ The diary is the story of the project in order: a short summary of the important
 2. Add a diary log if something important happened, and refresh the State block.
 3. Give the owner a short summary: what changed, what is waiting on them, what is next.
 
+## 4. When the routine itself is wrong
+
+This routine describes how we actually work. If you notice that it does not match what we are really doing (a step nobody follows, a missing step, a rule that causes trouble), **do not keep following it blindly, and do not edit it silently.**
+
+1. **Tell the owner first.** Say in a few lines what does not match, and what you would change.
+2. **Change it once the owner agrees.** Then edit this file (or `OPERATING.md` or `PLACES.md`, if the process lives there).
+3. **Record it** as a diary log: what was wrong, and what changed.
+
+The point is that a wrong process gets fixed once, so future AIs do not inherit it. This applies to process files only. The core, the ladders and locked decisions still need the owner's explicit decision, as before.
+
 ## Quick checklist
 
 - Read the rules, the core, the places, the operating guide, and the latest diary page.
@@ -61,4 +71,5 @@ The diary is the story of the project in order: a short summary of the important
 - Only touch what is marked Next. Check what it requires.
 - Write decisions down in the right file in the same session.
 - Add a diary log for anything important, and update State.
+- If the routine does not match reality, tell the owner before changing it.
 - Report only what you actually checked.

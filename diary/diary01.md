@@ -26,7 +26,10 @@ The owner restated the core in five lines (not story locked, not battle locked, 
 ## Log 8: How we work (2026-11-05)
 The owner disliked pull requests for every docs change, so docs now go straight to `master` while code uses a branch. We added `PLACES.md` (where things are), `OPERATING.md` (how we work together), `ONBOARDING.md` (the session routine) and this diary, replacing the earlier `LOG.md`.
 
-## State (as of log 8)
+## Log 9: The routine can be corrected (2026-11-05)
+The owner added a rule: if an AI notices the onboarding routine does not match how we really work, it tells the owner first and fixes the process once they agree, so a wrong process is not passed on to future AIs. Added to `ONBOARDING.md` (section 4) and `AGENTS.md` (rule 11). It covers process files only. The core, ladders and locked decisions still need the owner's explicit decision.
+
+## State (as of log 9)
 
 **Open**
 - Owner to confirm the world clock policy (in-game time only, no offline catch-up).
