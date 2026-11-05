@@ -15,7 +15,8 @@
 
 - One-way ledge tiles become climbable in both directions, with a short animation.
 - Player only, no stamina, no Pokemon involvement.
-- Needs new tile behavior and a player state in the engine. Check against the RAM numbers first.
+- **Check what already exists first.** The engine defines ledge jump behaviors (`MB_JUMP_*`), `MB_ROCK_CLIMB`, `MB_ROCK_STAIRS` and `MB_LADDER` (see `include/constants/metatile_behaviors.h`). How they work in code has not been checked, so the amount of new engine work is unknown. It may be smaller than first assumed.
+- Check any change against the RAM numbers.
 
 ## Notes and parked ideas
 

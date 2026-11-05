@@ -30,14 +30,18 @@ The world should feel like the real world, not like a Pokemon-coded map. Terrain
 7. **Dead ends are fine.** Nothing exists only to guide the player.
 8. **Natural shapes.** Avoid grid-straight edges and symmetrical layouts where the tile grid allows.
 
-### Engine honesty (unmeasured)
+### What is map design and what is engine
 
-- Costs such as slow terrain, getting lost and stamina need terrain behaviors and the stamina system (see `features/traversal.md`). Until those exist, v1 uses plain impassable terrain only where physics demands it (sheer cliffs, deep water) and avoids artificial gates.
-- Tile-based maps limit how organic shapes can look. How far we can push this is untested.
+Most of this is **map design**, not engine work:
+
+- **Map design alone covers:** the shape of the land, winding trails, getting lost in a dense forest by layout, dead ends, wide open areas, where settlements sit, no artificial gates, and sheer cliffs or deep water as real obstacles.
+- **Engine work is only needed for "cost over time":** making a tile slow you down, tire you, or drain hunger. That depends on the stamina and hunger systems (`features/traversal.md`, `features/survival-hunger.md`), which are not built.
+- **The engine already defines many terrain behaviors.** `include/constants/metatile_behaviors.h` lists, among others, deep sand, ice, thin ice, cracked ice, muddy and bumpy slopes, slide tiles, water currents, fast water, waterfalls, ledge jumps, rock stairs, ladders and `MB_ROCK_CLIMB`. **What each one actually does in code has not been checked.**
+- So v1 can start with map design only. Cost (stamina, slowing) is added later as those systems arrive.
 
 ## Notes and parked ideas
 
 - 14 regions are planned (`design/regions.md`), but none are committed before v1 works.
 - ROM has about 6.5 MiB free, so every map and tileset needs budgeting. Replacing the existing Hoenn maps might free space, but that is not measured.
 - World layout sketch (not confirmed): 8 walkable mainland regions, 3 sea regions, 2 layers (Undervale below, Skyreach above), and Ur-Kalah at the far edge. See diary log 10.
-- Open: how continuous the mainland is, now answered in spirit: continuous, with natural barriers that cost something, not locks.
+- The mainland is continuous, with natural barriers that cost something, not locks.
