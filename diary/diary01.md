@@ -12,7 +12,7 @@ The owner set the direction: not a story-first game, no linear path, explore any
 Big ideas were added: every notable Pokemon is a specific individual that faints, recovers, grows and remembers (inspired by Rain World), everyone eats berries and food, NPCs live their own lives, ledges can be climbed, and Pokemon can be ridden on land, water and air. Danger comes from the world (storms, whirlpools, predators), not from artificial rarity.
 
 ## Log 4: Fresh world, all species (2026-11-04)
-We dropped the official regions and settled on 14 original ones: gentle Meadowmere as the start, Neonport as a hub, and the near-uncivilized Ur-Kalah. All 1,000+ species would come through `pokemon-expansion`, so we moved to a fork of `pokeemerald-expansion` and the design docs moved with us.
+We dropped the official regions and settled on 14 original ones: gentle Meadowmere as the start, Neonport as a hub, and the near-uncivilized Ur-Kalah. All 1,000+ species would come through the community `pokeemerald-expansion` project, so we moved to a fork of it and the design docs moved with us.
 
 ## Log 5: We over-specified, then cleaned up (2026-11-05)
 Problem: dozens of detailed specs had been marked "locked" before any build existed or any memory was measured, mostly written by the AI. An audit demoted them. We created `design/STATUS.md` as the single source of truth and marked 20 speculative specs as archived and off-limits in `AGENTS.md`. Mistake along the way: pull requests were opened against the public upstream project by accident. The fork-only rule was added.
