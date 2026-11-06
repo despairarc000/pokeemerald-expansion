@@ -4,6 +4,8 @@ A design brief for the region, written so another AI or artist can work from it 
 
 **Status:** a proposal by the AI author for the owner. Background design, not a commitment. Only a compact slice is built first (see `features/regions-and-exploration.md`).
 
+Detail below this level: `design/meadowmere-areas.md` (areas), `design/meadowmere-places.md` (places), `design/meadowmere-interiors.md` (interiors).
+
 **Lore is not in this brief.** The world's hidden history is kept separate and is not needed for visuals or layout. Do not invent lore. Small unexplained details are placed by the author later.
 
 ## In one sentence
@@ -100,7 +102,8 @@ Farmers, millers, orchard keepers, traders on the roads, children, a few travele
 
 - Target hardware: Game Boy Advance. 8x8 pixel tiles, 4 bits per pixel, 16-color palettes (15 plus transparent), 16x16 metatiles built from tiles.
 - The engine is pokeemerald-expansion. Maps are tile grids, authored as text in `custom_maps/` (format in `custom_maps/README.md`).
-- Only the existing Emerald tilesets can be used until new tilesets are made. Known tile ids come from `include/constants/metatile_labels.h`.
+- **New tiles are allowed and planned.** The owner's chosen tool will generate tile art. Existing Emerald tilesets can still be used where they fit. Known existing tile ids come from `include/constants/metatile_labels.h`.
+- **A tileset is more than a picture.** It needs the tile image (`tiles.png`), palettes, a metatile definition (`metatiles.bin`), and terrain behavior data (`metatile_attributes.bin`), plus registration in the tileset headers. The current text-map tool does **not** build tilesets yet. How new tilesets enter the build is an open problem (see below).
 - **Art must be original.** Do not copy sprites, tiles or maps from any Pokemon game.
 - Whatever is produced must be checked against these constraints and the real build before it is accepted. Nothing here has been tested with an outside tool yet.
 
@@ -112,4 +115,5 @@ Each area has a few small curiosities placed by the author. They are not listed 
 
 - Final names for places and areas.
 - Exact map count and sizes within the ROM and RAM budget (about 6.5 MiB ROM free, measured).
-- Which tilesets, existing or new, give the closest match to this look.
+- **How new tilesets get into the build.** The repo tools cannot write binary files, so generated images would have to be uploaded by the owner, and the metatile and attribute data would need a text-based authoring format and a converter, like the one used for maps.
+- The palette limit (16 colors per palette) shapes how rich the art can be. Not yet planned per area.
