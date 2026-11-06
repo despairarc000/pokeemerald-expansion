@@ -831,7 +831,7 @@ static bool8 IsCoordInIncomingConnectingMap(s32 coord, s32 srcMax, s32 destMax, 
     else
         max = srcMax;
 
-    if (min <= coord && coord <= max)
+    if (min <= coord && coord < max)
         return TRUE;
 
     return FALSE;
