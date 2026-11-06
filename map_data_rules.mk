@@ -1,5 +1,12 @@
 # Map JSON data
 
+# Custom text maps: build the map data from custom_maps/ before the map lists below are read.
+# See custom_maps/README.md
+CUSTOM_MAPS_BUILD := $(shell python3 tools/textmap/build_textmaps.py 1>&2)
+ifneq ($(.SHELLSTATUS),0)
+  $(error Failed to build custom text maps. See messages above)
+endif
+
 # Inputs
 MAPS_DIR = $(DATA_ASM_SUBDIR)/maps
 LAYOUTS_DIR = $(DATA_ASM_SUBDIR)/layouts
