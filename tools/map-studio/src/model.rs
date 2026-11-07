@@ -731,3 +731,28 @@ mod anchored_resize_tests {
         assert_eq!(ExpandDirection::LowerLeft.origin_at(p,3,4).unwrap(),GridPoint::new(18,30));
     }
 }
+
+#[cfg(test)]
+mod property_bit_tests {
+    use super::*;
+    #[test]
+    fn collision_and_elevation_edit_real_packed_cell_bits() {
+        let mut world=World::new();
+        world.add_map("A",GridPoint::new(0,0),5,5).unwrap();
+        let p=GridPoint::new(2,2);
+        assert!(!world.set_collision(p,1)); // Blank cells are not native map cells.
+        world.paint_metatile(p,0x0170);
+        for c in 0..4 {
+            assert!(world.set_collision(p,c) || c==0);
+            for e in [0u8,1u8,3u8,15u8] {
+                world.set_elevation(p,e);
+                let packed=world.maps[0].cell(2,2).unwrap().pack(0x0170);
+                assert_eq!((packed>>10)&3,u16::from(c));
+                assert_eq!((packed>>12)&15,u16::from(e));
+            }
+        }
+        world.paint_metatile(p,0x0001);
+        assert_eq!(world.maps[0].cell(2,2).unwrap().collision,3);
+        assert_eq!(world.maps[0].cell(2,2).unwrap().elevation,15);
+    }
+}
