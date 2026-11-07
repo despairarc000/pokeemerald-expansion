@@ -203,3 +203,46 @@ pan/pinch and tap after resizing; verify icons and event selection at zoom
 minimum; paint under an event; inspect collision/elevation at low zoom;
 verify source item graphics; check Bucket boundaries and Undo; ensure Find
 arrows scroll to real matches; check that older installations retain autosaves.
+
+## Guides Preview — zoom-relative overlays and compact map navigation
+
+Branch: `feature/map-studio-responsive-visibility-coordinate-ux`. This preview
+uses a separate Android package `dev.despairarc.mapstudio.guidepreview`;
+existing UX Fix/Spaces/Sheet Preview project data is **not shared automatically**.
+Back up or export the old project before changing apps. CI signing keys remain
+temporary; this branch's APK is a test build, not a persistent update channel.
+
+- The source-grid is drawn over the decoded metatiles, so map grids remain
+  visible during zoom-out instead of being covered by the terrain texture.
+- World/editor coordinate labels appear along the canvas top and left edges
+  without opaque backplates. They use a 1/2/5/10/20/50/100… UI-only interval
+  that adapts to zoom; (0,0) has a small outlined origin target. Source map
+  coordinates, exported layouts and Space offsets remain unchanged.
+- The minimum zoom is 2 points per metatile (previously 5). The chosen map
+  is identified in the header and gets a prominent blue/white outline.
+- NPCs and event icons again scale relative to their **map metatiles** instead
+  of using fixed screen dimensions. Event hit regions scale with the visuals
+  but have touch-friendly minimum dimensions.
+- Independent visibility toggles show/hide event sprites and collision/elevation
+  overlays regardless of editing mode. Event controls work **only in Events**,
+  tile property painting **only in Properties**, and terrain painting **only
+  in Terrain**. Turning overlays off also disables invisible event hitboxes.
+- At low zoom, property visuals use real per-cell collision/elevation tint and
+  grid strokes; fabricated floating color dots have been removed. Collisions
+  2 and 3, and elevation values 0–15, retain their source numeric meaning,
+  without invented names such as "Special", "All" or "High".
+- A quick drag in Events pans the canvas, including when a marker is at the
+  touch origin. Long-holding a marker still moves it, and long-holding a map
+  still moves the map. "Place" was a heading, not a tool; it now says "Add event".
+- "Open destination warp" switches Space if needed, identifies the linked
+  destination warp via native warp enumeration (or direct arrival coordinates),
+  selects the event or tile when possible, and centers the camera there.
+- The bottom panel's resize handle and **one grouped tileset selector** are
+  fixed; only its tool controls and metatile artwork scroll. Changing a
+  painted map's tileset still requires confirmation.
+- The five simplified event-authoring types and source attributes remain
+  the existing set; this iteration does not invent missing engine features.
+
+**Validation:** CI checks Android packaging, Rust tests and desktop compiling.
+Device acceptance still requires Samsung split-screen/freeform testing, since
+a build cannot demonstrate live touch correctness in a resized NativeActivity.
