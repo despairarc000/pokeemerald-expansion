@@ -1,6 +1,5 @@
+//! Engine-independent map geometry and actual numeric Emerald map cells.
 use serde::{Deserialize, Serialize};
-//! Engine-independent map geometry and provisional editor cells.
-//! The visual tile kinds are placeholders until the real Emerald tilesets are decoded.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GridPoint {

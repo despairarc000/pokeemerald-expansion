@@ -254,7 +254,7 @@ impl MapStudioApp {
     }
 
     fn fill_selected(&mut self) {
-        if let Some(map)=self.world.maps.iter_mut().find(|m|Some(m.id)==self.selected_map) {
+        if self.world.maps.iter().any(|m|Some(m.id)==self.selected_map) {
             let new=Cell {terrain:crate::model::TileKind::Grass,metatile_id:self.brush_id,
                 collision:0,elevation:3};
             let before=self.world.clone();
