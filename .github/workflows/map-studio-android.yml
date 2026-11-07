@@ -78,7 +78,14 @@ jobs:
               assert path.is_file(),path
               picture=Image.open(path).convert("RGBA")
               assert picture.size==(256,1024)
-              assert len(set(picture.getdata()))>30,(name,"unexpectedly blank")
+              # Palette-zero is transparent on every GBA BG layer. A
+              # correctly decoded atlas can have fewer opaque colors than
+              # the historical index-zero-as-paint rendering.
+              pixels=list(picture.getdata())
+              opaque=[pixel for pixel in pixels if pixel[3]>0]
+              assert len(opaque)>4000,(name,"missing source art")
+              assert len(set(opaque))>12,(name,"unexpectedly flat source art")
+              assert len(opaque)<len(pixels),(name,"lost metatile transparency")
               shutil.copy2(path,audit/name)
           sprites=list(catalog_file.parent.parent.glob("sprites/npc-previews.png"))
           assert sprites,"NPC sprites were not built"
