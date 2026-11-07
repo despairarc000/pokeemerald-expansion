@@ -404,24 +404,44 @@ impl World {
     pub fn link_warps(&mut self,source:(u32,usize),destination:(u32,usize),
         create_return:bool)->Result<(),String>{
         if source==destination {return Err("Choose a different destination warp".into());}
-        let target=self.event(destination.0,destination.1)
-            .ok_or("Destination event does not exist")?;
+        let target=self.event(destination.0,destination.1).ok_or("Destination event missing")?;
         if target.kind!=EventKind::Warp || target.warp_mode==WarpMode::Direct {
             return Err("Select a numbered destination warp".into());
         }
-        let target_id=self.warp_id(destination.0,destination.1)
-            .ok_or("Destination warp has no ID")?;
-        let source_id=if create_return {
-            self.warp_id(source.0,source.1).ok_or("Source needs a numbered warp")?
-        }else{0};
-        let src=self.event_mut(source.0,source.1).ok_or("Source event missing")?;
-        if src.kind!=EventKind::Warp {return Err("Selected source is not a warp".into());}
+        let source_event=self.event(source.0,source.1).ok_or("Source event missing")?;
+        if source_event.kind!=EventKind::Warp || source_event.arrival_only {
+            return Err("Choose an editable source warp".into());
+        }
+        let is_direct=source_event.warp_mode==WarpMode::Direct;
+        let source_id=if is_direct {
+            let map=self.maps.iter().find(|m|m.id==source.0).ok_or("Source map missing")?;
+            u8::try_from(map.events[..source.1].iter().filter(|e|
+                e.kind==EventKind::Warp && e.warp_mode!=WarpMode::Direct).count())
+                .map_err(|_|"Too many warp IDs")?
+        }else{self.warp_id(source.0,source.1).ok_or("Source warp has no ID")?};
+        let mut target_id=self.warp_id(destination.0,destination.1)
+            .ok_or("Destination has no native warp ID")?;
+        if is_direct {
+            // Inserting a new native warp shifts all following native IDs.
+            for map in &mut self.maps {for e in &mut map.events {
+                if e.kind==EventKind::Warp && e.warp_mode==WarpMode::Linked
+                    && e.dest_map_id==source.0 && e.dest_warp_id>=source_id {
+                    e.dest_warp_id=e.dest_warp_id.checked_add(1)
+                        .ok_or("Warp index limit reached")?;
+                }
+            }}
+            if destination.0==source.0 && target_id>=source_id {
+                target_id=target_id.checked_add(1).ok_or("Warp index limit reached")?;
+            }
+        }
+        let src=self.event_mut(source.0,source.1).ok_or("Source warp missing")?;
         src.warp_mode=WarpMode::Linked;
         src.arrival_only=false;
         src.dest_map_id=destination.0;
         src.dest_warp_id=target_id;
         if create_return {
-            let dest=self.event_mut(destination.0,destination.1).ok_or("Destination missing")?;
+            let dest=self.event_mut(destination.0,destination.1)
+                .ok_or("Destination warp missing")?;
             dest.warp_mode=WarpMode::Linked;
             dest.arrival_only=false;
             dest.dest_map_id=source.0;
@@ -470,13 +490,33 @@ impl World {
         let map_id=target.id;
         let x=(i64::from(p.x)-i64::from(target.origin.x)) as u32;
         let y=(i64::from(p.y)-i64::from(target.origin.y)) as u32;
-        let src=self.event_mut(source.0,source.1).ok_or("Warp source missing")?;
-        if src.kind!=EventKind::Warp {return Err("Source must be a warp".into());}
-        src.warp_mode=WarpMode::Direct;
-        src.arrival_only=false;
-        src.dest_map_id=map_id;
-        src.dest_x=x;
-        src.dest_y=y;
+        let src=self.event(source.0,source.1).ok_or("Warp source missing")?;
+        if src.kind!=EventKind::Warp || src.arrival_only {
+            return Err("Choose a configurable warp source".into());
+        }
+        if src.warp_mode!=WarpMode::Direct {
+            let native_id=self.warp_id(source.0,source.1)
+                .ok_or("Source has no native warp ID")?;
+            if self.maps.iter().any(|m|m.events.iter().enumerate().any(|(i,e)|
+                (m.id!=source.0 || i!=source.1) &&
+                e.kind==EventKind::Warp && e.warp_mode==WarpMode::Linked &&
+                !e.arrival_only && e.dest_map_id==source.0 && e.dest_warp_id==native_id
+            )) {
+                return Err("Other warps arrive here; unlink them first".into());
+            }
+            for m in &mut self.maps {for e in &mut m.events {
+                if e.kind==EventKind::Warp && e.warp_mode==WarpMode::Linked &&
+                    e.dest_map_id==source.0 && e.dest_warp_id>native_id {
+                    e.dest_warp_id-=1;
+                }
+            }}
+        }
+        let e=self.event_mut(source.0,source.1).ok_or("Source disappeared")?;
+        e.warp_mode=WarpMode::Direct;
+        e.arrival_only=false;
+        e.dest_map_id=map_id;
+        e.dest_x=x;
+        e.dest_y=y;
         Ok(())
     }
 
@@ -1069,5 +1109,36 @@ mod warp_link_tests {
         assert!(w.move_event(a.0,a.1,GridPoint::new(11,1)).is_err());
         w.move_event(a.0,a.1,GridPoint::new(3,3)).unwrap();
         assert_eq!(w.event(a.0,a.1).unwrap().x,3);
+    }
+}
+
+#[cfg(test)]
+mod warp_conversion_tests {
+    use super::*;
+    #[test]
+    fn direct_warp_can_be_relinked_with_return(){
+        let mut w=World::new();
+        w.add_map("A",GridPoint::new(0,0),5,5).unwrap();
+        w.add_map("B",GridPoint::new(10,0),5,5).unwrap();
+        for map in &mut w.maps {map.cells.fill(Some(Cell::new(TileKind::Grass)));}
+        let source=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        let target=w.add_event(GridPoint::new(11,1),EventKind::Warp).unwrap();
+        w.set_direct_arrival(source,GridPoint::new(12,2)).unwrap();
+        assert_eq!(w.warp_id(source.0,source.1),None);
+        w.link_warps(source,target,true).unwrap();
+        assert_eq!(w.warp_id(source.0,source.1),Some(0));
+        assert_eq!(w.event(target.0,target.1).unwrap().dest_map_id,source.0);
+    }
+    #[test]
+    fn inbound_warps_prevent_removal_of_target(){
+        let mut w=World::new();
+        w.add_map("A",GridPoint::new(0,0),5,5).unwrap();
+        w.add_map("B",GridPoint::new(10,0),5,5).unwrap();
+        let source=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        let target=w.add_event(GridPoint::new(11,1),EventKind::Warp).unwrap();
+        w.link_warps(source,target,false).unwrap();
+        assert!(!w.remove_event(target.0,target.1));
+        assert!(w.remove_event(source.0,source.1));
+        assert!(w.remove_event(target.0,target.1));
     }
 }
