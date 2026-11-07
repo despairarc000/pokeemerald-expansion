@@ -77,6 +77,7 @@ pub struct MapStudioApp {
     zoom: f32,
     offset: Vec2,
     canvas_size: Vec2,
+    last_window_size:Vec2,
     multitouch_in_progress: bool,
     selected_map: Option<u32>,
     selected_cell: Option<GridPoint>,
@@ -177,6 +178,7 @@ impl MapStudioApp {
             zoom: 14.0,
             offset: vec2(28.0, 52.0),
             canvas_size: vec2(360.0,540.0),
+            last_window_size:Vec2::ZERO,
             multitouch_in_progress: false,
             selected_map: None,
             selected_cell: None,
@@ -190,9 +192,11 @@ impl MapStudioApp {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(5.0);
+        let compact=ui.ctx().content_rect().height()<530.0
+            || ui.available_width()<300.0;
+        ui.add_space(if compact{1.0}else{5.0});
         ui.horizontal(|ui| {
-            ui.heading("Map Studio");
+            if compact{ui.strong("Map Studio");}else{ui.heading("Map Studio");}
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("Project",|ui| {
                     if ui.button("New blank project").clicked() {
@@ -213,8 +217,8 @@ impl MapStudioApp {
                         ui.close();
                     }
                 });
-                if ui.small_button("Redo").clicked() { self.redo(); }
-                if ui.small_button("Undo").clicked() { self.undo(); }
+                if ui.small_button(if compact{"↷"}else{"Redo"}).clicked() { self.redo(); }
+                if ui.small_button(if compact{"↶"}else{"Undo"}).clicked() { self.undo(); }
             });
         });
         ui.horizontal(|ui| {
@@ -230,6 +234,30 @@ impl MapStudioApp {
                 self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
             }
         });
+        if compact{
+            ui.horizontal_wrapped(|ui|{
+                let current=self.world.active_space().name.clone();
+                ui.menu_button(format!("Space: {current}"),|ui|{
+                    let entries:Vec<_>=self.world.spaces.iter()
+                        .map(|sp|(sp.id,sp.name.clone())).collect();
+                    for (space_id,name) in entries{
+                        if ui.button(name).clicked(){
+                            self.switch_space(space_id);ui.close();
+                        }
+                    }
+                    ui.separator();
+                    for kind in [SpaceKind::Interior,SpaceKind::Cave,SpaceKind::Other]{
+                        if ui.button(format!("+ {}",kind.label())).clicked(){
+                            self.create_editor_space(kind);ui.close();
+                        }
+                    }
+                });
+                if ui.small_button("Fit").clicked(){self.fit_world();}
+                if ui.add_enabled(self.selected_map.is_some(),
+                    egui::Button::new("Size")).clicked(){self.size_panel_open=true;}
+            });
+            return;
+        }
         // Spaces are editor-only; maps retain native map-local coordinates.
         let current=self.world.active_space();
         let space_label=current.name.clone();
@@ -2155,7 +2183,7 @@ impl MapStudioApp {
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
-        let size = ui.available_size();
+        let size = ui.available_size().max(vec2(8.0,8.0));
         self.canvas_size=size;
         let (rect,response) = ui.allocate_exact_size(size,Sense::click_and_drag());
         self.handle_canvas_input(ui,rect,&response);
@@ -2166,15 +2194,26 @@ impl MapStudioApp {
 
 impl eframe::App for MapStudioApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Android status/navigation-bar insets will be revisited after real-device testing.
+        let window=root.ctx().content_rect().size();
+        if (window-self.last_window_size).length()>2.0 {
+            // A resized native activity must never keep a half-completed
+            // gesture from before Android split/freeform-window changes.
+            self.gesture=CanvasGesture::Idle;
+            self.multitouch_in_progress=false;
+            self.last_window_size=window;
+            root.ctx().request_repaint();
+        }
         #[cfg(target_os = "android")]
-        egui::Panel::top("status_inset").show(root,|ui| { ui.add_space(28.0); });
-
+        if window.y>580.0 {
+            egui::Panel::top("status_inset")
+                .show(root,|ui| { ui.add_space(12.0); });
+        }
         egui::Panel::top("header").show(root,|ui|self.header(ui));
         self.ensure_atlas_cache(root.ctx());
-        let viewport=root.available_height();
-        let minimum=112.0f32.min((viewport*0.40).max(70.0));
-        let maximum=(viewport*0.70).max(minimum+18.0);
+        let viewport=root.available_height().max(48.0);
+        // Leave meaningful canvas space in short split-screen windows.
+        let minimum=(viewport*0.19).clamp(36.0,86.0);
+        let maximum=(viewport*0.55).max(minimum);
         self.panel_height=self.panel_height.clamp(minimum,maximum);
         egui::Panel::bottom("palette")
             .resizable(false).exact_size(self.panel_height)
