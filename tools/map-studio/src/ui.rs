@@ -46,6 +46,10 @@ pub struct MapStudioApp {
     selected_cell: Option<GridPoint>,
     confirm_delete: Option<u32>,
     message: String,
+    project_restore_open: bool,
+    available_backups: Vec<(String,String)>,
+    selected_backup: Option<String>,
+    new_project_confirm: bool,
 }
 
 impl MapStudioApp {
@@ -117,6 +121,10 @@ impl MapStudioApp {
             selected_cell: None,
             confirm_delete: None,
             message,
+            project_restore_open: false,
+            available_backups: Vec::new(),
+            selected_backup: None,
+            new_project_confirm: false,
         }
     }
 
@@ -125,8 +133,25 @@ impl MapStudioApp {
         ui.horizontal(|ui| {
             ui.heading("Map Studio");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("Export").clicked() { self.try_export(); }
-                if ui.small_button("Backup").clicked() { self.try_backup(); }
+                ui.menu_button("Project",|ui| {
+                    if ui.button("New blank project").clicked() {
+                        self.new_project_confirm=true;
+                        ui.close();
+                    }
+                    if ui.button("Backup to Downloads").clicked() {
+                        self.try_backup();
+                        ui.close();
+                    }
+                    if ui.button("Restore backup").clicked() {
+                        self.open_backup_list();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Export game maps").clicked() {
+                        self.try_export();
+                        ui.close();
+                    }
+                });
                 if ui.small_button("Redo").clicked() { self.redo(); }
                 if ui.small_button("Undo").clicked() { self.undo(); }
             });
@@ -589,6 +614,163 @@ impl MapStudioApp {
         }
     }
 
+    fn load_restore_choices(&self)->Result<Vec<(String,String)>,String>{
+        let mut items=Vec::new();
+        if let Ok(dir)=self.output_dir(){
+            if dir.is_dir() {
+                for entry in std::fs::read_dir(&dir).map_err(|e|e.to_string())? {
+                    let entry=entry.map_err(|e|e.to_string())?;
+                    let file=entry.file_name().to_string_lossy().to_string();
+                    if (file.starts_with("MapStudio-project-")
+                        || file.starts_with("MapStudio-recovery-"))
+                        && file.ends_with(".json") && entry.path().is_file(){
+                        items.push((format!("local:{file}"),format!("{file} (local recovery)")));
+                    }
+                }
+            }
+        }
+        #[cfg(target_os="android")]
+        {
+            for entry in crate::android_export::list_backups()? {
+                items.push((format!("android:{}",entry.id),entry.name));
+            }
+        }
+        items.sort_by(|a,b|b.1.cmp(&a.1));
+        items.truncate(80);
+        Ok(items)
+    }
+
+    fn open_backup_list(&mut self) {
+        match self.load_restore_choices() {
+            Ok(items)=>{
+                self.available_backups=items;
+                self.selected_backup=None;
+                self.project_restore_open=true;
+                self.message="Select a backup. Your current work will be preserved first.".into();
+            }
+            Err(err)=>self.message=format!("Cannot browse backups: {err}"),
+        }
+    }
+
+    fn read_restore_entry(&self,id:&str)->Result<Vec<u8>,String> {
+        if let Some(filename)=id.strip_prefix("local:") {
+            if !filename.starts_with("MapStudio-") || !filename.ends_with(".json")
+                || filename.contains('/') || filename.contains('\\') {
+                return Err("Invalid backup file name".into());
+            }
+            let path=self.output_dir()?.join(filename);
+            let metadata=std::fs::metadata(&path).map_err(|e|e.to_string())?;
+            if metadata.len()>(storage::MAX_PROJECT_BYTES as u64) {
+                return Err("Project exceeds the 20 MiB import safety limit".into());
+            }
+            return std::fs::read(path).map_err(|e|e.to_string());
+        }
+        #[cfg(target_os="android")]
+        if let Some(number)=id.strip_prefix("android:") {
+            let id=number.parse::<i64>().map_err(|_|"Invalid Android backup ID")?;
+            return crate::android_export::read_backup(id);
+        }
+        Err("Unsupported backup source".into())
+    }
+
+    fn install_world(&mut self,incoming:World)->Result<(),String> {
+        incoming.check_integrity()?;
+        let path=self.save_path.clone().ok_or(
+            "Project autosave unavailable: don't risk replacing the current work")?;
+        let output_dir=self.output_dir()?;
+        std::fs::create_dir_all(&output_dir).map_err(|e|e.to_string())?;
+        // The recovery file is written first and is never deleted by the restore.
+        let recovery_name=Self::filename("recovery","json");
+        storage::save(&output_dir.join(&recovery_name),&self.world)?;
+        storage::save(&path,&incoming)?;
+        self.world=incoming;
+        self.dirty_since=None;
+        self.history.clear();
+        self.redo.clear();
+        self.before_gesture=None;
+        self.selected_map=None;
+        self.selected_event=None;
+        self.selected_cell=None;
+        self.event_editor_open=false;
+        self.confirm_delete=None;
+        self.size_panel_open=false;
+        self.frame_tool=false;
+        self.move_tool=false;
+        self.pan_tool=false;
+        self.fit_world();
+        self.message=format!("Project opened. Previous work saved as {recovery_name}");
+        Ok(())
+    }
+
+    fn restore_selected_backup(&mut self) {
+        let result=(||->Result<(),String>{
+            let key=self.selected_backup.as_deref().ok_or("Select a backup first")?;
+            let bytes=self.read_restore_entry(key)?;
+            // Validate untrusted media before writing a recovery snapshot or active save.
+            let world=storage::decode(&bytes)?;
+            self.install_world(world)
+        })();
+        if let Err(err)=result{self.message=format!("Restore failed: {err}");}
+        else {
+            self.project_restore_open=false;
+            self.selected_backup=None;
+        }
+    }
+
+    fn start_new_project(&mut self){
+        match self.install_world(World::new()){
+            Ok(())=>self.message="New blank project created. Recovery copy saved.".into(),
+            Err(err)=>self.message=format!("New project blocked: {err}"),
+        }
+        self.new_project_confirm=false;
+    }
+
+    fn project_dialogs(&mut self,ctx:&egui::Context) {
+        if self.new_project_confirm {
+            let mut open=true;
+            egui::Window::new("New project")
+                .collapsible(false).resizable(false).open(&mut open)
+                .anchor(Align2::CENTER_CENTER,[0.0,0.0])
+                .show(ctx,|ui|{
+                    ui.label("Create a blank canvas? A recovery copy is saved first.");
+                    ui.horizontal(|ui|{
+                        if ui.button("Create new").clicked(){self.start_new_project();}
+                        if ui.button("Cancel").clicked(){self.new_project_confirm=false;}
+                    });
+                });
+            if !open {self.new_project_confirm=false;}
+        }
+        if self.project_restore_open {
+            let mut open=true;
+            egui::Window::new("Restore project backup")
+                .collapsible(false).resizable(true)
+                .default_width(310.0).open(&mut open)
+                .anchor(Align2::CENTER_CENTER,[0.0,0.0])
+                .show(ctx,|ui|{
+                    ui.small("Only readable Map Studio backups are shown. Current work is backed up before replacement.");
+                    if self.available_backups.is_empty(){
+                        ui.label("No backups in this app's Downloads/MapStudio or local recovery folder.");
+                    } else {
+                        egui::ScrollArea::vertical().max_height(190.0).show(ui,|ui|{
+                            for (id,name) in &self.available_backups {
+                                ui.selectable_value(&mut self.selected_backup,Some(id.clone()),name);
+                            }
+                        });
+                    }
+                    ui.horizontal(|ui|{
+                        if ui.add_enabled(self.selected_backup.is_some(),
+                            egui::Button::new("Restore selected")).clicked() {
+                            self.restore_selected_backup();
+                        }
+                        if ui.button("Cancel").clicked(){
+                            self.project_restore_open=false;
+                        }
+                    });
+                });
+            if !open {self.project_restore_open=false;}
+        }
+    }
+
     fn output_dir(&self) -> Result<PathBuf,String> {
         self.export_dir.clone().or_else(||self.save_path.as_ref()
             .and_then(|p|p.parent().map(|p|p.to_path_buf())))
@@ -974,6 +1156,7 @@ impl eframe::App for MapStudioApp {
         egui::Panel::bottom("palette").show(root,|ui|self.palette(ui));
         egui::CentralPanel::default().show(root,|ui|self.canvas(ui));
         self.size_dialog(root.ctx());
+        self.project_dialogs(root.ctx());
         self.maybe_autosave(root.ctx());
     }
 }
