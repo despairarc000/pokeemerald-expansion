@@ -12,6 +12,7 @@ on:
       - feature/map-studio-v0-14-artwork-dropdowns
       - feature/map-studio-v0-15-tileset-confirm-dock
       - feature/map-studio-v0-16-editor-controls-io-audit
+      - feature/map-studio-v0-17-artwork-library
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'

@@ -156,7 +156,8 @@ pub fn list_backups()->Result<Vec<BackupEntry>,String> {
                 let name:String=env.get_string(&JString::from(label))?.into();
                 if (name.starts_with("MapStudio-project-") && name.ends_with(".json"))
                     || (name.starts_with("MapStudio-maps-") && name.ends_with(".zip"))
-                    || (name.starts_with("MapStudio-editable-") && name.ends_with(".zip")) {
+                    || (name.starts_with("MapStudio-editable-") && name.ends_with(".zip"))
+                    || (name.starts_with("MapStudio-artwork-") && name.ends_with(".zip")) {
                     out.push(BackupEntry{id,name});
                 }
                 if out.len()>=80 {break;}
@@ -200,7 +201,7 @@ pub fn read_backup(id:i64)->Result<Vec<u8>,String> {
                     &[JValue::Object(buffer.as_ref())])?.i()?;
                 if count<0 {break;}
                 if count==0 {continue;}
-                if data.len().saturating_add(count as usize)>crate::storage::MAX_PROJECT_BYTES {
+                if data.len().saturating_add(count as usize)>crate::artwork::MAX_PACKAGE_BYTES {
                     return Err(jni::errors::Error::NullPtr("Project backup is too large"));
                 }
                 env.get_byte_array_region(&buffer,0,&mut chunk[..count as usize])?;
