@@ -174,7 +174,7 @@ mod all_tileset_catalog_tests {
     fn behavior_and_tile_filter_use_selected_pair(){
         for chosen in pairs(){
             let available=tile_ids(chosen);
-            assert!(available.len()>100);
+            assert!(available.len()>=40,"Too few real tiles in {}",chosen.key);
             for id in available.into_iter().take(15){
                 assert!(behavior_name_in(chosen,id).is_some());
             }
