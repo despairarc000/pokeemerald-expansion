@@ -1360,19 +1360,35 @@ impl MapStudioApp {
                 }
             }
             if s >= 9.0 {
-                for event in &map.events {
+                for (event_index,event) in map.events.iter().enumerate() {
                     let center=self.screen_at(rect,
                         map.origin.x as f32+event.x as f32+0.5,
                         map.origin.y as f32+event.y as f32+0.5);
-                    let (symbol,color)=match event.kind {
-                        EventKind::Npc=>("N",Color32::from_rgb(121,82,193)),
-                        EventKind::Sign=>("S",Color32::from_rgb(179,124,48)),
-                        EventKind::Warp=>("W",Color32::from_rgb(55,128,203)),
-                        EventKind::Trigger=>("T",Color32::from_rgb(187,65,103)),
+                    let (symbol,color):(String,Color32)=match event.kind {
+                        EventKind::Npc=>("N".into(),Color32::from_rgb(121,82,193)),
+                        EventKind::Sign=>("S".into(),Color32::from_rgb(179,124,48)),
+                        EventKind::Trigger=>("!".into(),Color32::from_rgb(187,65,103)),
+                        EventKind::HiddenItem=>("?".into(),Color32::from_rgb(132,101,52)),
+                        EventKind::Warp=>{
+                            let label=if event.arrival_only {
+                                format!("A{}",self.world.warp_id(map.id,event_index)
+                                    .map(|id|id.to_string()).unwrap_or_else(||"?".into()))
+                            }else if event.warp_mode==WarpMode::Direct {
+                                "↗".into()
+                            }else if event.dest_map_id==0 {
+                                "?".into()
+                            }else{format!("→{}",event.dest_warp_id)};
+                            (label,Color32::from_rgb(55,128,203))
+                        }
                     };
-                    painter.circle_filled(center,(s*0.39).clamp(4.0,10.0),color);
+                    let radius=(s*0.44).clamp(5.0,13.0);
+                    painter.circle_filled(center,radius,color);
+                    if self.selected_event==Some((map.id,event_index)) {
+                        painter.circle_stroke(center,radius+1.0,
+                            Stroke::new(2.1,Color32::from_rgb(14,39,84)));
+                    }
                     painter.text(center,Align2::CENTER_CENTER,symbol,
-                        FontId::proportional(10.0),Color32::WHITE);
+                        FontId::proportional((s*0.50).clamp(8.0,13.0)),Color32::WHITE);
                 }
                 for marker in &map.markers {
                     let center = self.screen_at(rect,
@@ -1384,6 +1400,34 @@ impl MapStudioApp {
             }
             painter.text(top_left + vec2(5.0,5.0),Align2::LEFT_TOP,&map.name,
                 FontId::proportional(11.0),Color32::from_black_alpha(if is_editing {48} else {160}));
+        }
+
+        // Highlight the selected travel direction without requiring an ID lookup.
+        if let Some((from_id,event_index))=self.selected_event {
+            if let Some(map)=self.world.maps.iter().find(|m|m.id==from_id) {
+                if let Some(warp)=map.events.get(event_index).filter(|e|e.kind==EventKind::Warp){
+                    if let Some(target)=self.world.maps.iter().find(|m|m.id==warp.dest_map_id) {
+                        let to=if warp.warp_mode==WarpMode::Direct {
+                            Some((warp.dest_x,warp.dest_y))
+                        }else{
+                            target.events.iter().filter(|e|e.kind==EventKind::Warp &&
+                                e.warp_mode!=WarpMode::Direct)
+                                .nth(usize::from(warp.dest_warp_id))
+                                .map(|e|(e.x,e.y))
+                        };
+                        if let Some((tx,ty))=to {
+                            let source=self.screen_at(rect,
+                                map.origin.x as f32+warp.x as f32+0.5,
+                                map.origin.y as f32+warp.y as f32+0.5);
+                            let destination=self.screen_at(rect,
+                                target.origin.x as f32+tx as f32+0.5,
+                                target.origin.y as f32+ty as f32+0.5);
+                            painter.line_segment([source,destination],
+                                Stroke::new(1.7,Color32::from_rgb(39,105,195)));
+                        }
+                    }
+                }
+            }
         }
 
         if self.mode==Mode::Properties {
