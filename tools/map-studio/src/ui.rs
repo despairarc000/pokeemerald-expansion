@@ -2386,7 +2386,6 @@ impl MapStudioApp {
             painter.rect_filled(mrect,0.0,Color32::from_gray(225));
             let pair_key=format!("{}/{}",map.primary_tileset,map.secondary_tileset);
             let map_texture=self.atlas_cache.get(&pair_key).unwrap_or(&self.atlas).id();
-            let map_pair=tiles::pair(&pair_key);
 
             let lx0 = ((-self.offset.x / s).floor() as i32 - map.origin.x).max(0);
             let ly0 = ((-self.offset.y / s).floor() as i32 - map.origin.y).max(0);
@@ -2407,26 +2406,10 @@ impl MapStudioApp {
                                 Stroke::new(0.5,Color32::from_white_alpha(48)),StrokeKind::Inside);
                         }
                         if self.show_properties {
-                            let (tint,symbol) = property_visual(cell,self.elevation_tool);
+                            // Exact source cell bits rendered as translucent
+                            // color only: no numeric text or invented behavior labels.
+                            let (tint,_) = property_visual(cell,self.elevation_tool);
                             painter.rect_filled(tile_rect,0.0,tint);
-                            // Water, ice and ledges are prominent at the *default* zoom;
-                            // collision bits remain visible in the corner of those tiles.
-                            let behavior=if self.elevation_tool{None}
-                                else {map_pair.and_then(|pair|tiles::behavior_overlay_in(pair,cell.metatile_id))};
-                            // At distance only the accurate source-bit tint
-                            // remains; no fake per-cell dots obscuring the map.
-                            if s>=13.0 {
-                                painter.text(tile_rect.center(),Align2::CENTER_CENTER,
-                                    behavior.unwrap_or(symbol),
-                                    FontId::proportional((s*0.58).clamp(8.0,17.0)),
-                                    Color32::from_black_alpha(230));
-                                if behavior.is_some() && s>=13.0 {
-                                    painter.text(tile_rect.right_bottom()+vec2(-1.5,-1.5),
-                                        Align2::RIGHT_BOTTOM,symbol,
-                                        FontId::proportional((s*0.35).clamp(7.0,11.0)),
-                                        Color32::from_rgb(19,49,91));
-                                }
-                            }
                         }
                     }
                 }
@@ -2769,10 +2752,17 @@ fn property_visual(cell: Cell,elevation_mode:bool)->(Color32,&'static str){
     ];
     if elevation_mode {
         let e=cell.elevation.min(15);
-        (Color32::from_rgba_unmultiplied(
-            218u8.saturating_sub(e.saturating_mul(9)),
-            191u8.saturating_sub(e.saturating_mul(6)),
-            76u8.saturating_add(e.saturating_mul(10)),110),VALUES[e as usize])
+        // Sixteen source elevation values, rendered as an accessible
+        // blue→teal→green→yellow→coral→violet gradient.
+        // Colors are visualization only; stored elevation is unchanged.
+        const RAINBOW:[(u8,u8,u8);16]=[
+            (57,110,220),(51,138,221),(45,164,210),(41,183,188),
+            (38,180,150),(58,185,113),(97,193,79),(147,200,65),
+            (193,202,65),(223,185,66),(233,153,70),(230,124,84),
+            (225,94,115),(205,85,158),(174,85,198),(133,100,220),
+        ];
+        let (r,g,b)=RAINBOW[e as usize];
+        (Color32::from_rgba_unmultiplied(r,g,b,102),VALUES[e as usize])
     }else{
         let tint=match cell.collision {
             0=>Color32::from_rgba_unmultiplied(55,196,96,88),
