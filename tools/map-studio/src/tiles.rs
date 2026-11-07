@@ -14,6 +14,7 @@ include!(concat!(env!("OUT_DIR"),"/metatile_behavior_names.rs"));
 pub struct TilePair {
     pub key:&'static str,
     pub label:&'static str,
+    pub collection:&'static str,
     pub category:&'static str,
     pub primary_symbol:&'static str,
     pub secondary_symbol:&'static str,
@@ -36,10 +37,18 @@ pub struct TilePair {
 }
 include!(concat!(env!("OUT_DIR"),"/tileset_catalog.rs"));
 pub const DEFAULT_PAIR:&str="general/petalburg";
+pub const SOURCE_COLLECTIONS:[&str;2]=["Emerald","FireRed/LeafGreen"];
 pub const SOURCE_CATEGORIES:[&str;5]=[
     "Towns","Houses","Interiors","Caves","Outdoor & Special"
 ];
 pub fn pairs()->&'static [TilePair]{TILESET_PAIRS}
+/// The source fork already includes the real Emerald and FRLG assets.
+pub fn first_in_collection(collection:&str)->Option<&'static TilePair>{
+    pairs().iter().find(|p|p.collection==collection)
+}
+pub fn first_in_collection_category(collection:&str,category:&str)->Option<&'static TilePair>{
+    pairs().iter().find(|p|p.collection==collection && p.category==category)
+}
 /// Deterministic source-catalog order, so a category always has an
 /// immediate first option and never creates a fabricated tileset.
 pub fn first_in_category(category:&str)->Option<&'static TilePair>{
