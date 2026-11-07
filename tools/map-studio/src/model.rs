@@ -292,11 +292,11 @@ impl World {
             if map.name.len()>128 {
                 return Err("Map name is too long".into());
             }
-            let pair=crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
-                .ok_or_else(||format!("Map {} has an unsupported tileset combination",map.name))?;
+            // Legacy projects may contain unused metatile IDs from older
+            // palettes. Keep their data loadable and reject them at export,
+            // where the selected tileset is fully validated.
             for cell in map.cells.iter().flatten() {
-                if !crate::tiles::valid_in(pair,cell.metatile_id) ||
-                    cell.collision>3 || cell.elevation>15 {
+                if cell.metatile_id>=1024 || cell.collision>3 || cell.elevation>15 {
                     return Err(format!("Invalid native cell value in {}",map.name));
                 }
             }
