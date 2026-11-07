@@ -14,6 +14,7 @@ pub fn map_name(map: &MapFrame) -> String {
 }
 
 pub fn validate(world:&World) -> Result<(), String> {
+    if world.maps.is_empty(){return Err("Add a map before exporting".into());}
     let mut names=std::collections::HashSet::new();
     for m in &world.maps {
         if !names.insert(map_name(m)) {return Err(format!("Duplicate Emerald map name: {}",map_name(m))); }
@@ -279,5 +280,14 @@ mod map_event_export_tests {
         world.add_event(GridPoint::new(11,1),EventKind::Warp);
         validate(&world).unwrap();
         assert_eq!(map_json(&world.maps[0],&world)["warp_events"][0]["dest_map"],"MAP_MEADOWMERE_HOUSE");
+    }
+}
+
+#[cfg(test)]
+mod empty_project_tests {
+    use super::*;
+    #[test]
+    fn empty_editor_project_is_backup_eligible_but_not_map_export_eligible() {
+        assert!(validate(&World::new()).unwrap_err().contains("Add a map"));
     }
 }
