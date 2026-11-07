@@ -1018,6 +1018,78 @@ impl MapStudioApp {
         ui.small(&self.message);
     }
 
+    /// Large, touch-friendly event cards. Icons are UI symbols except NPC
+    /// and item previews, which come from the checked-in Emerald art atlas.
+    fn event_card(ui:&mut egui::Ui,kind:EventKind,selected:bool,
+        npc:egui::TextureId,items:egui::TextureId)->bool{
+        let (rect,response)=ui.allocate_exact_size(vec2(96.0,80.0),Sense::click());
+        let painter=ui.painter_at(rect);
+        painter.rect_filled(rect,8.0,if selected{
+            Color32::from_rgb(189,225,250)
+        }else{Color32::from_gray(239)});
+        if selected{
+            painter.rect_stroke(rect,8.0,Stroke::new(1.7,Color32::from_rgb(39,116,192)),
+                StrokeKind::Inside);
+        }
+        let center=pos2(rect.center().x,rect.top()+29.0);
+        let icon=Rect::from_center_size(center,vec2(27.0,30.0));
+        let label=match kind{
+            EventKind::Npc=>"Person",EventKind::Sign=>"Sign",
+            EventKind::Warp=>"Warp",EventKind::Trigger=>"Step message",
+            EventKind::HiddenItem=>"Hidden item"
+        };
+        match kind{
+            EventKind::Npc=>{
+                if let Some(index)=choices::npc_preview_index("OBJ_EVENT_GFX_YOUNGSTER"){
+                    let rows=(choices::NPC_PREVIEW_COUNT+7)/8;
+                    let (x,y)=((index%8) as f32,(index/8) as f32);
+                    let uv=Rect::from_min_max(pos2(x/8.0,y/(rows as f32)),
+                        pos2((x+1.0)/8.0,(y+1.0)/(rows as f32)));
+                    painter.image(npc,icon,uv,Color32::WHITE);
+                }
+            }
+            EventKind::HiddenItem=>{
+                let index=choices::hidden_item_preview("ITEM_POTION").unwrap_or(0);
+                let (x,y)=((index%8) as f32,(index/8) as f32);
+                painter.image(items,icon,
+                    Rect::from_min_max(pos2(x/8.0,y/2.0),
+                        pos2((x+1.0)/8.0,(y+1.0)/2.0)),Color32::WHITE);
+            }
+            EventKind::Sign=>{
+                let wood=Color32::from_rgb(139,95,49);
+                painter.rect_filled(Rect::from_center_size(
+                    center+vec2(0.0,8.0),vec2(4.0,20.0)),1.0,wood);
+                painter.rect_filled(Rect::from_center_size(
+                    center+vec2(0.0,-3.0),vec2(24.0,17.0)),2.0,wood);
+                painter.rect_filled(Rect::from_center_size(
+                    center+vec2(0.0,-3.0),vec2(20.0,13.0)),1.0,
+                    Color32::from_rgb(243,214,148));
+            }
+            EventKind::Warp=>{
+                painter.rect_filled(Rect::from_center_size(
+                    center,vec2(25.0,30.0)),3.0,
+                    Color32::from_rgb(41,77,128));
+                painter.rect_filled(Rect::from_center_size(
+                    center,vec2(19.0,24.0)),2.0,
+                    Color32::from_rgb(123,196,241));
+                painter.circle_filled(center+vec2(5.0,3.0),2.5,
+                    Color32::from_rgb(26,74,124));
+            }
+            EventKind::Trigger=>{
+                painter.add(egui::Shape::convex_polygon(vec![
+                    center+vec2(0.0,-15.0),center+vec2(15.0,0.0),
+                    center+vec2(0.0,15.0),center+vec2(-15.0,0.0)
+                ],Color32::from_rgb(193,74,100),Stroke::NONE));
+                painter.text(center,Align2::CENTER_CENTER,"!",
+                    FontId::proportional(19.0),Color32::WHITE);
+            }
+        }
+        painter.text(pos2(rect.center().x,rect.bottom()-8.0),
+            Align2::CENTER_BOTTOM,label,FontId::proportional(12.0),
+            Color32::from_rgb(44,55,67));
+        response.clicked()
+    }
+
     fn palette_content(&mut self, ui: &mut egui::Ui) {
         match self.mode {
             Mode::Terrain => {}
@@ -1109,16 +1181,17 @@ impl MapStudioApp {
                 }
             }
             Mode::Events => {
+                ui.strong("Add event");
                 ui.horizontal_wrapped(|ui|{
-                    ui.strong("Add event");
-                    for (kind,title) in [
-                        (EventKind::Npc,"Person"),
-                        (EventKind::Sign,"Sign"),
-                        (EventKind::Warp,"Warp"),
-                        (EventKind::Trigger,"Step message"),
-                        (EventKind::HiddenItem,"Hidden item"),
+                    for kind in [
+                        EventKind::Npc,EventKind::Sign,EventKind::Warp,
+                        EventKind::Trigger,EventKind::HiddenItem
                     ]{
-                        ui.selectable_value(&mut self.event_brush,kind,title);
+                        let selected=self.event_brush==kind;
+                        if Self::event_card(ui,kind,selected,
+                            self.npc_atlas.id(),self.item_atlas.id()){
+                            self.event_brush=kind;
+                        }
                     }
                 });
                 if let Some(pick)=self.warp_pick {
