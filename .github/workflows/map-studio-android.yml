@@ -7,6 +7,7 @@ on:
       - feature/map-studio-metatile-sheet-browser
       - feature/map-studio-ux-visibility-events-properties
       - feature/map-studio-responsive-visibility-coordinate-ux
+      - feature/map-studio-resize-keypad-and-dock
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'
