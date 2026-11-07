@@ -261,8 +261,12 @@ mod map_event_export_tests {
     #[test]
     fn dialogues_compile_to_object_and_sign_events() {
         let mut world=ready_world();
-        world.add_event(GridPoint::new(1,1),EventKind::Npc);
-        world.add_event(GridPoint::new(2,2),EventKind::Sign);
+        let (npc_map,npc)=world.add_event(GridPoint::new(1,1),EventKind::Npc).unwrap();
+        let (sign_map,sign)=world.add_event(GridPoint::new(2,2),EventKind::Sign).unwrap();
+        world.maps.iter_mut().find(|m|m.id==npc_map).unwrap().events[npc].dialogue=
+            "Hello there!".into();
+        world.maps.iter_mut().find(|m|m.id==sign_map).unwrap().events[sign].dialogue=
+            "Town Hall".into();
         validate(&world).unwrap();
         let m=&world.maps[0];
         let json=map_json(m,&world);

@@ -693,7 +693,7 @@ mod event_tests {
         assert!(w.move_frame(1,GridPoint::new(-12,0)));
         let restored:World=serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
         assert_eq!(restored.maps[0].events[0].x,1);
-        assert_eq!(restored.maps[0].events[0].dialogue,"Hello, traveler!");
+        assert_eq!(restored.maps[0].events[0].dialogue,"");
     }
 }
 
