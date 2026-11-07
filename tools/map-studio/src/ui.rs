@@ -39,6 +39,7 @@ pub struct MapStudioApp {
     size_panel_open: bool,
     zoom: f32,
     offset: Vec2,
+    canvas_size: Vec2,
     last_painted: Option<GridPoint>,
     multitouch_in_progress: bool,
     selected_map: Option<u32>,
@@ -108,6 +109,7 @@ impl MapStudioApp {
             size_panel_open: false,
             zoom: 14.0,
             offset: vec2(28.0, 52.0),
+            canvas_size: vec2(360.0,540.0),
             last_painted: None,
             multitouch_in_progress: false,
             selected_map: None,
@@ -164,7 +166,7 @@ impl MapStudioApp {
                 self.pan_tool = false;
                 self.frame_tool = false;
             }
-            if ui.small_button("Fill").clicked() { self.fill_selected(); }
+            if ui.small_button("Fit").clicked() { self.fit_world(); }
             ui.separator();
             ui.label(egui::RichText::new(format!("{}%", (self.zoom / 14.0 * 100.0).round() as u32))
                 .small().color(Color32::DARK_GRAY));
@@ -172,6 +174,25 @@ impl MapStudioApp {
                 .small().color(Color32::GRAY));
         });
         ui.add_space(4.0);
+    }
+
+    fn fit_world(&mut self){
+        if self.world.maps.is_empty() || self.canvas_size.x<40.0 || self.canvas_size.y<40.0 {
+            return;
+        }
+        let min_x=self.world.maps.iter().map(|m|i64::from(m.origin.x)).min().unwrap();
+        let min_y=self.world.maps.iter().map(|m|i64::from(m.origin.y)).min().unwrap();
+        let max_x=self.world.maps.iter().map(|m|i64::from(m.origin.x)+i64::from(m.width)).max().unwrap();
+        let max_y=self.world.maps.iter().map(|m|i64::from(m.origin.y)+i64::from(m.height)).max().unwrap();
+        let width=(max_x-min_x).max(1) as f32;
+        let height=(max_y-min_y).max(1) as f32;
+        let padding=24.0;
+        self.zoom=((self.canvas_size.x-2.0*padding)/width)
+            .min((self.canvas_size.y-2.0*padding)/height).clamp(5.0,54.0);
+        self.offset=vec2(
+            (self.canvas_size.x-width*self.zoom)*0.5 - min_x as f32*self.zoom,
+            (self.canvas_size.y-height*self.zoom)*0.5 - min_y as f32*self.zoom,
+        );
     }
 
     fn size_dialog(&mut self,ctx:&egui::Context) {
@@ -203,6 +224,10 @@ impl MapStudioApp {
                     });
                 ui.label(egui::RichText::new("The opposite corner stays fixed.").small()
                     .color(Color32::DARK_GRAY));
+                if (u64::from(self.map_width)+15)*(u64::from(self.map_height)+14)>10240 {
+                    ui.colored_label(Color32::from_rgb(160,72,34),
+                        "Large frame: export may exceed the Emerald buffer limit.");
+                }
                 if self.frame_tool {
                     ui.label("Tap empty canvas to place the new map.");
                     if ui.button("Done").clicked(){
@@ -232,10 +257,10 @@ impl MapStudioApp {
         ui.add_space(3.0);
         match self.mode {
             Mode::Terrain => {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.strong("Metatiles");
-                    ui.label(egui::RichText::new("General + Petalburg").small());
                     ui.toggle_value(&mut self.erase_tool,"Erase");
+                    if ui.small_button("Fill empty").clicked(){ self.fill_selected(); }
                     if ui.small_button("◀").clicked() { self.palette_page=self.palette_page.saturating_sub(1); }
                     if ui.small_button("▶").clicked() { self.palette_page=(self.palette_page+1).min(20); }
                 });
@@ -893,6 +918,7 @@ impl MapStudioApp {
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let size = ui.available_size();
+        self.canvas_size=size;
         let (rect,response) = ui.allocate_exact_size(size,Sense::click_and_drag());
         self.handle_canvas_input(ui,rect,&response);
         let editing = response.is_pointer_button_down_on();
