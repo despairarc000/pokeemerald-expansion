@@ -100,6 +100,7 @@ impl MapStudioApp {
             ui.heading("Map Studio");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("Export").clicked() { self.try_export(); }
+                if ui.small_button("Backup").clicked() { self.try_backup(); }
                 if ui.small_button("Redo").clicked() { self.redo(); }
                 if ui.small_button("Undo").clicked() { self.undo(); }
             });
@@ -377,17 +378,56 @@ impl MapStudioApp {
         }
     }
 
+    fn output_dir(&self) -> Result<PathBuf,String> {
+        self.export_dir.clone().or_else(||self.save_path.as_ref()
+            .and_then(|p|p.parent().map(|p|p.to_path_buf())))
+            .ok_or("No app storage directory available".into())
+    }
+
+    fn publish_output(&self, file:&std::path::Path, name:&str) -> Result<String,String> {
+        #[cfg(target_os="android")]
+        { crate::android_export::publish(file,name) }
+        #[cfg(not(target_os="android"))]
+        { let _=name; Ok(file.display().to_string()) }
+    }
+
+    fn filename(kind:&str, extension:&str) -> String {
+        use std::time::{SystemTime,UNIX_EPOCH};
+        let stamp=SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap_or_default().as_secs();
+        format!("MapStudio-{kind}-{stamp}.{extension}")
+    }
+
+    fn try_backup(&mut self) {
+        self.commit_edit();
+        let result=(|| -> Result<String,String> {
+            let directory=self.output_dir()?;
+            std::fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
+            let name=Self::filename("project","json");
+            let file=directory.join(&name);
+            storage::save(&file,&self.world)?;
+            self.publish_output(&file,&name)
+        })();
+        self.message=match result {
+            Ok(path)=>format!("Project backup: {path}"),
+            Err(err)=>format!("Backup failed: {err}"),
+        };
+    }
+
     fn try_export(&mut self) {
         self.commit_edit();
-        let Some(dir)=&self.export_dir else {
-            self.message="External export directory unavailable".into();
-            return;
+        let result=(|| -> Result<String,String> {
+            let directory=self.output_dir()?;
+            std::fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
+            let name=Self::filename("maps","zip");
+            let file=directory.join(&name);
+            export::export_zip(&self.world,&file)?;
+            self.publish_output(&file,&name)
+        })();
+        self.message=match result {
+            Ok(path)=>format!("Exported: {path}"),
+            Err(err)=>format!("Export blocked: {err}"),
         };
-        let file=dir.join("map-studio-export.zip");
-        match export::export_zip(&self.world,&file){
-            Ok(()) => self.message=format!("Exported: {}",file.display()),
-            Err(err) => self.message=format!("Export blocked: {err}"),
-        }
     }
 
     fn screen_at(&self, rect: Rect, x: f32, y: f32) -> Pos2 {
@@ -474,6 +514,9 @@ impl MapStudioApp {
         if let Some(screen) = pointer {
             let p = self.grid_at(rect, screen);
             if pressed && rect.contains(screen) {
+                if let Some(map)=self.world.map_at(p) {
+                    self.selected_map=Some(map.id);
+                }
                 self.last_painted = None;
                 self.begin_edit();
                 if self.move_tool {
