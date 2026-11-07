@@ -2184,17 +2184,14 @@ impl MapStudioApp {
                     Align2::LEFT_TOP,y.to_string(),font.clone(),col);
             }
         }
-        // Small hollow origin target, never an opaque coordinate tile.
-        let origin=self.screen_at(rect,0.0,0.0);
-        if rect.contains(origin) {
-            painter.circle_stroke(origin,5.0,
-                Stroke::new(1.5,Color32::from_rgb(36,111,191)));
-            painter.line_segment([origin+vec2(-8.0,0.0),
-                origin+vec2(-5.0,0.0)],
-                Stroke::new(1.2,Color32::from_rgb(36,111,191)));
-            painter.line_segment([origin+vec2(0.0,-8.0),
-                origin+vec2(0.0,-5.0)],
-                Stroke::new(1.2,Color32::from_rgb(36,111,191)));
+        // World (0,0) is the grid CELL, not a fixed-size circle floating
+        // at the intersection. Its hollow border scales exactly with zoom.
+        let first_cell=Rect::from_min_size(
+            self.screen_at(rect,0.0,0.0),Vec2::splat(self.zoom));
+        if rect.intersects(first_cell) {
+            painter.rect_stroke(first_cell,0.0,
+                Stroke::new((self.zoom*0.10).clamp(0.6,2.0),
+                    Color32::from_rgb(30,110,195)),StrokeKind::Inside);
         }
     }
 
@@ -2363,8 +2360,10 @@ impl MapStudioApp {
                         continue;
                     }
                 }
-                let f=s/16.0;
-                let size=s*1.25;
+                // Small event decals: remain inside their real map cell.
+                // A sign/warp/step trigger must not hide the underlying art.
+                let f=s/24.0;
+                let size=s*0.78;
                 let icon=Rect::from_center_size(center,Vec2::splat(size));
                 match event.kind {
                     EventKind::HiddenItem=>{
