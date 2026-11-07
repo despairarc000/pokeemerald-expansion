@@ -1764,7 +1764,8 @@ impl MapStudioApp {
                     if ((file.starts_with("MapStudio-project-")
                         || file.starts_with("MapStudio-recovery-"))
                         && file.ends_with(".json")
-                        || file.starts_with("MapStudio-maps-") && file.ends_with(".zip"))
+                        || file.starts_with("MapStudio-maps-") && file.ends_with(".zip")
+                        || file.starts_with("MapStudio-editable-") && file.ends_with(".zip"))
                         && entry.path().is_file(){
                         items.push((format!("local:{file}"),format!("{file} (local recovery)")));
                     }
@@ -1788,7 +1789,7 @@ impl MapStudioApp {
                 self.available_backups=items;
                 self.selected_backup=None;
                 self.project_restore_open=true;
-                self.message="Select a backup. Your current work will be preserved first.".into();
+                self.message="Choose an editable ZIP or JSON project. Existing work is backed up before import.".into();
             }
             Err(err)=>self.message=format!("Cannot browse backups: {err}"),
         }
@@ -1882,14 +1883,14 @@ impl MapStudioApp {
         }
         if self.project_restore_open {
             let mut open=true;
-            egui::Window::new("Restore project backup")
+            egui::Window::new("Import Map Studio project")
                 .collapsible(false).resizable(true)
                 .default_width(310.0).open(&mut open)
                 .anchor(Align2::CENTER_CENTER,[0.0,0.0])
                 .show(ctx,|ui|{
-                    ui.small("Only readable Map Studio backups are shown. Current work is backed up before replacement.");
+                    ui.small("Import verified Map Studio JSON or editable/source ZIP backups. Current work is saved before replacement.");
                     if self.available_backups.is_empty(){
-                        ui.label("No backups in this app's Downloads/MapStudio or local recovery folder.");
+                        ui.label("No readable Map Studio projects found in this installation's Downloads/MapStudio or recovery folder.");
                     } else {
                         egui::ScrollArea::vertical().max_height(190.0).show(ui,|ui|{
                             for (id,name) in &self.available_backups {
@@ -1899,7 +1900,7 @@ impl MapStudioApp {
                     }
                     ui.horizontal(|ui|{
                         if ui.add_enabled(self.selected_backup.is_some(),
-                            egui::Button::new("Restore selected")).clicked() {
+                            egui::Button::new("Import selected")).clicked() {
                             self.restore_selected_backup();
                         }
                         if ui.button("Cancel").clicked(){
@@ -1944,6 +1945,22 @@ impl MapStudioApp {
         self.message=match result {
             Ok(path)=>format!("Project backup: {path}"),
             Err(err)=>format!("Backup failed: {err}"),
+        };
+    }
+
+    fn try_export_project_zip(&mut self){
+        self.commit_edit();
+        let result=(||->Result<String,String>{
+            let directory=self.output_dir()?;
+            std::fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
+            let name=Self::filename("editable","zip");
+            let file=directory.join(&name);
+            storage::export_project_zip(&file,&self.world)?;
+            self.publish_output(&file,&name)
+        })();
+        self.message=match result{
+            Ok(path)=>format!("Editable project saved: {path}"),
+            Err(err)=>format!("Project export failed: {err}"),
         };
     }
 
