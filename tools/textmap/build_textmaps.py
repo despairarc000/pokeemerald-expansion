@@ -126,6 +126,41 @@ def pack_cells(rows, legend):
     return bytes(out)
 
 
+
+
+def parse_numeric_layout(path, name):
+    """The native Map Studio exporter writes a lossless row-major 16-bit
+    numeric grid; no one-character tile legend or palette substitutions."""
+    data = load_json(path)
+    if data.get("format") != "mapstudio-numeric-v1":
+        fail("%s: unsupported numeric layout format" % path)
+    header = data.get("header")
+    rows = data.get("cells")
+    border = data.get("border")
+    if not isinstance(header, dict):
+        fail("%s: missing native header" % path)
+    for key in ("id", "name", "primary", "secondary", "group"):
+        if not isinstance(header.get(key), str) or not header[key]:
+            fail("%s: invalid header '%s'" % (path, key))
+    if not isinstance(border, list) or len(border) != BORDER_TILES:
+        fail("%s: native layout needs 4 border metatiles" % path)
+    if not all(type(v) is int and 0 <= v < 0x400 for v in border):
+        fail("%s: invalid border metatile" % path)
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], list) or not rows[0]:
+        fail("%s: native layout must have a rectangular cell array" % path)
+    width = len(rows[0])
+    for y, row in enumerate(rows):
+        if not isinstance(row, list) or len(row) != width:
+            fail("%s: row %d has incorrect width" % (path, y))
+        for x, value in enumerate(row):
+            if type(value) is not int or not (0 <= value <= 0xffff):
+                fail("%s: invalid packed cell at %d,%d" % (path, x, y))
+    return header, border, rows
+
+
+def pack_numeric_cells(rows):
+    return b"".join(struct.pack("<H", packed) for row in rows for packed in row)
+
 def pack_border(border):
     return b"".join(struct.pack("<H", t) for t in border)
 
@@ -145,6 +180,7 @@ def main():
     names = sorted(
         d for d in os.listdir(CUSTOM)
         if os.path.isfile(os.path.join(CUSTOM, d, "layout.txt"))
+        or os.path.isfile(os.path.join(CUSTOM, d, "layout.mapstudio.json"))
     )
     if not names:
         return
@@ -154,7 +190,13 @@ def main():
 
     for name in names:
         src = os.path.join(CUSTOM, name)
-        header, legend, border, rows = parse_layout(os.path.join(src, "layout.txt"), name)
+        numeric_path = os.path.join(src, "layout.mapstudio.json")
+        if os.path.isfile(numeric_path):
+            header, border, rows = parse_numeric_layout(numeric_path, name)
+            map_bytes = pack_numeric_cells(rows)
+        else:
+            header, legend, border, rows = parse_layout(os.path.join(src, "layout.txt"), name)
+            map_bytes = pack_cells(rows, legend)
         if header["name"] != name + "_Layout":
             fail("%s: layout name must be '%s_Layout'" % (name, name))
         map_json = os.path.join(src, "map.json")
@@ -167,7 +209,7 @@ def main():
             fail("%s: map.json layout %r does not match layout id %r" % (name, mj.get("layout"), header["id"]))
 
         height, width = len(rows), len(rows[0])
-        if write_if_changed(os.path.join(ROOT, "data", "layouts", name, "map.bin"), pack_cells(rows, legend)):
+        if write_if_changed(os.path.join(ROOT, "data", "layouts", name, "map.bin"), map_bytes):
             changed.append("layouts/%s/map.bin" % name)
         if write_if_changed(os.path.join(ROOT, "data", "layouts", name, "border.bin"), pack_border(border)):
             changed.append("layouts/%s/border.bin" % name)

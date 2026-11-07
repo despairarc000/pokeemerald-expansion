@@ -31,6 +31,8 @@ jobs:
         run: cargo fmt --all
       - name: Install atlas generator dependency
         run: python3 -m pip install --break-system-packages Pillow
+      - name: Validate numerical map conversion
+        run: python3 -m unittest discover -s tests -p "test_*.py"
       - name: Unit tests
         run: cargo test --lib
       - name: Compile desktop UI
