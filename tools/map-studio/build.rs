@@ -38,4 +38,25 @@ fn main() {
     let status=Command::new("python3").arg(&script).arg(&root).arg(&output)
         .status().expect("Python3 is required to generate real Emerald tileset atlas");
     assert!(status.success(),"Failed to generate actual Emerald metatile atlas");
+    let catalog=root.join("tools/map-studio/scripts/build_catalog.py");
+    let layouts=root.join("data/layouts/layouts.json");
+    println!("cargo:rerun-if-changed={}",catalog.display());
+    println!("cargo:rerun-if-changed={}",layouts.display());
+    // All source tilesets affect the generated real sprite catalog.
+    for group in ["primary","secondary"] {
+        let parent=root.join("data/tilesets").join(group);
+        for item in std::fs::read_dir(parent).expect("tileset directories") {
+            let dir=item.expect("tileset entry").path();
+            if !dir.is_dir(){continue;}
+            for file in ["tiles.png","metatiles.bin","metatile_attributes.bin"]{
+                println!("cargo:rerun-if-changed={}",dir.join(file).display());
+            }
+            println!("cargo:rerun-if-changed={}",dir.join("palettes").display());
+        }
+    }
+    let atlas_folder=PathBuf::from(env::var("OUT_DIR").unwrap()).join("atlases");
+    let result=Command::new("python3").arg(catalog).arg(&root).arg(&atlas_folder)
+        .status().expect("Python atlas catalog builder unavailable");
+    assert!(result.success(),"Cannot build real tileset atlas catalog");
+
 }
