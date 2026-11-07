@@ -1037,7 +1037,16 @@ impl MapStudioApp {
         if pressed && response.is_pointer_button_down_on() {
             if let Some(screen)=pointer.filter(|pos|rect.contains(*pos)) {
                 let at=self.grid_at(rect,screen);
-                if let Some(m)=self.world.map_at(at) {
+                if self.warp_pick.is_some() {
+                    self.gesture=CanvasGesture::PickWarp{at};
+                }else if let Some((map_id,index))=self.world.event_at(at) {
+                    self.selected_map=Some(map_id);
+                    self.selected_event=Some((map_id,index));
+                    self.gesture=CanvasGesture::EventPress{
+                        map_id,index,at,screen,since:now
+                    };
+                    ui.ctx().request_repaint_after(Duration::from_millis(24));
+                }else if let Some(m)=self.world.map_at(at) {
                     self.selected_map=Some(m.id);
                     self.selected_cell=Some(at);
                     if self.size_panel_open {
@@ -1061,6 +1070,30 @@ impl MapStudioApp {
                 let at=self.grid_at(rect,screen);
                 match self.gesture {
                     CanvasGesture::Idle => {}
+                    CanvasGesture::PickWarp{..} => {}
+                    CanvasGesture::EventPress{map_id,index,screen:origin,since,..}=>{
+                        let delta=(screen-origin).length();
+                        if Self::long_hold_complete(since,now,delta){
+                            self.gesture=CanvasGesture::MoveEvent{map_id,index};
+                            self.begin_edit();
+                            self.message="Move this marker within its map".into();
+                            ui.ctx().request_repaint();
+                        }else if delta>DRAG_PX {
+                            // Dragging without a hold never moves an event.
+                            self.gesture=CanvasGesture::Idle;
+                            self.message="Hold a marker briefly, then drag to move".into();
+                        }else{
+                            ui.ctx().request_repaint_after(Duration::from_millis(24));
+                        }
+                    }
+                    CanvasGesture::MoveEvent{map_id,index}=>{
+                        if let Err(err)=self.world.move_event(map_id,index,at){
+                            self.preview_error=Some(err);
+                        }else{
+                            self.preview_error=None;
+                        }
+                        ui.ctx().request_repaint();
+                    }
                     CanvasGesture::EmptyPress{at:start,screen:origin,since}=>{
                         let delta=(screen-origin).length();
                         if Self::long_hold_complete(since,now,delta) {
@@ -1145,6 +1178,45 @@ impl MapStudioApp {
             let at=pointer.map(|screen|self.grid_at(rect,screen));
             let gesture=std::mem::replace(&mut self.gesture,CanvasGesture::Idle);
             match gesture {
+                CanvasGesture::PickWarp{at:start}=>{
+                    if response.clicked() {
+                        if let Some(where_to)=at.or(Some(start)){
+                            let original=self.world.clone();
+                            self.begin_edit();
+                            if let Err(err)=self.handle_warp_destination(where_to){
+                                self.world=original;
+                                self.message=format!("Cannot use destination: {err}");
+                            }
+                            self.commit_edit();
+                        }
+                    }
+                }
+                CanvasGesture::EventPress{map_id,index,..}=>{
+                    self.selected_event=Some((map_id,index));
+                    self.selected_map=Some(map_id);
+                    self.mode=Mode::Events;
+                    self.event_editor_open=response.double_clicked();
+                    if self.event_editor_open {self.panel_height=self.panel_height.max(310.0);}
+                    self.message=if self.event_editor_open {
+                        "Event settings opened".into()
+                    }else{
+                        "Event selected · hold to move · double-tap to edit".into()
+                    };
+                }
+                CanvasGesture::MoveEvent{..}=>{
+                    self.message=if self.preview_error.is_some(){
+                        "Marker kept at its last valid tile".into()
+                    }else{"Event moved".into()};
+                    self.commit_edit();
+                }
+                CanvasGesture::EmptyPress{..}=>{
+                    if response.double_clicked(){
+                        if let Some(center)=pointer {
+                            self.change_zoom(rect,center,1.7,Vec2::ZERO);
+                            self.message="Zoomed in".into();
+                        }
+                    }
+                }
                 CanvasGesture::DrawFrame{from,to}=>{
                     let final_to=at.unwrap_or(to);
                     let (origin,w,h)=Self::bounds(from,final_to);
@@ -1170,18 +1242,34 @@ impl MapStudioApp {
                         }
                     }
                 }
-                CanvasGesture::MapPress{at:start,..}=>{
-                    if self.mode==Mode::Events {
+                CanvasGesture::MapPress{id,at:start,..}=>{
+                    if response.double_clicked(){
+                        let painted=self.world.map_at(start).and_then(|m|{
+                            let x=(i64::from(start.x)-i64::from(m.origin.x)) as u32;
+                            let y=(i64::from(start.y)-i64::from(m.origin.y)) as u32;
+                            m.cell(x,y)
+                        }).is_some();
+                        if painted {
+                            self.mode=Mode::Properties;
+                            self.selected_cell=Some(start);
+                            self.panel_height=self.panel_height.max(275.0);
+                            self.message="Tile properties: collision, elevation and terrain".into();
+                        }else{
+                            self.configure_map_from_double_tap(id);
+                        }
+                    }else if self.mode==Mode::Events {
                         if let Some(point)=at {
-                            if self.world.map_at(point).is_some() {
+                            if self.world.map_at(point).is_some(){
                                 self.begin_edit();
-                                let was_existing=self.world.map_at(point)
-                                    .and_then(|map|map.events.iter()
-                                        .position(|ev|
-                                            ev.x==(point.x-map.origin.x) as u32 &&
-                                            ev.y==(point.y-map.origin.y) as u32)).is_some();
                                 self.selected_event=self.world.add_event(point,self.event_brush);
-                                self.event_editor_open=response.double_clicked() && was_existing;
+                                if let Some((map_id,index))=self.selected_event{
+                                    if self.event_brush==EventKind::HiddenItem {
+                                        if let Err(err)=self.world.assign_hidden_slot(map_id,index){
+                                            self.message=err;
+                                        }
+                                    }
+                                    self.message="Event created · double-tap to edit".into();
+                                }
                                 self.commit_edit();
                             }
                         }
