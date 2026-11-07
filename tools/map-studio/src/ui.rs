@@ -1,6 +1,6 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
-use crate::model::{Cell, EventKind, MapEvent, GridPoint, ExpandDirection, World};
+use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, World};
 use crate::{storage, export, tiles, choices};
 use std::{path::PathBuf, time::{Duration, Instant}};
 
@@ -17,6 +17,19 @@ enum CanvasGesture {
     MapPress { id:u32, at: GridPoint, screen: Pos2, since:f64, origin:GridPoint },
     Painting { last: GridPoint },
     MoveFrame { id:u32, from:GridPoint, origin:GridPoint },
+    EventPress { map_id:u32, index:usize, at:GridPoint, screen:Pos2, since:f64 },
+    MoveEvent { map_id:u32, index:usize },
+    PickWarp { at:GridPoint },
+}
+
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum WarpPickMethod { Existing, CreateMarker, Direct }
+
+#[derive(Clone,Copy,Debug)]
+struct WarpPick {
+    source:(u32,usize),
+    method:WarpPickMethod,
+    return_link:bool,
 }
 
 pub struct MapStudioApp {
@@ -25,6 +38,8 @@ pub struct MapStudioApp {
     event_brush: EventKind,
     selected_event: Option<(u32,usize)>,
     event_editor_open: bool,
+    warp_pick: Option<WarpPick>,
+    warp_return_link: bool,
     brush_id: u16,
     erase_tool: bool,
     elevation_brush: u8,
@@ -96,6 +111,8 @@ impl MapStudioApp {
             event_brush: EventKind::Npc,
             selected_event: None,
             event_editor_open: false,
+            warp_pick: None,
+            warp_return_link: false,
             brush_id: 1,
             erase_tool: false,
             elevation_brush: 3,
@@ -206,15 +223,80 @@ impl MapStudioApp {
         );
     }
 
+    fn configure_map_from_double_tap(&mut self,id:u32) {
+        if let Some(m)=self.world.maps.iter().find(|m|m.id==id) {
+            self.selected_map=Some(id);
+            self.map_width=m.width;
+            self.map_height=m.height;
+            self.size_panel_open=true;
+            self.message="Map settings: name, size and expansion direction".into();
+        }
+    }
+
+    /// Enter a map using its ID without typing an engine identifier.
+    fn handle_warp_destination(&mut self,p:GridPoint)->Result<(),String>{
+        let pick=self.warp_pick.ok_or("No warp selected")?;
+        match pick.method {
+            WarpPickMethod::Existing=>{
+                let dest=self.world.event_at(p).ok_or("Tap an existing warp marker")?;
+                if self.world.event(dest.0,dest.1).map(|e|e.kind)!=Some(EventKind::Warp){
+                    return Err("Tap a warp marker, not another kind of event".into());
+                }
+                self.world.link_warps(pick.source,dest,pick.return_link)?;
+            }
+            WarpPickMethod::CreateMarker=>{
+                let target=self.world.create_arrival_marker(pick.source,p,pick.return_link)?;
+                self.message=format!("Arrival marker created on map {}.",target.0);
+            }
+            WarpPickMethod::Direct=>{
+                self.world.set_direct_arrival(pick.source,p)?;
+            }
+        }
+        self.warp_pick=None;
+        self.selected_event=Some(pick.source);
+        self.event_editor_open=true;
+        self.message=match pick.method {
+            WarpPickMethod::Existing=>"Linked to destination warp".into(),
+            WarpPickMethod::CreateMarker=>"Arrival marker linked; return is optional".into(),
+            WarpPickMethod::Direct=>"Direct arrival set; no marker required".into(),
+        };
+        Ok(())
+    }
+
+    fn warp_summary(&self,event:&MapEvent)->String {
+        if event.arrival_only {return "Arrival-only marker".into();}
+        let Some(map)=self.world.maps.iter().find(|m|m.id==event.dest_map_id)
+            else{return "Destination not set".into();};
+        match event.warp_mode {
+            WarpMode::Linked=>format!("{} · warp {}",map.name,event.dest_warp_id),
+            WarpMode::Direct=>format!("{} · tile ({}, {})",map.name,event.dest_x,event.dest_y)
+        }
+    }
+
     fn size_dialog(&mut self,ctx:&egui::Context) {
         if !self.size_panel_open {return;}
         let mut open=self.size_panel_open;
-        egui::Window::new("Adjust map size")
+        egui::Window::new("Map settings")
             .id(egui::Id::new("map_size_dialog"))
             .open(&mut open)
             .resizable(false).collapsible(false)
             .anchor(Align2::CENTER_TOP,[0.0,145.0])
             .show(ctx,|ui|{
+                if let Some(id)=self.selected_map {
+                    let mut changed=false;
+                    let before=self.world.clone();
+                    if let Some(map)=self.world.maps.iter_mut().find(|m|m.id==id){
+                        ui.horizontal(|ui|{
+                            ui.label("Map name");
+                            changed=ui.add(egui::TextEdit::singleline(&mut map.name)
+                                .desired_width(170.0)).changed();
+                        });
+                    }
+                    if changed {
+                        self.before_gesture=Some(before);
+                        self.commit_edit();
+                    }
+                }
                 ui.horizontal(|ui|{
                     ui.label("Wide");
                     ui.add(egui::DragValue::new(&mut self.map_width).range(1..=100).speed(1));
@@ -407,105 +489,185 @@ impl MapStudioApp {
                 }
             }
             Mode::Events => {
-                ui.horizontal(|ui|{
-                    ui.strong("Add event");
-                    ui.selectable_value(&mut self.event_brush,EventKind::Npc,"Person");
-                    ui.selectable_value(&mut self.event_brush,EventKind::Sign,"Sign");
+                ui.horizontal_wrapped(|ui|{
+                    ui.strong("Place");
+                    for (kind,title) in [
+                        (EventKind::Npc,"Person"),
+                        (EventKind::Sign,"Sign"),
+                        (EventKind::Warp,"Warp"),
+                        (EventKind::Trigger,"Step message"),
+                        (EventKind::HiddenItem,"Hidden item"),
+                    ]{
+                        ui.selectable_value(&mut self.event_brush,kind,title);
+                    }
                 });
+                if let Some(pick)=self.warp_pick {
+                    let instruction=match pick.method {
+                        WarpPickMethod::Existing=>"Tap an existing warp in the destination map",
+                        WarpPickMethod::CreateMarker=>"Tap a painted, walkable destination tile",
+                        WarpPickMethod::Direct=>"Tap any painted, walkable arrival tile",
+                    };
+                    ui.colored_label(Color32::from_rgb(31,91,153),instruction);
+                    if ui.button("Cancel destination selection").clicked(){
+                        self.warp_pick=None;
+                        self.event_editor_open=true;
+                    }
+                }
                 if let Some((map_id,index))=self.selected_event {
+                    let summary=self.world.event(map_id,index).cloned();
+                    if let Some(ev)=summary.as_ref() {
+                        if ev.kind==EventKind::Warp {
+                            ui.horizontal_wrapped(|ui|{
+                                ui.strong("Destination");
+                                ui.label(self.warp_summary(ev));
+                            });
+                            if let Some(native_id)=self.world.warp_id(map_id,index) {
+                                ui.small(format!("This marker: warp {native_id} in its own map"));
+                            }else if ev.warp_mode==WarpMode::Direct {
+                                ui.small("Direct travel has no numbered source warp");
+                            }
+                        }
+                    }
                     let before=self.world.clone();
                     let mut changed=false;
                     let mut remove=false;
+                    let mut select_pick=None;
                     let mut found=false;
-                    if let Some(event)=self.world.maps.iter_mut().find(|m|m.id==map_id)
-                        .and_then(|m|m.events.get_mut(index)){
+                    if let Some(ev)=self.world.event_mut(map_id,index) {
                         found=true;
-                        ui.horizontal_wrapped(|ui|{
-                            ui.strong(match event.kind{
-                                EventKind::Npc=>"Person", EventKind::Sign=>"Sign",
-                                EventKind::Warp=>"Warp", EventKind::Trigger=>"Trigger"
+                        ui.horizontal(|ui|{
+                            ui.strong(match ev.kind {
+                                EventKind::Npc=>"Person",
+                                EventKind::Sign=>"Sign",
+                                EventKind::Warp=>"Warp",
+                                EventKind::Trigger=>"Step message",
+                                EventKind::HiddenItem=>"Hidden item",
                             });
-                            if ui.small_button(if self.event_editor_open{"Less"}else{"Edit"}).clicked(){
+                            if ui.button(if self.event_editor_open{"Close"}else{"Edit"}).clicked(){
                                 self.event_editor_open=!self.event_editor_open;
                             }
                             if ui.small_button("Remove").clicked(){remove=true;}
                         });
-                        if matches!(event.kind,EventKind::Npc|EventKind::Sign){
-                            ui.horizontal(|ui|{
-                                ui.label("Type");
-                                changed|=ui.selectable_value(&mut event.kind,EventKind::Npc,"Person").changed();
-                                changed|=ui.selectable_value(&mut event.kind,EventKind::Sign,"Sign").changed();
-                            });
-                        }
                         if self.event_editor_open {
-                            match event.kind {
-                                EventKind::Npc => {
+                            match ev.kind {
+                                EventKind::Npc=>{
                                     ui.horizontal(|ui|{
                                         ui.label("Character");
-                                        let shown=choices::npc_friendly(&event.graphics_id)
+                                        let shown=choices::npc_friendly(&ev.graphics_id)
                                             .unwrap_or("Choose a character");
-                                        egui::ComboBox::from_id_salt("npc_character")
+                                        egui::ComboBox::from_id_salt("npc-character")
                                             .selected_text(shown).show_ui(ui,|ui|{
-                                                for (label,symbol) in choices::NPC_SPRITES {
-                                                    changed|=ui.selectable_value(
-                                                        &mut event.graphics_id,(*symbol).to_string(),*label
-                                                    ).changed();
+                                                for (name,symbol) in choices::NPC_SPRITES {
+                                                    changed|=ui.selectable_value(&mut ev.graphics_id,
+                                                        (*symbol).into(),*name).changed();
                                                 }
                                             });
                                     });
                                     ui.horizontal(|ui|{
-                                        ui.label("Says");
-                                        changed|=ui.add(egui::TextEdit::singleline(&mut event.dialogue)
-                                            .desired_width(200.0).hint_text("Enter dialogue")).changed();
-                                        if changed { Self::sanitize_dialogue(&mut event.dialogue); }
+                                        ui.label("Dialogue");
+                                        let editing=ui.add(egui::TextEdit::singleline(&mut ev.dialogue)
+                                            .desired_width(210.0).hint_text("What do they say?")).changed();
+                                        if editing {Self::sanitize_dialogue(&mut ev.dialogue);}
+                                        changed|=editing;
                                     });
                                 }
-                                EventKind::Sign => {
+                                EventKind::Sign=>{
                                     ui.horizontal(|ui|{
-                                        ui.label("Sign text");
-                                        changed|=ui.add(egui::TextEdit::singleline(&mut event.dialogue)
-                                            .desired_width(220.0).hint_text("Enter sign text")).changed();
-                                        if changed { Self::sanitize_dialogue(&mut event.dialogue); }
+                                        ui.label("Text");
+                                        let editing=ui.add(egui::TextEdit::singleline(&mut ev.dialogue)
+                                            .desired_width(235.0).hint_text("Sign message")).changed();
+                                        if editing {Self::sanitize_dialogue(&mut ev.dialogue);}
+                                        changed|=editing;
                                     });
                                 }
-                                EventKind::Warp|EventKind::Trigger=>{
-                                    ui.label("Advanced event details will be discussed separately.");
+                                EventKind::Trigger=>{
+                                    ui.small("Shows a message when the player steps here");
+                                    ui.horizontal(|ui|{
+                                        ui.label("Message");
+                                        let editing=ui.add(egui::TextEdit::singleline(&mut ev.dialogue)
+                                            .desired_width(220.0).hint_text("Message on step")).changed();
+                                        if editing {Self::sanitize_dialogue(&mut ev.dialogue);}
+                                        changed|=editing;
+                                    });
+                                }
+                                EventKind::HiddenItem=>{
+                                    ui.horizontal(|ui|{
+                                        ui.label("Item");
+                                        let selected=choices::HIDDEN_ITEMS.iter()
+                                            .find(|(_,id)|*id==ev.hidden_item)
+                                            .map(|(name,_)|*name).unwrap_or("Choose item");
+                                        egui::ComboBox::from_id_salt("hidden-item")
+                                            .selected_text(selected).show_ui(ui,|ui|{
+                                                for (name,id) in choices::HIDDEN_ITEMS {
+                                                    changed|=ui.selectable_value(&mut ev.hidden_item,
+                                                        (*id).into(),*name).changed();
+                                                }
+                                            });
+                                    });
+                                    ui.small(if ev.hidden_flag.is_empty(){
+                                        "No pickup slot assigned"
+                                    }else{"This hidden item has a reserved pickup slot"});
+                                }
+                                EventKind::Warp=>{
+                                    ui.checkbox(&mut self.warp_return_link,"Create return link too");
+                                    ui.horizontal_wrapped(|ui|{
+                                        if ui.button("Link existing warp").clicked(){
+                                            select_pick=Some(WarpPickMethod::Existing);
+                                        }
+                                        if ui.button("Create arrival marker").clicked(){
+                                            select_pick=Some(WarpPickMethod::CreateMarker);
+                                        }
+                                        if ui.button("Direct arrival").clicked(){
+                                            select_pick=Some(WarpPickMethod::Direct);
+                                        }
+                                    });
+                                    if ev.arrival_only {
+                                        ui.small("This marker is for arriving; it does not return unless linked.");
+                                    }
                                 }
                             }
-                            if matches!(event.kind,EventKind::Npc|EventKind::Sign){
+                            if ev.kind!=EventKind::Warp {
                                 ui.horizontal(|ui|{
-                                    ui.label("Event height");
-                                    egui::ComboBox::from_id_salt("event_elevation")
-                                        .selected_text(event.elevation.to_string())
+                                    ui.label("Height");
+                                    egui::ComboBox::from_id_salt("event-height")
+                                        .selected_text(ev.elevation.to_string())
                                         .show_ui(ui,|ui|{
-                                            for h in 0..=15u8 {
-                                                changed|=ui.selectable_value(
-                                                    &mut event.elevation,h,h.to_string()
-                                                ).changed();
+                                            for height in 0..=15u8 {
+                                                changed|=ui.selectable_value(&mut ev.elevation,
+                                                    height,height.to_string()).changed();
                                             }
                                         });
                                 });
                             }
                         }else{
-                            ui.small("Tap event to select · double-tap to edit.");
+                            ui.small("Tap selects · double-tap opens details · hold moves");
                         }
                     }
                     if changed {
                         self.before_gesture=Some(before);
                         self.commit_edit();
                     }
-                    if remove {
-                        self.begin_edit();
-                        self.world.remove_event(map_id,index);
-                        self.commit_edit();
-                        self.selected_event=None;
-                        self.event_editor_open=false;
-                    }else if !found{
-                        self.selected_event=None;
+                    if let Some(method)=select_pick {
+                        self.warp_pick=Some(WarpPick{
+                            source:(map_id,index),method,return_link:self.warp_return_link
+                        });
                         self.event_editor_open=false;
                     }
+                    if remove {
+                        self.begin_edit();
+                        if self.world.remove_event(map_id,index) {
+                            self.selected_event=None;
+                            self.warp_pick=None;
+                            self.event_editor_open=false;
+                        }else{
+                            self.message="Cannot delete: another warp points here".into();
+                        }
+                        self.commit_edit();
+                    }else if !found {
+                        self.selected_event=None;
+                    }
                 }else{
-                    ui.small("Tap on a map to add or select. Warps are postponed.");
+                    ui.small("Tap to add · hold a marker to move · double-tap to edit");
                 }
             }
         }
