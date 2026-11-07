@@ -122,7 +122,13 @@ pub fn layout_json(map:&MapFrame) -> Value {
         .expect("validated tileset pair");
     let w=map.width as usize;
     let h=map.height as usize;
-    let border=[cells[0][0],cells[0][w-1],cells[h-1][0],cells[h-1][w-1]];
+    // Emerald border entries are *metatile IDs*, not packed map cells.
+    let border=[
+        map.cell(0,0).unwrap().metatile_id,
+        map.cell((w-1) as u32,0).unwrap().metatile_id,
+        map.cell(0,(h-1) as u32).unwrap().metatile_id,
+        map.cell((w-1) as u32,(h-1) as u32).unwrap().metatile_id,
+    ];
     json!({
         "format": "mapstudio-numeric-v1",
         "header": {
@@ -412,5 +418,21 @@ mod travel_exports {
         let j=map_json(&w.maps[0],&w);
         assert_eq!(j["bg_events"][0]["type"],"hidden_item");
         assert_eq!(j["coord_events"][0]["type"],"trigger");
+    }
+}
+
+#[cfg(test)]
+mod genuine_border_tests {
+    use super::*;
+    use crate::model::{Cell,GridPoint,TileKind};
+    #[test]
+    fn border_entries_use_raw_metatile_ids_not_packed_elevations(){
+        let mut world=World::new();
+        let id=world.add_map("Test",GridPoint::new(0,0),4,4).unwrap();
+        let m=world.maps.iter_mut().find(|m|m.id==id).unwrap();
+        m.cells.fill(Some(Cell{terrain:TileKind::Grass,metatile_id:0x170,collision:0,elevation:3}));
+        let json=layout_json(m);
+        assert_eq!(json["border"],serde_json::json!([0x170,0x170,0x170,0x170]));
+        assert_eq!(json["cells"][0][0],serde_json::json!(0x3170));
     }
 }
