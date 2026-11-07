@@ -143,3 +143,63 @@ There is no artificial 32-tiles-per-page limit.
 **Sheet Preview** uses `dev.despairarc.mapstudio.sheetpreview`, separate
 from the existing Spaces Preview package and local autosaves. It is a
 development test build, not a verified user-device release.
+
+## UX Fix Preview — event visibility, terrain tools, properties and Android resizing
+
+Development branch: `feature/map-studio-ux-visibility-events-properties`.
+Android package `dev.despairarc.mapstudio.uxfixpreview` uses **separate private
+autosaves** from the Spaces and Sheet Preview APKs. Do not uninstall those
+apps before backing up maps. CI test signing keys change between builds.
+
+### Terrain, filtering and gestures
+
+- The Terrain tool is now **Brush / Bucket / Eraser**. Bucket flood-fills
+  only the four-way-connected cells sharing the same metatile ID within
+  the touched map; it does not cross map boundaries or overwrite existing
+  collision and elevation values. A multi-tile stamp must be reduced to a
+  single tile before using Bucket. Undo is supported.
+- A tile-sheet **tap** chooses one tile; **hold (~0.46 s) then slide**
+  selects a bounded rectangular source-metatile stamp. A quick swipe scrolls.
+  There is no separate Select group toggle or Both/Primary/Secondary control.
+- The Find filter dims nonmatches **without removing them from their native
+  source-sheet positions**, counts actual source-pair matches, and has up/down
+  jump controls. Grouping selects the first source tileset of that family;
+  changing a painted map's pair requires confirmation to avoid reinterpretation.
+- Existing cells retain collision and elevation when terrain is repainted.
+
+### Events
+
+- Event sprites are fixed in **screen points**, not multiplied by world zoom.
+  Events only render and accept touches in **Events** mode; their source tiles
+  can always be painted in Terrain and Properties. NPC selection outlines
+  are thin rather than a tall opaque frame. Signposts, door/warp icons,
+  scripted-step diamonds and real selected-item icons are visually distinct.
+- Marker hit-testing is screen-space in Events mode, so zooming out does not
+  reduce the touch target to a tiny metatile. Blank canvas taps deselect.
+- Supported authoring is still deliberately limited to (1) person with simple
+  dialogue, (2) sign with simple text, (3) linked/arrival/direct warp,
+  (4) immediate step-message trigger, and (5) selected one-time hidden item.
+  This is **not all Emerald event scripting**. Trainer battles, NPC movement
+  schedules, complex conditional scripts/variables, secret bases, advanced
+  field effects, and other specialized background/object events are not fully
+  implemented. Do not infer gameplay correctness from APK packaging.
+
+### Properties, window mode and device acceptance
+
+- Properties includes visual collision choices 0–3 and elevation choices
+  0–15, live selected-cell art, and source-backed read-only behavior and
+  metatile layer type. There is no separate Emerald terrain/encounter-type
+  field in the 16-bit attribute file for these maps. Metatile source data
+  is not a per-cell editable substitute for the map-block properties.
+- Low-zoom property markers and the selected tile retain a visible outline.
+- Short/floating/split-screen layouts use a compact header, less fixed inset,
+  a bounded bottom dock and resize-triggered gesture cancellation/redraw.
+  Android NativeActivity requests resizable handling and supported
+  configuration changes. This is **build-tested, not yet physically proven**
+  under split-screen/freeform on the owner's Samsung device.
+
+On-device acceptance: launch; resize to split-screen/freeform and back;
+pan/pinch and tap after resizing; verify icons and event selection at zoom
+minimum; paint under an event; inspect collision/elevation at low zoom;
+verify source item graphics; check Bucket boundaries and Undo; ensure Find
+arrows scroll to real matches; check that older installations retain autosaves.
