@@ -86,6 +86,55 @@ pub struct Marker {
     pub y: u32,
 }
 
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EventKind { Npc, Sign, Warp, Trigger }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MapEvent {
+    pub kind: EventKind,
+    pub x: u32,
+    pub y: u32,
+    pub elevation: u8,
+    #[serde(default)]
+    pub dialogue: String,
+    #[serde(default)]
+    pub dest_map_id: u32,
+    #[serde(default)]
+    pub dest_warp_id: u8,
+    #[serde(default)]
+    pub script: String,
+    #[serde(default = "default_graphics_id")]
+    pub graphics_id: String,
+    #[serde(default = "default_trigger_var")]
+    pub var: String,
+    #[serde(default)]
+    pub var_value: u16,
+}
+
+fn default_graphics_id() -> String { "OBJ_EVENT_GFX_YOUNGSTER".into() }
+fn default_trigger_var() -> String { "VAR_TEMP_0".into() }
+
+impl MapEvent {
+    pub fn new(kind: EventKind, x: u32, y: u32) -> Self {
+        Self {
+            kind, x, y,
+            elevation: 3,
+            dialogue: match kind {
+                EventKind::Npc => "Hello, traveler!".into(),
+                EventKind::Sign => "Welcome!".into(),
+                _ => String::new(),
+            },
+            dest_map_id: 0,
+            dest_warp_id: 0,
+            script: String::new(),
+            graphics_id: default_graphics_id(),
+            var: default_trigger_var(),
+            var_value: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapFrame {
     pub id: u32,
@@ -95,6 +144,8 @@ pub struct MapFrame {
     pub height: u32,
     pub cells: Vec<Option<Cell>>,
     pub markers: Vec<Marker>,
+    #[serde(default)]
+    pub events: Vec<MapEvent>,
 }
 
 impl MapFrame {
@@ -168,6 +219,7 @@ impl World {
             id, name: name.into(), origin, width, height,
             cells: vec![None; (width as usize) * (height as usize)],
             markers: Vec::new(),
+            events: Vec::new(),
         });
         Ok(id)
     }
@@ -202,6 +254,32 @@ impl World {
                     }
                 }
             }
+        }
+        false
+    }
+
+
+    pub fn add_event(&mut self, p: GridPoint, kind: EventKind) -> Option<(u32,usize)> {
+        let suggested_target=self.maps.iter().find(|m|!m.contains(p)).map(|m|m.id).unwrap_or(0);
+        if let Some(map)=self.maps.iter_mut().find(|m|m.contains(p)) {
+            let x=(p.x-map.origin.x) as u32;
+            let y=(p.y-map.origin.y) as u32;
+            if let Some(index)=map.events.iter().position(|e|e.x==x&&e.y==y) {
+                return Some((map.id,index));
+            }
+            let mut event=MapEvent::new(kind,x,y);
+            if kind==EventKind::Warp {
+                event.elevation=0;
+                event.dest_map_id=suggested_target;
+            }
+            map.events.push(event);
+            Some((map.id,map.events.len()-1))
+        } else { None }
+    }
+
+    pub fn remove_event(&mut self,map_id:u32,index:usize) -> bool {
+        if let Some(map)=self.maps.iter_mut().find(|m|m.id==map_id) {
+            if index<map.events.len() { map.events.remove(index); return true; }
         }
         false
     }
@@ -291,6 +369,7 @@ impl World {
         let map = &mut self.maps[index];
         map.cells = next;
         map.markers.retain(|m| m.x < width && m.y < height);
+        map.events.retain(|e| e.x < width && e.y < height);
         map.width = width;
         map.height = height;
         true
@@ -405,5 +484,29 @@ mod more_tests {
         assert!(!w.paint_metatile(GridPoint::new(2,2),1024));
         assert!(!w.paint_metatile(GridPoint::new(-200,0),1));
         assert!(w.paint_metatile(GridPoint::new(2,2),1));
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    #[test]
+    fn event_position_remains_map_local() {
+        let mut w=World::sample();
+        let (id,index)=w.add_event(GridPoint::new(13,1),EventKind::Warp).unwrap();
+        assert_eq!(id,2);
+        assert_eq!(w.maps[1].events[index].x,1);
+        assert_eq!(w.maps[1].events[index].y,1);
+        assert_eq!(w.maps[1].events[index].dest_map_id,1);
+        assert!(w.remove_event(id,index));
+    }
+    #[test]
+    fn event_survives_world_serialization_and_move() {
+        let mut w=World::sample();
+        w.add_event(GridPoint::new(1,1),EventKind::Npc).unwrap();
+        assert!(w.move_frame(1,GridPoint::new(-12,0)));
+        let restored:World=serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert_eq!(restored.maps[0].events[0].x,1);
+        assert_eq!(restored.maps[0].events[0].dialogue,"Hello, traveler!");
     }
 }
