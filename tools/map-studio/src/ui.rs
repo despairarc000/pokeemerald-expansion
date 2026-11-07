@@ -1959,6 +1959,59 @@ impl MapStudioApp {
         }
     }
 
+    /// Choose a 1/2/5 decade step with legible spacing in screen points.
+    /// Coordinates are UI-only world-grid indices: no map data is changed.
+    fn coordinate_step(zoom:f32)->i32 {
+        for step in [1,2,5,10,20,50,100,200,500,1_000,2_000,
+                     5_000,10_000,20_000,50_000,100_000] {
+            if zoom*step as f32>=48.0{return step;}
+        }
+        100_000
+    }
+
+    fn draw_coordinate_guides(&self,painter:&egui::Painter,rect:Rect){
+        let step=Self::coordinate_step(self.zoom);
+        let (left,right,top,bottom)=(
+            (-self.offset.x/self.zoom).floor() as i32,
+            ((rect.width()-self.offset.x)/self.zoom).ceil() as i32,
+            (-self.offset.y/self.zoom).floor() as i32,
+            ((rect.height()-self.offset.y)/self.zoom).ceil() as i32);
+        let first_x=left.div_euclid(step)*step;
+        let first_y=top.div_euclid(step)*step;
+        let col=Color32::from_black_alpha(155);
+        let font=FontId::proportional(10.0);
+        for n in 0..=150 {
+            let x=first_x.saturating_add(n*step);
+            if x>right {break;}
+            let px=self.screen_at(rect,x as f32,0.0).x;
+            if px>rect.left()+22.0 && px<rect.right()-20.0 {
+                painter.text(pos2(px+2.0,rect.top()+2.0),
+                    Align2::LEFT_TOP,x.to_string(),font.clone(),col);
+            }
+        }
+        for n in 0..=150 {
+            let y=first_y.saturating_add(n*step);
+            if y>bottom {break;}
+            let py=self.screen_at(rect,0.0,y as f32).y;
+            if py>rect.top()+18.0 && py<rect.bottom()-15.0 {
+                painter.text(pos2(rect.left()+3.0,py+1.0),
+                    Align2::LEFT_TOP,y.to_string(),font.clone(),col);
+            }
+        }
+        // Small hollow origin target, never an opaque coordinate tile.
+        let origin=self.screen_at(rect,0.0,0.0);
+        if rect.contains(origin) {
+            painter.circle_stroke(origin,5.0,
+                Stroke::new(1.5,Color32::from_rgb(36,111,191)));
+            painter.line_segment([origin+vec2(-8.0,0.0),
+                origin+vec2(-5.0,0.0)],
+                Stroke::new(1.2,Color32::from_rgb(36,111,191)));
+            painter.line_segment([origin+vec2(0.0,-8.0),
+                origin+vec2(0.0,-5.0)],
+                Stroke::new(1.2,Color32::from_rgb(36,111,191)));
+        }
+    }
+
     fn draw_canvas(&self, ui: &egui::Ui, rect: Rect, is_editing: bool) {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, Color32::WHITE);
@@ -2044,26 +2097,16 @@ impl MapStudioApp {
                             painter.rect_stroke(tile_rect,0.0,
                                 Stroke::new(0.5,Color32::from_white_alpha(48)),StrokeKind::Inside);
                         }
-                        if self.mode == Mode::Properties {
+                        if self.show_properties {
                             let (tint,symbol) = property_visual(cell,self.elevation_tool);
                             painter.rect_filled(tile_rect,0.0,tint);
                             // Water, ice and ledges are prominent at the *default* zoom;
                             // collision bits remain visible in the corner of those tiles.
                             let behavior=if self.elevation_tool{None}
                                 else {map_pair.and_then(|pair|tiles::behavior_overlay_in(pair,cell.metatile_id))};
-                            if s<10.0 {
-                                let dot_color=if self.elevation_tool {
-                                    Color32::from_rgb(181,130,45)
-                                }else{match cell.collision {
-                                    0=>Color32::from_rgb(46,153,82),
-                                    1=>Color32::from_rgb(193,66,66),
-                                    2=>Color32::from_rgb(132,96,180),
-                                    _=>Color32::from_rgb(216,136,37)
-                                }};
-                                painter.circle_filled(tile_rect.center(),
-                                    (s*0.30).clamp(1.6,3.2),dot_color);
-                            }
-                            if s>=10.0 {
+                            // At distance only the accurate source-bit tint
+                            // remains; no fake per-cell dots obscuring the map.
+                            if s>=13.0 {
                                 painter.text(tile_rect.center(),Align2::CENTER_CENTER,
                                     behavior.unwrap_or(symbol),
                                     FontId::proportional((s*0.58).clamp(8.0,17.0)),
@@ -2079,9 +2122,25 @@ impl MapStudioApp {
                     }
                 }
             }
-            // Event-only overlay: other tools see unobstructed real tiles.
-            // Markers keep touch-sized *screen* icons even at low world zoom.
-            if self.mode==Mode::Events {
+            // Draw map-grid strokes AFTER terrain images, before event art.
+            // Previously textures covered all grid lines within maps.
+            let grid_color=Color32::from_black_alpha(if s<6.0{78}else{59});
+            let grid_line=Stroke::new(if s<6.0{0.8}else{0.7},grid_color);
+            if s>=2.0 {
+                for gx in lx0.max(0)..=lx1.max(0) {
+                    let x=self.screen_at(rect,(map.origin.x+gx) as f32,0.0).x;
+                    painter.line_segment([pos2(x,mrect.top().max(rect.top())),
+                        pos2(x,mrect.bottom().min(rect.bottom()))],grid_line);
+                }
+                for gy in ly0.max(0)..=ly1.max(0) {
+                    let y=self.screen_at(rect,0.0,(map.origin.y+gy) as f32).y;
+                    painter.line_segment([pos2(mrect.left().max(rect.left()),y),
+                        pos2(mrect.right().min(rect.right()),y)],grid_line);
+                }
+            }
+            // Visual overlays are independent from interaction mode.
+            // Only the respective tab can hit-test or edit each layer.
+            if self.show_events {
             for (event_index,event) in map.events.iter().enumerate() {
                 let center=self.screen_at(rect,
                     map.origin.x as f32+event.x as f32+0.5,
@@ -2090,7 +2149,7 @@ impl MapStudioApp {
                 let selected=self.mode==Mode::Events
                     && self.selected_event==Some((map.id,event_index));
                 let subdued=self.mode!=Mode::Events;
-                let alpha=if subdued{160}else{255};
+                let alpha=if subdued{178}else{255};
                 if event.kind==EventKind::Npc {
                     if let Some(idx)=choices::npc_preview_index(&event.graphics_id){
                         let rows=(choices::NPC_PREVIEW_COUNT+7)/8;
@@ -2099,26 +2158,27 @@ impl MapStudioApp {
                         let uv=Rect::from_min_max(
                             pos2(col/8.0,row/(rows as f32)),
                             pos2((col+1.0)/8.0,(row+1.0)/(rows as f32)));
-                        // Fixed portrait on screen, regardless of canvas zoom:
-                        // no oversized selection frame around a tall sprite.
-                        let height=37.0;
-                        let width=height*24.0/40.0;
+                        // Pokémon sprite dimensions are proportional to a
+                        // 16px metatile: approximately 24x40 source pixels.
+                        let height=s*2.5;
+                        let width=s*1.5;
                         let bounds=Rect::from_min_max(
-                            pos2(center.x-width*0.5,center.y+5.0-height),
-                            pos2(center.x+width*0.5,center.y+5.0));
+                            pos2(center.x-width*0.5,center.y+s*0.5-height),
+                            pos2(center.x+width*0.5,center.y+s*0.5));
                         painter.image(self.npc_atlas.id(),bounds,uv,
                             Color32::from_white_alpha(alpha));
                         if selected {
                             // Outline the NPC's map-footprint, not the tall
                             // sprite texture, which looked like an oversized
                             // selection rectangle at low zoom.
-                            painter.circle_stroke(center+vec2(0.0,5.0),9.0,
+                            painter.circle_stroke(center+vec2(0.0,s*0.5),s*0.46,
                                 Stroke::new(1.7,Color32::from_rgb(25,108,190)));
                         }
                         continue;
                     }
                 }
-                let size=20.0;
+                let f=s/16.0;
+                let size=s*1.25;
                 let icon=Rect::from_center_size(center,Vec2::splat(size));
                 match event.kind {
                     EventKind::HiddenItem=>{
@@ -2132,56 +2192,56 @@ impl MapStudioApp {
                         }else{
                             // Before a source item is chosen, show a parcel
                             // outline, never the old generic question circle.
-                            painter.rect_filled(icon.shrink(3.0),2.0,
+                            painter.rect_filled(icon.shrink(3.0*f),2.0,
                                 Color32::from_rgb(205,163,80));
-                            painter.line_segment([center+vec2(-5.0,0.0),
-                                center+vec2(5.0,0.0)],
+                            painter.line_segment([center+vec2(-5.0*f,0.0*f),
+                                center+vec2(5.0*f,0.0*f)],
                                 Stroke::new(1.4,Color32::from_rgb(112,72,27)));
-                            painter.line_segment([center+vec2(0.0,-6.0),
-                                center+vec2(0.0,6.0)],
+                            painter.line_segment([center+vec2(0.0*f,-6.0*f),
+                                center+vec2(0.0*f,6.0*f)],
                                 Stroke::new(1.4,Color32::from_rgb(112,72,27)));
                         }
                     }
                     EventKind::Sign=>{
                         let brown=Color32::from_rgb(127,82,41);
                         painter.rect_filled(Rect::from_center_size(
-                            center+vec2(0.0,5.0),vec2(3.5,13.0)),1.0,brown);
+                            center+vec2(0.0*f,5.0*f),vec2(3.5*f,13.0*f)),1.0,brown);
                         painter.rect_filled(Rect::from_center_size(
-                            center+vec2(0.0,-3.5),vec2(18.0,11.0)),2.0,brown);
+                            center+vec2(0.0*f,-3.5*f),vec2(18.0*f,11.0*f)),2.0,brown);
                         painter.rect_filled(Rect::from_center_size(
-                            center+vec2(0.0,-3.5),vec2(15.0,8.0)),1.0,
+                            center+vec2(0.0*f,-3.5*f),vec2(15.0*f,8.0*f)),1.0,
                             Color32::from_rgb(241,208,142));
-                        painter.line_segment([center+vec2(-4.0,-5.0),
-                            center+vec2(4.0,-5.0)],
+                        painter.line_segment([center+vec2(-4.0*f,-5.0*f),
+                            center+vec2(4.0*f,-5.0*f)],
                             Stroke::new(1.2,Color32::from_rgb(128,83,44)));
                     }
                     EventKind::Warp=>{
                         let blue=Color32::from_rgb(45,119,194);
-                        let door=Rect::from_center_size(center,vec2(16.0,19.0));
+                        let door=Rect::from_center_size(center,vec2(16.0*f,19.0*f));
                         painter.rect_filled(door,2.0,Color32::from_rgb(36,69,110));
                         painter.rect_filled(door.shrink(2.5),1.0,
                             Color32::from_rgb(158,214,250));
                         painter.text(center,Align2::CENTER_CENTER,
                             if event.arrival_only{"↓"}else if event.warp_mode==WarpMode::Direct{"↗"}else{"→"},
-                            FontId::proportional(13.0),blue);
+                            FontId::proportional(13.0*f),blue);
                     }
                     EventKind::Trigger=>{
-                        let points=vec![center+vec2(0.0,-11.0),
-                            center+vec2(11.0,0.0),center+vec2(0.0,11.0),
-                            center+vec2(-11.0,0.0)];
+                        let points=vec![center+vec2(0.0*f,-11.0*f),
+                            center+vec2(11.0*f,0.0*f),center+vec2(0.0*f,11.0*f),
+                            center+vec2(-11.0*f,0.0*f)];
                         painter.add(egui::Shape::convex_polygon(points,
                             Color32::from_rgb(195,69,106),Stroke::NONE));
                         painter.text(center,Align2::CENTER_CENTER,"!",
-                            FontId::proportional(14.0),Color32::WHITE);
+                            FontId::proportional(14.0*f),Color32::WHITE);
                     }
                     EventKind::Npc=>{
-                        painter.circle_filled(center,8.0,Color32::from_rgb(122,88,168));
+                        painter.circle_filled(center,8.0*f,Color32::from_rgb(122,88,168));
                         painter.text(center,Align2::CENTER_CENTER,"N",
-                            FontId::proportional(12.0),Color32::WHITE);
+                            FontId::proportional(12.0*f),Color32::WHITE);
                     }
                 }
                 if selected{
-                    painter.rect_stroke(icon.expand(2.0),3.0,
+                    painter.rect_stroke(icon.expand(2.0*f),3.0*f,
                         Stroke::new(1.3,Color32::from_rgb(20,100,193)),
                         StrokeKind::Outside);
                 }
@@ -2191,16 +2251,17 @@ impl MapStudioApp {
                     map.origin.x as f32+marker.x as f32+0.5,
                     map.origin.y as f32+marker.y as f32+0.5);
                 if !rect.contains(center){continue;}
-                painter.circle_filled(center,6.0,Color32::from_rgb(117,66,179));
+                painter.circle_filled(center,(s*0.38).max(1.0),Color32::from_rgb(117,66,179));
                 painter.text(center,Align2::CENTER_CENTER,"!",
-                    FontId::proportional(9.0),Color32::WHITE);
+                    FontId::proportional(s*0.55),Color32::WHITE);
             }
             } // end Events-only markers
             painter.text(top_left + vec2(5.0,5.0),Align2::LEFT_TOP,&map.name,
                 FontId::proportional(11.0),Color32::from_black_alpha(if is_editing {48} else {160}));
         }
 
-        // Highlight the selected travel direction without requiring an ID lookup.
+        // Highlight travel links only when event overlays are enabled.
+        if self.show_events && self.mode==Mode::Events {
         if let Some((from_id,event_index))=self.selected_event {
             if let Some(map)=self.world.maps.iter().find(|m|m.id==from_id) {
                 if let Some(warp)=map.events.get(event_index).filter(|e|e.kind==EventKind::Warp){
@@ -2228,15 +2289,25 @@ impl MapStudioApp {
             }
         }
 
-        if self.mode==Mode::Properties {
+        }
+        if self.show_events && self.mode==Mode::Events {
+            if let Some(p)=self.warp_focus{
+                let cell=Rect::from_min_size(self.screen_at(rect,p.x as f32,p.y as f32),
+                    Vec2::splat(s));
+                if rect.intersects(cell){
+                    painter.rect_stroke(cell.expand(2.0),2.0,
+                        Stroke::new(2.2,Color32::from_rgb(29,119,211)),
+                        StrokeKind::Outside);
+                }
+            }
+        }
+        if self.show_properties && self.mode==Mode::Properties {
             if let Some(p)=self.selected_cell {
                 if self.world.map_at(p).is_some() {
                     let at=self.screen_at(rect,p.x as f32,p.y as f32);
                     let cell_rect=Rect::from_min_size(at,Vec2::splat(s));
-                    // Constant-size selection halo remains visible when zoomed out.
-                    let selected=if s<14.0 {
-                        Rect::from_center_size(cell_rect.center(),Vec2::splat(16.0))
-                    }else{cell_rect};
+                    // The outline follows the real map cell at every zoom.
+                    let selected=cell_rect;
                     if rect.intersects(selected) {
                         painter.rect_stroke(selected,0.0,
                             Stroke::new(2.0,Color32::from_rgb(37,62,121)),
@@ -2281,10 +2352,19 @@ impl MapStudioApp {
             let frame_rect = Rect::from_min_size(min,vec2(map.width as f32*s,map.height as f32*s));
             if rect.intersects(frame_rect) {
                 let col = colors[((map.id-1) as usize)%colors.len()];
-                let stroke = Stroke::new(if self.selected_map == Some(map.id){3.3}else{2.4},col);
-                painter.rect_stroke(frame_rect,0.0,stroke,StrokeKind::Inside);
+                if self.selected_map==Some(map.id) {
+                    painter.rect_stroke(frame_rect.expand(1.0),0.0,
+                        Stroke::new(4.0,Color32::from_rgb(25,111,207)),
+                        StrokeKind::Outside);
+                    painter.rect_stroke(frame_rect,0.0,
+                        Stroke::new(1.1,Color32::WHITE),StrokeKind::Inside);
+                }else{
+                    painter.rect_stroke(frame_rect,0.0,
+                        Stroke::new(1.7,col),StrokeKind::Inside);
+                }
             }
         }
+        self.draw_coordinate_guides(&painter,rect);
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
