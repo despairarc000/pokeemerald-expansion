@@ -15,6 +15,12 @@ This is a working native `eframe` / `egui` / `wgpu` Android prototype with real 
 - The existing Python custom-map builder accepts numeric layouts and emits real map binaries and repository map registrations.
 - A headless Rust CLI supports reproducible map edits and exports for AI agents/CI. The Android app and CLI share the same map model.
 
+## Side-by-side Android preview builds
+
+The current Android package is `dev.despairarc.mapstudio.preview`, displayed as **Map Studio Preview**. This is deliberately separate from the older `dev.despairarc.mapstudio` app, so the owner can compare UX changes without removing previously autosaved work. The two packages **do not share** saved projects. The old test APK and this Preview can remain installed simultaneously.
+
+CI still uses a temporary test signing key on every run. A later **Preview** APK may require uninstalling the previous Preview before installation. Do not uninstall an app containing valuable unsaved/unexported maps. Stable signing and safe project import/restore are separate unfinished tasks.
+
 ## Android file access
 
 On Android 10+, **Backup** publishes a JSON file and **Export** publishes the game-source ZIP to **Downloads/MapStudio** through Android MediaStore, not app-private Android/data. The app's own working autosave remains private. Android 8–9 shared-file publishing is not supported yet; desktop builds save to a local directory. The Android Downloads bridge has passed compilation but needs a physical-device export test.
