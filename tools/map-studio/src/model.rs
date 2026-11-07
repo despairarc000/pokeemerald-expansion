@@ -88,7 +88,15 @@ pub struct Marker {
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EventKind { Npc, Sign, Warp, Trigger }
+pub enum EventKind { Npc, Sign, Warp, Trigger, HiddenItem }
+
+/// Linked warps use a destination map's numbered warp event.
+/// Direct travel is implemented as a script-triggered coordinate warp.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WarpMode {
+    #[default] Linked,
+    Direct,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapEvent {
@@ -102,6 +110,18 @@ pub struct MapEvent {
     pub dest_map_id: u32,
     #[serde(default)]
     pub dest_warp_id: u8,
+    #[serde(default)]
+    pub warp_mode: WarpMode,
+    #[serde(default)]
+    pub arrival_only: bool,
+    #[serde(default)]
+    pub dest_x: u32,
+    #[serde(default)]
+    pub dest_y: u32,
+    #[serde(default)]
+    pub hidden_item: String,
+    #[serde(default)]
+    pub hidden_flag: String,
     #[serde(default)]
     pub script: String,
     #[serde(default = "default_graphics_id")]
@@ -124,6 +144,12 @@ impl MapEvent {
             dialogue: String::new(),
             dest_map_id: 0,
             dest_warp_id: 0,
+            warp_mode: WarpMode::Linked,
+            arrival_only: false,
+            dest_x: 0,
+            dest_y: 0,
+            hidden_item: String::new(),
+            hidden_flag: String::new(),
             script: String::new(),
             graphics_id: default_graphics_id(),
             var: default_trigger_var(),
@@ -212,7 +238,7 @@ impl World {
             }
             if map.markers.iter().any(|e|e.x>=map.width || e.y>=map.height)
                 || map.events.iter().any(|e|e.x>=map.width || e.y>=map.height ||
-                    e.elevation>15) {
+                    e.elevation>15 || e.dest_warp_id>127) {
                 return Err(format!("Invalid event position in {}",map.name));
             }
         }
@@ -308,7 +334,6 @@ impl World {
 
 
     pub fn add_event(&mut self, p: GridPoint, kind: EventKind) -> Option<(u32,usize)> {
-        let suggested_target=self.maps.iter().find(|m|!m.contains(p)).map(|m|m.id).unwrap_or(0);
         if let Some(map)=self.maps.iter_mut().find(|m|m.contains(p)) {
             let x=(p.x-map.origin.x) as u32;
             let y=(p.y-map.origin.y) as u32;
@@ -316,20 +341,159 @@ impl World {
                 return Some((map.id,index));
             }
             let mut event=MapEvent::new(kind,x,y);
-            if kind==EventKind::Warp {
-                event.elevation=0;
-                event.dest_map_id=suggested_target;
-            }
+            if kind==EventKind::Warp { event.elevation=0; }
             map.events.push(event);
             Some((map.id,map.events.len()-1))
         } else { None }
     }
 
-    pub fn remove_event(&mut self,map_id:u32,index:usize) -> bool {
-        if let Some(map)=self.maps.iter_mut().find(|m|m.id==map_id) {
-            if index<map.events.len() { map.events.remove(index); return true; }
+    pub fn event_at(&self,p:GridPoint)->Option<(u32,usize)> {
+        let map=self.map_at(p)?;
+        let x=(i64::from(p.x)-i64::from(map.origin.x)) as u32;
+        let y=(i64::from(p.y)-i64::from(map.origin.y)) as u32;
+        map.events.iter().position(|e|e.x==x && e.y==y).map(|i|(map.id,i))
+    }
+
+    pub fn event(&self,map_id:u32,index:usize)->Option<&MapEvent>{
+        self.maps.iter().find(|m|m.id==map_id)?.events.get(index)
+    }
+
+    pub fn event_mut(&mut self,map_id:u32,index:usize)->Option<&mut MapEvent>{
+        self.maps.iter_mut().find(|m|m.id==map_id)?.events.get_mut(index)
+    }
+
+    /// Engine IDs enumerate *native* warp events in map order. Direct/scripted
+    /// travel triggers don't consume warp IDs.
+    pub fn warp_id(&self,map_id:u32,event_index:usize)->Option<u8>{
+        let m=self.maps.iter().find(|m|m.id==map_id)?;
+        let e=m.events.get(event_index)?;
+        if e.kind!=EventKind::Warp || e.warp_mode==WarpMode::Direct {return None;}
+        let order=m.events[..event_index].iter().filter(|e|
+            e.kind==EventKind::Warp && e.warp_mode!=WarpMode::Direct).count();
+        u8::try_from(order).ok()
+    }
+
+    pub fn move_event(&mut self,map_id:u32,event_index:usize,p:GridPoint)->Result<(),String>{
+        let m=self.maps.iter_mut().find(|m|m.id==map_id).ok_or("Map not found")?;
+        if !m.contains(p){return Err("Keep this event inside its map".into());}
+        if event_index>=m.events.len(){return Err("Event no longer exists".into());}
+        let x=(i64::from(p.x)-i64::from(m.origin.x)) as u32;
+        let y=(i64::from(p.y)-i64::from(m.origin.y)) as u32;
+        if m.events.iter().enumerate().any(|(i,e)|i!=event_index && e.x==x && e.y==y){
+            return Err("This tile already contains an event".into());
         }
-        false
+        m.events[event_index].x=x;
+        m.events[event_index].y=y;
+        Ok(())
+    }
+
+    /// Point a source warp at an existing native destination marker.
+    /// Optional reverse linking converts arrival-only markers into active return warps.
+    pub fn link_warps(&mut self,source:(u32,usize),destination:(u32,usize),
+        create_return:bool)->Result<(),String>{
+        if source==destination {return Err("Choose a different destination warp".into());}
+        let target=self.event(destination.0,destination.1)
+            .ok_or("Destination event does not exist")?;
+        if target.kind!=EventKind::Warp || target.warp_mode==WarpMode::Direct {
+            return Err("Select a numbered destination warp".into());
+        }
+        let target_id=self.warp_id(destination.0,destination.1)
+            .ok_or("Destination warp has no ID")?;
+        let source_id=if create_return {
+            self.warp_id(source.0,source.1).ok_or("Source needs a numbered warp")?
+        }else{0};
+        let src=self.event_mut(source.0,source.1).ok_or("Source event missing")?;
+        if src.kind!=EventKind::Warp {return Err("Selected source is not a warp".into());}
+        src.warp_mode=WarpMode::Linked;
+        src.arrival_only=false;
+        src.dest_map_id=destination.0;
+        src.dest_warp_id=target_id;
+        if create_return {
+            let dest=self.event_mut(destination.0,destination.1).ok_or("Destination missing")?;
+            dest.warp_mode=WarpMode::Linked;
+            dest.arrival_only=false;
+            dest.dest_map_id=source.0;
+            dest.dest_warp_id=source_id;
+        }
+        Ok(())
+    }
+
+    /// Creates an arrival-only native warp at a specific painted tile, then
+    /// links the source. The marker has no playable return unless configured.
+    pub fn create_arrival_marker(&mut self,source:(u32,usize),p:GridPoint,
+        create_return:bool)->Result<(u32,usize),String>{
+        if self.event(source.0,source.1).map(|e|e.kind)!=Some(EventKind::Warp) {
+            return Err("Select a warp source".into());
+        }
+        if self.event_at(p).is_some(){return Err("Choose an empty destination tile".into());}
+        let map_id=self.map_at(p).ok_or("Choose a destination map")?.id;
+        if map_id==source.0 {return Err("Choose another map for the arrival marker".into());}
+        // The entry must not be on a tile whose behavior immediately warps again.
+        if !self.safe_arrival_at(p) {
+            return Err("Choose a painted, passable arrival tile without a warp behavior".into());
+        }
+        let (target_map,target_index)=self.add_event(p,EventKind::Warp)
+            .ok_or("Cannot add destination marker")?;
+        let target_id=self.warp_id(target_map,target_index).ok_or("Too many warps")?;
+        let target=self.event_mut(target_map,target_index).ok_or("Marker missing")?;
+        target.arrival_only=true;
+        target.dest_map_id=target_map;
+        target.dest_warp_id=target_id; // valid inert native warp; validated non-warp metatile
+        self.link_warps(source,(target_map,target_index),create_return)?;
+        Ok((target_map,target_index))
+    }
+
+    pub fn safe_arrival_at(&self,p:GridPoint)->bool {
+        let Some(map)=self.map_at(p) else {return false;};
+        let x=(i64::from(p.x)-i64::from(map.origin.x)) as u32;
+        let y=(i64::from(p.y)-i64::from(map.origin.y)) as u32;
+        let Some(cell)=map.cell(x,y) else {return false;};
+        cell.collision==0 && crate::tiles::valid_metatile(cell.metatile_id)
+            && !crate::tiles::is_warp_behavior(cell.metatile_id)
+    }
+
+    pub fn set_direct_arrival(&mut self,source:(u32,usize),p:GridPoint)->Result<(),String>{
+        if !self.safe_arrival_at(p){return Err("Pick a painted, passable arrival tile".into());}
+        let target=self.map_at(p).ok_or("Arrival map missing")?;
+        let map_id=target.id;
+        let x=(i64::from(p.x)-i64::from(target.origin.x)) as u32;
+        let y=(i64::from(p.y)-i64::from(target.origin.y)) as u32;
+        let src=self.event_mut(source.0,source.1).ok_or("Warp source missing")?;
+        if src.kind!=EventKind::Warp {return Err("Source must be a warp".into());}
+        src.warp_mode=WarpMode::Direct;
+        src.arrival_only=false;
+        src.dest_map_id=map_id;
+        src.dest_x=x;
+        src.dest_y=y;
+        Ok(())
+    }
+
+    /// Remove without silently re-targeting other warps after indices shift.
+    pub fn remove_event(&mut self,map_id:u32,index:usize)->bool {
+        let Some(event)=self.event(map_id,index).cloned() else {return false;};
+        let removed_warp_id=self.warp_id(map_id,index);
+        if let Some(id)=removed_warp_id {
+            if self.maps.iter().any(|m|m.events.iter().enumerate().any(|(i,e)|
+                (m.id!=map_id || i!=index) && e.kind==EventKind::Warp &&
+                e.warp_mode==WarpMode::Linked && e.dest_map_id==map_id &&
+                e.dest_warp_id==id && !e.arrival_only)) {
+                return false;
+            }
+        }
+        if let Some(map)=self.maps.iter_mut().find(|m|m.id==map_id){
+            map.events.remove(index);
+        }
+        if event.kind==EventKind::Warp && event.warp_mode!=WarpMode::Direct {
+            if let Some(id)=removed_warp_id {
+                for map in &mut self.maps {for e in &mut map.events {
+                    if e.kind==EventKind::Warp && e.warp_mode==WarpMode::Linked &&
+                        e.dest_map_id==map_id && e.dest_warp_id>id {
+                        e.dest_warp_id-=1;
+                    }
+                }}
+            }
+        }
+        true
     }
 
     pub fn add_marker(&mut self, p: GridPoint) -> bool {
@@ -829,5 +993,67 @@ mod touch_geometry_tests {
         assert_eq!(w.preview_resize(id,12,10,ExpandDirection::LowerLeft).unwrap().0,
             GridPoint::new(-2,0));
         assert_eq!(before,w);
+    }
+}
+
+#[cfg(test)]
+mod warp_link_tests {
+    use super::*;
+    fn painted_world()->World{
+        let mut w=World::new();
+        w.add_map("Outside",GridPoint::new(0,0),5,5).unwrap();
+        w.add_map("Inside",GridPoint::new(10,0),5,5).unwrap();
+        for map in &mut w.maps {for cell in &mut map.cells {
+            *cell=Some(Cell{terrain:TileKind::Grass,metatile_id:1,collision:0,elevation:3});
+        }}
+        w
+    }
+    #[test]
+    fn one_way_link_does_not_invent_reverse() {
+        let mut w=painted_world();
+        let a=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        let b=w.add_event(GridPoint::new(11,1),EventKind::Warp).unwrap();
+        w.link_warps(a,b,false).unwrap();
+        assert_eq!(w.event(a.0,a.1).unwrap().dest_map_id,b.0);
+        assert_eq!(w.event(a.0,a.1).unwrap().dest_warp_id,0);
+        assert_eq!(w.event(b.0,b.1).unwrap().dest_map_id,0);
+    }
+    #[test]
+    fn optional_return_link_is_explicit() {
+        let mut w=painted_world();
+        let a=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        let b=w.add_event(GridPoint::new(11,1),EventKind::Warp).unwrap();
+        w.link_warps(a,b,true).unwrap();
+        assert_eq!(w.event(b.0,b.1).unwrap().dest_map_id,a.0);
+        assert_eq!(w.event(b.0,b.1).unwrap().dest_warp_id,0);
+    }
+    #[test]
+    fn arrival_marker_uses_real_inert_tile_and_no_reverse() {
+        let mut w=painted_world();
+        let a=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        let b=w.create_arrival_marker(a,GridPoint::new(11,1),false).unwrap();
+        assert!(w.event(b.0,b.1).unwrap().arrival_only);
+        assert_eq!(w.event(b.0,b.1).unwrap().dest_map_id,b.0);
+        assert_eq!(w.event(a.0,a.1).unwrap().dest_map_id,b.0);
+    }
+    #[test]
+    fn direct_arrival_requires_no_destination_warp() {
+        let mut w=painted_world();
+        let a=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        w.set_direct_arrival(a,GridPoint::new(12,2)).unwrap();
+        assert_eq!(w.event(a.0,a.1).unwrap().warp_mode,WarpMode::Direct);
+        assert_eq!(w.event(a.0,a.1).unwrap().dest_x,2);
+        assert_eq!(w.event(a.0,a.1).unwrap().dest_y,2);
+        assert!(w.warp_id(a.0,a.1).is_none());
+    }
+    #[test]
+    fn moving_event_rejects_occupied_tile_or_different_map() {
+        let mut w=painted_world();
+        let a=w.add_event(GridPoint::new(1,1),EventKind::Npc).unwrap();
+        w.add_event(GridPoint::new(2,2),EventKind::Sign);
+        assert!(w.move_event(a.0,a.1,GridPoint::new(2,2)).is_err());
+        assert!(w.move_event(a.0,a.1,GridPoint::new(11,1)).is_err());
+        w.move_event(a.0,a.1,GridPoint::new(3,3)).unwrap();
+        assert_eq!(w.event(a.0,a.1).unwrap().x,3);
     }
 }
