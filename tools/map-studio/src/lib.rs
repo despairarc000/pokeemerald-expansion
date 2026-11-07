@@ -2,6 +2,8 @@
 pub mod model;
 pub mod export;
 pub mod storage;
+#[cfg(target_os = "android")]
+mod android_export;
 mod ui;
 
 pub use ui::MapStudioApp;
@@ -13,6 +15,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         android_logger::Config::default().with_max_level(log::LevelFilter::Info),
     );
 
+    android_export::set_app(app.clone());
     let save_path = app.internal_data_path().map(|p| p.join("map-studio-project.json"));
     let export_dir = app.external_data_path().map(|p| p.join("MapStudio"));
 
