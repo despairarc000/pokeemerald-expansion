@@ -75,4 +75,14 @@ fn main() {
     assert!(process.success(),"Failed to load source-verified NPC art");
 
 
+    let item_script=root.join("tools/map-studio/scripts/build_items.py");
+    println!("cargo:rerun-if-changed={}",item_script.display());
+    for folder in ["graphics/items/icons","graphics/items/icon_palettes"] {
+        println!("cargo:rerun-if-changed={}",root.join(folder).display());
+    }
+    let icon_out=PathBuf::from(env::var("OUT_DIR").unwrap()).join("items");
+    let status=Command::new("python3").arg(item_script).arg(&root).arg(&icon_out)
+        .status().expect("Cannot generate native item icons");
+    assert!(status.success(),"Failed to decode source item icons");
+
 }
