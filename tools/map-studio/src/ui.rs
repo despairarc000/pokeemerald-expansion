@@ -1089,7 +1089,7 @@ impl MapStudioApp {
         // With enough room, the pickers/tools stay pinned while art scrolls.
         // In split-screen/freeform, all content except the grip scrolls in a
         // bounded area. That ensures a huge picker cannot push the dock away.
-        let compact=ui.available_height()<205.0;
+        let compact=ui.available_height()<340.0;
         if compact{
             egui::ScrollArea::vertical().id_salt("compact_dock_content")
                 .auto_shrink([false,false])
@@ -2029,10 +2029,7 @@ impl MapStudioApp {
                     if ((file.starts_with("MapStudio-project-")
                         || file.starts_with("MapStudio-recovery-"))
                         && file.ends_with(".json")
-                        || (file.starts_with("MapStudio-maps-")
-                            || file.starts_with("MapStudio-editable-")
-                            || file.starts_with("MapStudio-artwork-"))
-                            && file.ends_with(".zip"))
+                        || file.ends_with(".zip"))
                         && entry.path().is_file(){
                         items.push((format!("local:{file}"),format!("{file} (local recovery)")));
                     }
@@ -2054,8 +2051,11 @@ impl MapStudioApp {
         match self.load_restore_choices() {
             Ok(items)=>{
                 self.available_backups=items.into_iter()
-                    .filter(|(_,name)|!name.contains("MapStudio-artwork-"))
-                    .collect();
+                    .filter(|(_,name)|{
+                        ["MapStudio-project-","MapStudio-recovery-",
+                         "MapStudio-maps-","MapStudio-editable-"]
+                            .iter().any(|prefix|name.contains(prefix))
+                    }).collect();
                 self.selected_backup=None;
                 self.project_restore_open=true;
                 self.message="Choose an editable ZIP or JSON project. Existing work is backed up before import.".into();
@@ -2066,9 +2066,10 @@ impl MapStudioApp {
 
     fn read_restore_entry(&self,id:&str)->Result<Vec<u8>,String> {
         if let Some(filename)=id.strip_prefix("local:") {
-            if !filename.starts_with("MapStudio-")
-                || !(filename.ends_with(".json") || filename.ends_with(".zip"))
-                || filename.contains('/') || filename.contains('\\') {
+            if !(filename.ends_with(".zip") ||
+                (filename.starts_with("MapStudio-") && filename.ends_with(".json")))
+                || filename.len()>200 || filename.contains('/')
+                || filename.contains('\\') || filename.starts_with('.') {
                 return Err("Invalid backup file name".into());
             }
             let path=self.output_dir()?.join(filename);

@@ -157,7 +157,7 @@ pub fn list_backups()->Result<Vec<BackupEntry>,String> {
                 if (name.starts_with("MapStudio-project-") && name.ends_with(".json"))
                     || (name.starts_with("MapStudio-maps-") && name.ends_with(".zip"))
                     || (name.starts_with("MapStudio-editable-") && name.ends_with(".zip"))
-                    || (name.starts_with("MapStudio-artwork-") && name.ends_with(".zip")) {
+                    || name.ends_with(".zip") {
                     out.push(BackupEntry{id,name});
                 }
                 if out.len()>=80 {break;}
