@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/map-studio-native-android
+      - feature/map-studio-metatile-sheet-browser
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'
