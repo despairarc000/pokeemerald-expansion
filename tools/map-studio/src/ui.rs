@@ -2057,9 +2057,11 @@ impl MapStudioApp {
                         painter.image(self.npc_atlas.id(),bounds,uv,
                             Color32::from_white_alpha(alpha));
                         if selected {
-                            painter.rect_stroke(bounds.expand(1.0),2.0,
-                                Stroke::new(1.25,Color32::from_rgb(25,108,190)),
-                                StrokeKind::Outside);
+                            // Outline the NPC's map-footprint, not the tall
+                            // sprite texture, which looked like an oversized
+                            // selection rectangle at low zoom.
+                            painter.circle_stroke(center+vec2(0.0,5.0),9.0,
+                                Stroke::new(1.7,Color32::from_rgb(25,108,190)));
                         }
                         continue;
                     }
