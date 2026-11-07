@@ -876,76 +876,170 @@ impl MapStudioApp {
     }
 
     fn artwork_selectors(&mut self,ui:&mut egui::Ui){
-        // Two separate touch-friendly dropdowns share one compact row.
-        // Category always filters the second box before it renders.
+        let collection=if let Some(index)=self.active_pack {
+            self.installed_packs.get(index).map(|p|
+                format!("{} · {}",p.manifest.engine,p.manifest.collection))
+                .unwrap_or_else(||"Emerald".into())
+        }else{"Emerald".into()};
+        let mut choices=vec![("builtin".to_string(),"Emerald".to_string(),None)];
+        for (index,pack) in self.installed_packs.iter().enumerate(){
+            let key=format!("{} · {}",pack.manifest.engine,pack.manifest.collection);
+            if !choices.iter().any(|(label,_,_)|label==&key){
+                choices.push((key,pack.manifest.collection.clone(),Some(index)));
+            }
+        }
         ui.horizontal(|ui|{
-            ui.strong("Art");
-            let width=((ui.available_width()-8.0)/2.0).max(88.0);
-            let current=self.browsing_pair();
-            let mut selected_category:Option<&'static str>=None;
-            egui::ComboBox::from_id_salt("source_art_category")
-                .selected_text(current.category)
-                .width(width)
+            ui.strong("Collection");
+            egui::ComboBox::from_id_salt("artwork_collection")
+                .selected_text(collection.as_str())
+                .width(ui.available_width().max(110.0)*0.50)
                 .show_ui(ui,|ui|{
-                    for category in tiles::SOURCE_CATEGORIES{
-                        if ui.add_sized(vec2(ui.available_width().max(175.0),37.0),
-                            egui::Button::new(category).fill(
-                                if category==current.category{
-                                    Color32::from_rgb(197,226,248)
-                                }else{Color32::from_gray(242)}
-                            )).clicked(){
-                            selected_category=Some(category);
+                    for (key,label,first_index) in &choices{
+                        if ui.add_sized(vec2(ui.available_width().max(150.0),36.0),
+                            egui::Button::new(label)).clicked(){
+                            self.active_pack=*first_index;
+                            self.selected_prefab=None;
+                            self.selected_stamp=None;
+                            self.artwork_view=ArtworkView::Metatiles;
+                            self.message=if self.active_pack.is_some(){
+                                "Imported artwork preview; only verified native Emerald art is paintable".into()
+                            }else{"Built-in Emerald source artwork".into()};
                             ui.close();
                         }
+                        let _=key;
                     }
                 });
-            if let Some(category)=selected_category{
-                if let Some(first)=tiles::first_in_category(category){
-                    self.request_tileset(first.key);
+            ui.menu_button("Pack",|ui|{
+                if ui.button("Import artwork ZIP").clicked(){
+                    self.open_artwork_import_list();
+                    ui.close();
                 }
-            }
+                if ui.button("Export selected artwork").clicked(){
+                    self.try_export_artwork();
+                    ui.close();
+                }
+            });
+        });
+        if self.active_pack.is_none(){
             let current=self.browsing_pair();
-            let mut selected_key:Option<&'static str>=None;
-            egui::ComboBox::from_id_salt("source_art_tileset")
-                .selected_text(current.label)
-                .width(width)
-                .show_ui(ui,|ui|{
-                    egui::ScrollArea::vertical().max_height(310.0)
-                        .id_salt("source_art_choices").show(ui,|ui|{
-                        for pair in tiles::pairs().iter()
-                            .filter(|pair|pair.category==current.category){
-                            if ui.add_sized(vec2(ui.available_width().max(190.0),38.0),
-                                egui::Button::new(pair.label).fill(
-                                    if pair.key==current.key{
-                                        Color32::from_rgb(197,226,248)
-                                    }else{Color32::from_gray(242)}
-                                )).clicked(){
-                                selected_key=Some(pair.key);
-                                ui.close();
+            // Horizontal category chips are naturally swipe-scrollable on
+            // mobile, independent from canvas drawing and sheet gestures.
+            egui::ScrollArea::horizontal().id_salt("artwork_categories")
+                .auto_shrink([false,true])
+                .show(ui,|ui|{
+                    ui.horizontal(|ui|{
+                        for category in tiles::SOURCE_CATEGORIES{
+                            let active=current.category==category;
+                            if ui.add_sized(vec2((category.len() as f32*7.0+24.0).max(72.0),34.0),
+                                egui::Button::new(category).fill(
+                                    if active{Color32::from_rgb(184,218,247)}
+                                    else{Color32::from_gray(234)})).clicked(){
+                                if let Some(first)=tiles::first_in_category(category){
+                                    self.request_tileset(first.key);
+                                }
                             }
                         }
                     });
                 });
-            if let Some(key)=selected_key{
-                self.request_tileset(key);
-            }
-        });
-        if let Some(pending)=self.pending_tileset.clone(){
-            if let Some(pair)=tiles::pair(&pending){
-                ui.horizontal_wrapped(|ui|{
-                    ui.small(format!("Preview: {}",pair.label));
-                    if ui.small_button("Use artwork").clicked(){
-                        self.apply_pair(&pending);
-                    }
-                    if ui.small_button("Revert").clicked(){
-                        self.pending_tileset=None;
-                        self.selected_stamp=None;
-                        self.find_target=None;
-                        self.tileset_group=self.current_pair().category.into();
-                    }
+            let pair=self.browsing_pair();
+            let group:Vec<&'static tiles::TilePair>=tiles::pairs().iter()
+                .filter(|p|p.category==pair.category).collect();
+            let pos=group.iter().position(|p|p.key==pair.key).unwrap_or(0);
+            ui.horizontal(|ui|{
+                if ui.add_sized(vec2(34.0,36.0),egui::Button::new("‹")).clicked()
+                    && !group.is_empty(){
+                    self.request_tileset(group[(pos+group.len()-1)%group.len()].key);
+                }
+                egui::ComboBox::from_id_salt("artwork_pair")
+                    .selected_text(self.browsing_pair().label)
+                    .width(ui.available_width().max(105.0)-45.0)
+                    .show_ui(ui,|ui|{
+                        egui::ScrollArea::vertical().max_height(300.0).show(ui,|ui|{
+                            for pair in &group{
+                                if ui.add_sized(vec2(ui.available_width().max(175.0),36.0),
+                                    egui::Button::new(pair.label)).clicked(){
+                                    self.request_tileset(pair.key);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                if ui.add_sized(vec2(34.0,36.0),egui::Button::new("›")).clicked()
+                    && !group.is_empty(){
+                    self.request_tileset(group[(pos+1)%group.len()].key);
+                }
+            });
+        } else if let Some(index)=self.active_pack {
+            if let Some(current)=self.installed_packs.get(index){
+                let engine=current.manifest.engine.clone();
+                let source=current.manifest.collection.clone();
+                let category=current.manifest.category.clone();
+                let available:Vec<(usize,String)>=self.installed_packs.iter()
+                    .enumerate().filter(|(_,p)|
+                        p.manifest.engine==engine && p.manifest.collection==source)
+                    .map(|(i,p)|(i,p.manifest.category.clone())).collect();
+                let mut categories=Vec::new();
+                for (_,name) in &available{
+                    if !categories.contains(name){categories.push(name.clone());}
+                }
+                egui::ScrollArea::horizontal().id_salt("imported_artwork_categories")
+                    .show(ui,|ui|{
+                        ui.horizontal(|ui|{
+                            for name in &categories{
+                                let selected=category==*name;
+                                if ui.add_sized(vec2(96.0,34.0),
+                                    egui::Button::new(name).fill(
+                                        if selected{Color32::from_rgb(184,218,247)}
+                                        else{Color32::from_gray(234)})).clicked(){
+                                    self.active_pack=available.iter()
+                                        .find(|(_,cat)|cat==name).map(|(idx,_)|*idx);
+                                }
+                            }
+                        });
+                    });
+                let tilesets:Vec<(usize,String)>=self.installed_packs.iter().enumerate()
+                    .filter(|(_,p)|p.manifest.engine==engine && p.manifest.collection==source
+                        && p.manifest.category==category)
+                    .map(|(i,p)|(i,p.manifest.label.clone())).collect();
+                let label=current.manifest.label.clone();
+                ui.horizontal(|ui|{
+                    ui.label("Tileset");
+                    egui::ComboBox::from_id_salt("imported_artwork_pair")
+                        .selected_text(label)
+                        .width(ui.available_width().max(110.0))
+                        .show_ui(ui,|ui|{
+                            for (index,name) in &tilesets{
+                                if ui.add_sized(vec2(ui.available_width().max(150.0),36.0),
+                                    egui::Button::new(name)).clicked(){
+                                    self.active_pack=Some(*index);
+                                    self.selected_prefab=None;
+                                    ui.close();
+                                }
+                            }
+                        });
                 });
+                ui.small("Imported source package · preview; conversion required before painting.");
             }
         }
+        ui.horizontal(|ui|{
+            if ui.selectable_label(self.artwork_view==ArtworkView::Metatiles,
+                "Metatiles").clicked(){self.artwork_view=ArtworkView::Metatiles;}
+            if ui.selectable_label(self.artwork_view==ArtworkView::Prefabs,
+                "Prefabs").clicked(){self.artwork_view=ArtworkView::Prefabs;}
+            if let Some(pending)=self.pending_tileset.clone(){
+                if self.active_pack.is_none(){
+                    if let Some(pair)=tiles::pair(&pending){
+                        ui.small(format!("Preview: {}",pair.label));
+                        if ui.small_button("Use").clicked(){self.apply_pair(&pending);}
+                        if ui.small_button("Revert").clicked(){
+                            self.pending_tileset=None;
+                            self.selected_stamp=None;
+                            self.selected_prefab=None;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     fn palette(&mut self, ui: &mut egui::Ui) {
