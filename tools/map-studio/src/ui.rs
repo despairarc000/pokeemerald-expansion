@@ -38,6 +38,7 @@ pub struct MapStudioApp {
     last_painted: Option<GridPoint>,
     multitouch_in_progress: bool,
     selected_map: Option<u32>,
+    confirm_delete: Option<u32>,
     message: String,
 }
 
@@ -102,6 +103,7 @@ impl MapStudioApp {
             last_painted: None,
             multitouch_in_progress: false,
             selected_map: None,
+            confirm_delete: None,
             message,
         }
     }
@@ -202,6 +204,46 @@ impl MapStudioApp {
                 });
             }
             Mode::Properties => {
+                if let Some(id)=self.selected_map {
+                    let before=self.world.clone();
+                    let mut name_changed=false;
+                    let mut request_delete=false;
+                    if let Some(map)=self.world.maps.iter_mut().find(|m|m.id==id){
+                        ui.horizontal(|ui|{
+                            ui.label("Map");
+                            name_changed=ui.add(egui::TextEdit::singleline(&mut map.name)
+                                .desired_width(115.0)).changed();
+                            ui.label(format!("{}x{}",map.width,map.height));
+                            if ui.small_button("Delete").clicked(){request_delete=true;}
+                        });
+                    }
+                    if name_changed {
+                        self.before_gesture=Some(before);
+                        self.commit_edit();
+                    }
+                    if request_delete {self.confirm_delete=Some(id);}
+                    if self.confirm_delete==Some(id){
+                        ui.horizontal(|ui|{
+                            ui.label("Delete selected map?");
+                            if ui.small_button("Confirm").clicked(){
+                                self.begin_edit();
+                                match self.world.remove_frame(id){
+                                    Ok(())=>{
+                                        self.selected_map=None;
+                                        self.selected_event=None;
+                                        self.message="Map deleted".into();
+                                    }
+                                    Err(err)=>self.message=err
+                                }
+                                self.commit_edit();
+                                self.confirm_delete=None;
+                            }
+                            if ui.small_button("Cancel").clicked(){
+                                self.confirm_delete=None;
+                            }
+                        });
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.elevation_tool,false,"Collision");
                     ui.selectable_value(&mut self.elevation_tool,true,"Elevation");
