@@ -1,4 +1,4 @@
-# Diary 02 (logs 11 to 22)
+# Diary 02 (logs 11 to 23)
 
 The story of the project in order. Short on purpose. Dates are by session. For the routine, see `ONBOARDING.md`. Earlier history is in `diary01.md`.
 
@@ -44,7 +44,14 @@ Owner reported that v0.5 made map creation harder, requested the original long-p
 
 GitHub Actions `42333090627` succeeded for Rust tests, CLI + numeric map export checks, desktop UI and optimized ARM64 APK. Extracted `map-studio-ux-preview.apk` from the artifact and ZIP-integrity-checked its Android manifest, arm64 `libmap_studio.so`, and JAR signature: 3,649,898 bytes (3.48 MiB), SHA-256 `953a52df95734e4f0acbdf1958ab62de02a90f4ad31457dd2465cec53d6d288e`. The install package is now `dev.despairarc.mapstudio.uxpreview` (**Map Studio UX Preview**), independent of the older Preview and its saved projects. **No physical-device test of v0.6 gestures or actual GBA emulator verification** was performed in this session. Game runtime, GitHub live collaboration and full tileset breadth remain future work. No main game-engine source changed.
 
-## State (as of log 22)
+## Log 23: Map Studio gesture contract and three-way warp editor (2026-11-07)
+Following the owner's approval of a consistent gesture table, the AI implemented a native Rust event-first touch workflow on branch `feature/map-studio-native-android`. Existing placed events get tap-to-select, long-press-and-drag movement (restricted to unoccupied cells in their own map), and double-tap details; event markers take precedence over their parent map's long-press movement. Empty canvas double-tap zooms; a map double-tap opens settings when the tile is blank, or tile properties when painted. The lower palette's handle double-tap collapses/expands it; holding a palette tile shows metadata. The app retains the quick drag-to-pan, blank-grid long press-to-draw map, native metatile collision/elevation editing and four-direction resizing from v0.6.
+
+Warp destinations have three supported editor choices: link an **existing native destination warp**, **create a one-way arrival-only native marker** on non-warp passable terrain, or **select a direct coordinate arrival** with no target warp marker. Return linkage is optional for native links and created markers. Warp tiles display target warp indices, direct-warp icons indicate coordinate travel, and a selected warp shows its destination label and canvas connection line. Model helpers preserve native warp indexes or block destructive changes when links would break. The existing Emerald `warp MAP, x, y` macro and `TRIGGER_RUN_IMMEDIATELY` coordinate-event format are used for direct travel; the source isn't given fictitious numeric warp IDs. The event panel now also supports friendly-name NPC choices, signs, constrained message-on-step triggers, and hidden items from verified item constants with unique pickup slots reserved from known unused persistent flags. Full advanced weather and scripted events remain separate work; there is no arbitrary code field.
+
+GitHub Actions run `42337055762` succeeded both desktop Rust checks (unit tests, headless export smoke test, Python map converter) and optimized ARM64 Android APK packaging. The verified APK is 3,666,282 bytes (3.50 MiB), SHA-256 `d000574b10b421c3e991aa284936abc77d1cfb983d9b655039be726649d1bcdb`, with app ID `dev.despairarc.mapstudio.eventspreview` and label **Map Studio Events Preview** to keep older apps' saved projects intact. **Gesture behavior, actual Android Downloads backup/restore and exported map travel have not yet been verified on the owner's device or an actual built GBA ROM.** The new CI build tests packaging and data conversion, not end-to-end player warp transitions. Work remains isolated from main engine logic and unmerged.
+
+## State (as of log 23)
 
 **Done**
 - Meadowmere natural environment design, down to 20 natural maps (`design/region-meadowmere.md`, `meadowmere-areas.md`, `meadowmere-places.md`, `meadowmere-interiors.md`, `meadowmere-maps-natural.md`).
@@ -59,7 +66,7 @@ GitHub Actions `42333090627` succeeded for Rust tests, CLI + numeric map export 
 - Villages and other buildings are not designed in any region.
 - Species per zone not assigned. The species list has not been checked in the repo. Rarity tier numbers are AI estimates.
 - Map Studio now has a Rust numeric map format and verified atlas generator; real-device export, broader tilesets and ROM/emulator parity still need proof.
-- Map Studio: v0.6 native UX Preview built in Actions run `42333090627` (3.48 MiB), fixing gesture-first map creation/movement, adjustable dock, real collision/behavior icons, elevation tile selection and verified NPC presets. Real-phone interaction check pending; prior Preview versions remain separate. No full GBA ROM or live collaboration proof yet. See `tools/map-studio/README.md` on the feature branch.
+- Map Studio: v0.7 Events Preview built in Actions run `42337055762` (3.50 MiB) implementing the approved gesture table, an event-first input priority, and linked/arrival-marker/direct travel modes. Physical-phone warp UI and actual GBA ROM gameplay are still unverified. Secure GitHub synchronization and live collaboration remain future work. See `tools/map-studio/README.md` on the feature branch.
 - Healing and rest rules, where the player begins, and which regions have gyms are undecided.
 - Owner to confirm the world layout sketch (diary log 10) and whether the "world feel rules" become a core design rule in `design/CORE.md`.
 - Ladder rows were drafted by the AI and need owner review.
