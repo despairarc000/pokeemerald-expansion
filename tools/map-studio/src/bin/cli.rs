@@ -16,6 +16,8 @@ const HELP:&str = "Map Studio CLI
   event <project.json> <npc|sign|warp|trigger> <x> <y>
   validate <project.json>
   export <project.json> <output.zip>
+  import <new-project.json> <backup.json|source.zip>
+  restore <project.json> <backup.json|source.zip>
 Notes: metatile IDs are decimal or 0xHEX, game export requires all cells
 painted and valid scripted events. Directions: upper-left, upper-right,
 lower-left, lower-right. GitHub sync is not part of this CLI yet.";
@@ -54,6 +56,30 @@ fn run(args:&[String])->Result<(),String> {
         if project.exists(){return Err("Project already exists; refusing to overwrite".into());}
         storage::save(project,&World::new())?;
         println!("Created {}",project.display());
+        return Ok(());
+    }
+    if action=="import" || action=="restore" {
+        let input=Path::new(field(args,3,"source backup JSON or ZIP")?);
+        if input==project {return Err("Source and target project must be different".into());}
+        if action=="import" && project.exists() {
+            return Err("Project already exists; use restore to replace it safely".into());
+        }
+        let size=std::fs::metadata(input).map_err(|e|format!("Read backup: {e}"))?.len();
+        if size>storage::MAX_PROJECT_BYTES as u64 {
+            return Err("Import exceeds the 20 MiB limit".into());
+        }
+        let bytes=std::fs::read(input).map_err(|e|e.to_string())?;
+        let incoming=storage::decode_package(&bytes)?;
+        if action=="restore" {
+            let old=storage::load(project)?;
+            let destination=project.with_file_name(format!("MapStudio-recovery-{}.json",
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default().as_millis()));
+            storage::save(&destination,&old)?;
+            println!("Recovery snapshot: {}",destination.display());
+        }
+        storage::save(project,&incoming)?;
+        println!("Imported {} maps to {}",incoming.maps.len(),project.display());
         return Ok(());
     }
     let mut world=storage::load(project)?;
@@ -210,5 +236,39 @@ mod direction_cli_tests {
         assert_eq!(world.maps[0].width,5);
         assert_eq!(world.maps[0].height,6);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod import_restore_cli_tests {
+    use super::*;
+    #[test]
+    fn rejects_replacement_without_explicit_restore() {
+        let root=std::env::temp_dir();
+        let target=root.join(format!("ms-import-existing-{}.json",std::process::id()));
+        let source=root.join(format!("ms-import-source-{}.json",std::process::id()));
+        let original=World::sample();
+        storage::save(&target,&original).unwrap();
+        storage::save(&source,&World::new()).unwrap();
+        let command=vec!["bin","import",target.to_str().unwrap(),source.to_str().unwrap()]
+            .into_iter().map(str::to_string).collect::<Vec<_>>();
+        assert!(run(&command).unwrap_err().contains("already exists"));
+        assert_eq!(storage::load(&target).unwrap(),original);
+        let _=std::fs::remove_file(target);
+        let _=std::fs::remove_file(source);
+    }
+    #[test]
+    fn imports_valid_new_project() {
+        let root=std::env::temp_dir();
+        let target=root.join(format!("ms-import-new-{}.json",std::process::id()));
+        let source=root.join(format!("ms-import-existing-source-{}.json",std::process::id()));
+        let _=std::fs::remove_file(&target);
+        storage::save(&source,&World::sample()).unwrap();
+        let command=vec!["bin","import",target.to_str().unwrap(),source.to_str().unwrap()]
+            .into_iter().map(str::to_string).collect::<Vec<_>>();
+        run(&command).unwrap();
+        assert_eq!(storage::load(&target).unwrap(),World::sample());
+        let _=std::fs::remove_file(target);
+        let _=std::fs::remove_file(source);
     }
 }
