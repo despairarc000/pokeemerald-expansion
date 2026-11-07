@@ -751,6 +751,13 @@ impl MapStudioApp {
                     .map(|map|(map.id,map.origin,map.width,map.height)) {
                     self.selected_map=Some(id);
                     self.selected_cell=Some(p);
+                    if self.size_panel_open {
+                        // Sizing mode selects a frame without painting or moving it.
+                        self.map_width=width;
+                        self.map_height=height;
+                        self.message="Adjust dimensions and choose Apply to selected map".into();
+                        return;
+                    }
                     self.begin_edit();
                     if self.move_tool {
                         if p.x>=origin.x+(width as i32)-2 && p.y>=origin.y+(height as i32)-2 {
