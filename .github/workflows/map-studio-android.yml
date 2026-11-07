@@ -1,0 +1,64 @@
+name: Map Studio (Rust Android)
+
+on:
+  push:
+    branches:
+      - feature/map-studio-native-android
+    paths:
+      - 'tools/map-studio/**'
+      - '.github/workflows/map-studio-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Rust model tests and desktop compile
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/map-studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/map-studio
+      - name: Install Linux GUI prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Unit tests
+        run: cargo test --lib
+      - name: Compile desktop UI
+        run: cargo check --all-targets
+
+  apk:
+    name: Build ARM64 debug APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/map-studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/map-studio
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK tools
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Install cargo-apk
+        run: cargo install --locked --git https://github.com/parasyte/cargo-apk.git --rev 282639508eeed7d73f2e1eaeea042da2716436d5 cargo-apk
+      - name: Package APK
+        run: cargo apk build --lib --target aarch64-linux-android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: map-studio-arm64-debug
+          path: tools/map-studio/target/debug/apk/*.apk
+          if-no-files-found: error
