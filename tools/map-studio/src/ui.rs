@@ -68,6 +68,7 @@ pub struct MapStudioApp {
     sheet_inertia:f32,
     bucket_tool:bool,
     erase_tool: bool,
+    tool_active:bool,
     find_index:usize,
     find_target:Option<u16>,
     elevation_brush: u8,
@@ -178,6 +179,7 @@ impl MapStudioApp {
             sheet_inertia:0.0,
             bucket_tool:false,
             erase_tool: false,
+            tool_active:true,
             find_index:0,
             find_target:None,
             elevation_brush: 3,
@@ -267,12 +269,10 @@ impl MapStudioApp {
             }
             if ui.selectable_label(self.mode == Mode::Properties, "Properties").clicked() {
                 self.mode = Mode::Properties; self.gesture = CanvasGesture::Idle;
-                self.show_properties=true;
                 self.selected_event=None;self.event_editor_open=false;
             }
             if ui.selectable_label(self.mode == Mode::Events, "Events").clicked() {
                 self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
-                self.show_events=true;
             }
             ui.separator();
             let overlays=ui.button("Overlays");
@@ -935,15 +935,24 @@ impl MapStudioApp {
     fn terrain_toolbar(&mut self, ui:&mut egui::Ui) {
                 ui.horizontal_wrapped(|ui|{
                     ui.strong("Tool");
-                    if ui.selectable_label(!self.erase_tool && !self.bucket_tool,"Brush").clicked(){
+                    let brush=self.tool_active && !self.erase_tool && !self.bucket_tool;
+                    if ui.selectable_label(brush,"Brush").clicked(){
+                        self.tool_active=!brush;
                         self.erase_tool=false;self.bucket_tool=false;
                     }
-                    if ui.selectable_label(self.bucket_tool,"Bucket").clicked(){
-                        self.bucket_tool=true;self.erase_tool=false;
+                    let bucket=self.tool_active && self.bucket_tool;
+                    if ui.selectable_label(bucket,"Bucket").clicked(){
+                        self.tool_active=!bucket;
+                        self.bucket_tool=self.tool_active;
+                        self.erase_tool=false;
                     }
-                    if ui.selectable_label(self.erase_tool,"Eraser").clicked(){
-                        self.erase_tool=true;self.bucket_tool=false;
+                    let erase=self.tool_active && self.erase_tool;
+                    if ui.selectable_label(erase,"Eraser").clicked(){
+                        self.tool_active=!erase;
+                        self.erase_tool=self.tool_active;
+                        self.bucket_tool=false;
                     }
+                    if !self.tool_active {ui.small("Pan mode");}
                 });
                 if let Some(pending)=self.pending_tileset.clone(){
                     if let Some(p)=tiles::pair(&pending){
@@ -1351,6 +1360,8 @@ impl MapStudioApp {
                 self.brush_id=first;
                 self.tile_preview=Some(first);
                 self.erase_tool=false;
+                self.bucket_tool=false;
+                self.tool_active=true;
                 self.selected_stamp=Some(stamp);
             }
         }
@@ -1840,7 +1851,7 @@ impl MapStudioApp {
             let at = GridPoint::new(x, y);
             match self.mode {
                 Mode::Terrain => {
-                    if !self.bucket_tool {
+                    if self.tool_active && !self.bucket_tool {
                         if self.erase_tool {
                             self.world.erase(at);
                         } else if let Some(stamp)=self.selected_stamp.as_ref() {
@@ -1964,7 +1975,12 @@ impl MapStudioApp {
                     }
                     CanvasGesture::EmptyPress{at:start,screen:origin,since}=>{
                         let delta=(screen-origin).length();
-                        if Self::long_hold_complete(since,now,delta) {
+                        if self.mode==Mode::Terrain && !self.tool_active && delta>DRAG_PX {
+                            self.gesture=CanvasGesture::PanBlank;
+                            self.offset+=response.drag_delta();
+                            ui.ctx().request_repaint();
+                        }else if Self::long_hold_complete(since,now,delta)
+                            && !(self.mode==Mode::Terrain && !self.tool_active) {
                             self.gesture=CanvasGesture::DrawFrame{from:start,to:at};
                             self.message="Drag to draw map boundary".into();
                             ui.ctx().request_repaint();
@@ -1994,7 +2010,12 @@ impl MapStudioApp {
                     }
                     CanvasGesture::MapPress{id,at:start,screen:origin,since,origin:map_origin}=>{
                         let delta=(screen-origin).length();
-                        if Self::long_hold_complete(since,now,delta) {
+                        if self.mode==Mode::Terrain && !self.tool_active && delta>DRAG_PX {
+                            self.gesture=CanvasGesture::PanBlank;
+                            self.offset+=response.drag_delta();
+                            ui.ctx().request_repaint();
+                        }else if Self::long_hold_complete(since,now,delta)
+                            && !(self.mode==Mode::Terrain && !self.tool_active) {
                             if let Some(edge)=self.edge_at_screen(rect,id,origin){
                                 if let Some(map)=self.world.maps.iter().find(|m|m.id==id){
                                     let (base_width,base_height)=(map.width,map.height);
@@ -2019,7 +2040,7 @@ impl MapStudioApp {
                             }
                             ui.ctx().request_repaint();
                         }else if delta>DRAG_PX {
-                            if self.mode==Mode::Terrain && self.bucket_tool {
+                            if self.mode==Mode::Terrain && self.tool_active && self.bucket_tool {
                                 self.gesture=CanvasGesture::Idle;
                             }else if self.mode==Mode::Events{
                                 self.gesture=CanvasGesture::PanBlank;
@@ -2199,7 +2220,7 @@ impl MapStudioApp {
                                 self.commit_edit();
                             }
                         }
-                    }else if self.mode==Mode::Terrain && self.bucket_tool {
+                    }else if self.mode==Mode::Terrain && self.tool_active && self.bucket_tool {
                         if self.selected_stamp.as_ref().is_some_and(|stamp|!stamp.is_single()){
                             self.message="Bucket fills a single metatile. Tap one tile in the sheet.".into();
                         }else{
@@ -2207,8 +2228,13 @@ impl MapStudioApp {
                             let filled=self.world.bucket_fill(start,self.brush_id);
                             self.commit_edit();
                             self.message=format!("Bucket filled {filled} connected tiles");
+                            // Bucket is a one-shot operation; default back to Brush.
+                            self.bucket_tool=false;
+                            self.erase_tool=false;
+                            self.tool_active=true;
                         }
-                    }else{
+                    }else if self.mode==Mode::Properties
+                        || (self.mode==Mode::Terrain && self.tool_active) {
                         self.begin_edit();
                         self.paint_line(start,start);
                         self.commit_edit();
