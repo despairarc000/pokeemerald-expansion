@@ -30,7 +30,7 @@ pub fn validate(world:&World) -> Result<(), String> {
                 m.name,index%(m.width as usize),index/(m.width as usize)));
         }
         for c in m.cells.iter().flatten() {
-            if c.metatile_id>=1024 || c.collision>3 || c.elevation>15 {
+            if !crate::tiles::valid_metatile(c.metatile_id) || c.collision>3 || c.elevation>15 {
                 return Err(format!("{} contains invalid native tile values",m.name));
             }
         }

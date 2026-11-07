@@ -120,11 +120,8 @@ impl MapEvent {
         Self {
             kind, x, y,
             elevation: 3,
-            dialogue: match kind {
-                EventKind::Npc => "Hello, traveler!".into(),
-                EventKind::Sign => "Welcome!".into(),
-                _ => String::new(),
-            },
+            // Never invent a dialogue line for a new event.
+            dialogue: String::new(),
             dest_map_id: 0,
             dest_warp_id: 0,
             script: String::new(),
@@ -409,6 +406,59 @@ impl World {
         }
         self.maps.retain(|m|m.id!=id);
         Ok(())
+    }
+
+    /// Non-mutating overlap probe used by the touchscreen previews.
+    /// Touching the edge of a neighboring frame is permitted.
+    pub fn can_place_frame(&self, origin:GridPoint,width:u32,height:u32)->Result<(),String>{
+        if width==0 || height==0 || (width as u64)*(height as u64)>100_000 {
+            return Err("Choose a valid map size".into());
+        }
+        if self.maps.len()>=256 {return Err("Map limit reached".into());}
+        let (x,y)=(i64::from(origin.x),i64::from(origin.y));
+        let (right,bottom)=(x+i64::from(width),y+i64::from(height));
+        if self.maps.iter().any(|other| {
+            x<other.right() && right>i64::from(other.origin.x) &&
+            y<other.bottom() && bottom>i64::from(other.origin.y)
+        }) {return Err("This map would overlap another map".into());}
+        Ok(())
+    }
+
+    pub fn preview_resize(&self,id:u32,width:u32,height:u32,
+        direction:ExpandDirection)->Result<(GridPoint,u32,u32),String>{
+        let Some(m)=self.maps.iter().find(|map|map.id==id) else {return Err("No map selected".into())};
+        let (left,top)=(i64::from(m.origin.x),i64::from(m.origin.y));
+        let x=left+if matches!(direction,ExpandDirection::UpperLeft|ExpandDirection::LowerLeft) {
+            i64::from(m.width)-i64::from(width)
+        } else {0};
+        let y=top+if matches!(direction,ExpandDirection::UpperLeft|ExpandDirection::UpperRight) {
+            i64::from(m.height)-i64::from(height)
+        } else {0};
+        let origin=GridPoint::new(
+            i32::try_from(x).map_err(|_|"Map would extend beyond canvas coordinates")?,
+            i32::try_from(y).map_err(|_|"Map would extend beyond canvas coordinates")?,
+        );
+        if !self.fits_rect(id,origin,width,height) {
+            return Err("That size would overlap a map or exceed editor limits".into());
+        }
+        // Prevent a shrinking preview from destroying painted tiles or events.
+        for yy in 0..m.height {for xx in 0..m.width {
+            let nx=left+i64::from(xx)-x;
+            let ny=top+i64::from(yy)-y;
+            if (nx<0||ny<0||nx>=i64::from(width)||ny>=i64::from(height)) &&
+                m.cell(xx,yy).is_some() {
+                return Err("This size would cut off painted tiles".into());
+            }
+        }}
+        for (xx,yy) in m.events.iter().map(|event|(event.x,event.y))
+            .chain(m.markers.iter().map(|marker|(marker.x,marker.y))) {
+            let nx=left+i64::from(xx)-x;
+            let ny=top+i64::from(yy)-y;
+            if nx<0||ny<0||nx>=i64::from(width)||ny>=i64::from(height) {
+                return Err("This size would cut off an event".into());
+            }
+        }
+        Ok((origin,width,height))
     }
 
     pub fn move_frame(&mut self, id: u32, origin: GridPoint) -> bool {
@@ -754,5 +804,30 @@ mod property_bit_tests {
         world.paint_metatile(p,0x0001);
         assert_eq!(world.maps[0].cell(2,2).unwrap().collision,3);
         assert_eq!(world.maps[0].cell(2,2).unwrap().elevation,15);
+    }
+}
+
+#[cfg(test)]
+mod touch_geometry_tests {
+    use super::*;
+    #[test]
+    fn overlap_probe_warns_without_modifying_world() {
+        let mut w=World::new();
+        w.add_map("A",GridPoint::new(0,0),10,10).unwrap();
+        let before=w.clone();
+        assert!(w.can_place_frame(GridPoint::new(5,5),6,6).is_err());
+        assert!(w.can_place_frame(GridPoint::new(10,0),6,6).is_ok());
+        assert_eq!(before,w);
+    }
+    #[test]
+    fn preview_resize_is_nondestructive_and_warns_about_neighbors() {
+        let mut w=World::new();
+        let id=w.add_map("A",GridPoint::new(0,0),10,10).unwrap();
+        w.add_map("B",GridPoint::new(10,0),6,5).unwrap();
+        assert!(w.preview_resize(id,11,10,ExpandDirection::LowerRight).is_err());
+        let before=w.clone();
+        assert_eq!(w.preview_resize(id,12,10,ExpandDirection::LowerLeft).unwrap().0,
+            GridPoint::new(-2,0));
+        assert_eq!(before,w);
     }
 }

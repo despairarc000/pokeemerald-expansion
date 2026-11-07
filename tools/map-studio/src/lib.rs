@@ -2,6 +2,8 @@
 pub mod model;
 pub mod export;
 pub mod storage;
+pub mod tiles;
+pub mod choices;
 #[cfg(target_os = "android")]
 mod android_export;
 mod ui;
