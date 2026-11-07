@@ -35,7 +35,7 @@ jobs:
         run: cargo check --all-targets
 
   apk:
-    name: Build ARM64 debug APK
+    name: Build optimized ARM64 APK
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -58,10 +58,22 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
       - name: Install cargo-apk
         run: cargo install --locked --git https://github.com/parasyte/cargo-apk.git --rev 282639508eeed7d73f2e1eaeea042da2716436d5 cargo-apk
-      - name: Package APK
-        run: cargo apk build --lib --target aarch64-linux-android
+      # The key is disposable: this is a sideload test APK, not a Play Store release.
+      # The certificate changes between CI runs; uninstall older test builds before updating.
+      - name: Generate temporary test signing key
+        run: |
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/map-studio-test.keystore" -storepass android -keypass android -alias mapstudio -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Map Studio Test,O=Development,C=US"
+      - name: Package optimized APK
+        env:
+          CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/map-studio-test.keystore
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
+        run: cargo apk build --release --lib --target aarch64-linux-android
+      - name: Measure APK size
+        run: |
+          ls -lh target/release/apk/*.apk
+          du -h target/release/apk/*.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: map-studio-arm64-debug
-          path: tools/map-studio/target/debug/apk/*.apk
+          name: map-studio-arm64-optimized
+          path: tools/map-studio/target/release/apk/*.apk
           if-no-files-found: error
