@@ -302,7 +302,16 @@ impl MapStudioApp {
                     self.world.active_maps().find(|m|m.id==id).map(|m|m.name.clone()));
                 ui.small(format!("Selected: {}",selected.unwrap_or_else(||"None".into())));
                 if ui.add_enabled(self.selected_map.is_some(),
-                    egui::Button::new("Size")).clicked(){self.size_panel_open=true;}
+                    egui::Button::new("Size")).clicked(){
+                    if let Some(map)=self.selected_map.and_then(|id|
+                        self.world.maps.iter().find(|m|m.id==id)){
+                        self.map_width=map.width;self.map_height=map.height;
+                    }
+                    self.number_axis=Some(SizeAxis::Width);
+                    self.replace_number=true;
+                    self.resize_guidance=None;
+                    self.size_panel_open=true;
+                }
             });
             return;
         }
@@ -344,6 +353,9 @@ impl MapStudioApp {
                     self.map_width=map.width;
                     self.map_height=map.height;
                 }
+                self.number_axis=Some(SizeAxis::Width);
+                self.replace_number=true;
+                self.resize_guidance=None;
                 self.size_panel_open=true;
             }
             if ui.small_button("Fit").clicked() { self.fit_world(); }
@@ -529,6 +541,9 @@ impl MapStudioApp {
             self.selected_map=Some(id);
             self.map_width=m.width;
             self.map_height=m.height;
+            self.number_axis=Some(SizeAxis::Width);
+            self.replace_number=true;
+            self.resize_guidance=None;
             self.size_panel_open=true;
             self.message="Map settings: name, size and expansion direction".into();
         }
