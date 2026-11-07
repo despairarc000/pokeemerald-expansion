@@ -51,6 +51,21 @@ jobs:
         run: python3 -m unittest discover -s tests -p "test_*.py"
       - name: Unit tests
         run: cargo test --lib
+      - name: Headless Rust-to-Python export smoke test
+        run: |
+          cargo run --quiet --bin map-studio-cli -- new target/cli-test.json
+          cargo run --quiet --bin map-studio-cli -- add-map target/cli-test.json TestVillage 0 0 10 10
+          cargo run --quiet --bin map-studio-cli -- fill target/cli-test.json 1 0x170
+          cargo run --quiet --bin map-studio-cli -- validate target/cli-test.json
+          cargo run --quiet --bin map-studio-cli -- export target/cli-test.json target/cli-export.zip
+          python3 - <<'PY'
+          import json,zipfile,struct,importlib.util
+          z=zipfile.ZipFile('target/cli-export.zip')
+          layout=json.loads(z.read('custom_maps/Meadowmere_TestVillage/layout.mapstudio.json'))
+          assert layout['format']=='mapstudio-numeric-v1'
+          assert layout['cells'][0][0]==(0x170 | (3 << 12))
+          print('CLI exported 10x10 native grid and project snapshot')
+          PY
       - name: Compile desktop UI
         run: cargo check --all-targets
 
