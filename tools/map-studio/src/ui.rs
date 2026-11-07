@@ -65,7 +65,6 @@ pub struct MapStudioApp {
     selected_stamp:Option<tiles::MetatileStamp>,
     sheet_anchor:Option<(u16,u16)>,
     sheet_hold:Option<(u16,u16,f64,Pos2)>,
-    sheet_inertia:f32,
     bucket_tool:bool,
     erase_tool: bool,
     tool_active:bool,
@@ -176,7 +175,6 @@ impl MapStudioApp {
             selected_stamp:None,
             sheet_anchor:None,
             sheet_hold:None,
-            sheet_inertia:0.0,
             bucket_tool:false,
             erase_tool: false,
             tool_active:true,
@@ -839,14 +837,16 @@ impl MapStudioApp {
     }
 
     fn palette(&mut self, ui: &mut egui::Ui) {
-        // Only the long source-art sheet is scrollable. The palette handle,
-        // source-pair selector, painting tools and Find navigation stay pinned.
+        // A roomy but compact grab handle; tool choices remain pinned.
         let (handle,response)=ui.allocate_exact_size(
-            vec2(ui.available_width(),21.0),Sense::click_and_drag());
+            vec2(ui.available_width(),33.0),Sense::click_and_drag());
         let center=handle.center();
         ui.painter().rect_filled(handle,0.0,Color32::from_gray(243));
-        ui.painter().rect_filled(Rect::from_center_size(
-            center,vec2(46.0,4.0)),3.0,Color32::from_gray(144));
+        ui.painter().rect_filled(Rect::from_min_size(
+            pos2(center.x-24.0,handle.top()+4.0),vec2(48.0,4.0)),
+            3.0,Color32::from_gray(144));
+        ui.painter().text(pos2(center.x,handle.bottom()-3.0),Align2::CENTER_BOTTOM,
+            "Drag to resize",FontId::proportional(11.0),Color32::from_gray(110));
         if response.dragged() {
             let max=(ui.ctx().content_rect().height()*0.72).max(44.0);
             self.panel_height=(self.panel_height-response.drag_delta().y).clamp(44.0,max);
@@ -858,8 +858,9 @@ impl MapStudioApp {
         if self.mode==Mode::Terrain {
             let chosen=self.current_pair();
             ui.horizontal(|ui|{
-                ui.menu_button(format!("Tileset · {} ▾",chosen.label),|ui|{
+                ui.menu_button(format!("Artwork · {}",chosen.label),|ui|{
                     egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{
+                        ui.small("Emerald tileset names, not destinations.");
                         for group in ["Towns","Houses","Interiors","Caves",
                                       "Outdoor & Special"]{
                             ui.collapsing(group,|ui|{
@@ -888,17 +889,12 @@ impl MapStudioApp {
             self.terrain_toolbar(ui);
         }
         ui.separator();
+        // Native egui touch drag / kinetic scrolling owns all swipe motion.
+        // The previous duplicate per-frame scroll deltas caused the stiffness.
         egui::ScrollArea::vertical().id_salt("dock_content")
+            .drag_to_scroll(self.sheet_anchor.is_none())
             .auto_shrink([false,false]).show(ui,|ui|{
                 if self.mode==Mode::Terrain {
-                    // Inertia advances the source sheet after a quick swipe.
-                    if self.sheet_inertia.abs()>=0.45 {
-                        ui.scroll_with_delta(vec2(0.0,self.sheet_inertia));
-                        self.sheet_inertia*=0.86;
-                        ui.ctx().request_repaint_after(Duration::from_millis(16));
-                    }else{
-                        self.sheet_inertia=0.0;
-                    }
                     self.terrain_sheet_content(ui);
                 }else{
                     self.palette_content(ui);
@@ -1377,7 +1373,7 @@ impl MapStudioApp {
         let rows=(count+tiles::SHEET_COLUMNS-1)/tiles::SHEET_COLUMNS;
         let (rect,response)=ui.allocate_exact_size(
             vec2(side*tiles::SHEET_COLUMNS as f32,side*rows as f32),
-            Sense::click_and_drag());
+            Sense::click());
         let locate=|point:Pos2| -> Option<u16> {
             if !rect.contains(point){return None;}
             let x=((point.x-rect.left())/side).floor() as usize;
@@ -1404,7 +1400,6 @@ impl MapStudioApp {
                     if self.sheet_anchor.is_none(){
                         if now-since>=0.46 && travel<=10.0 {
                             self.sheet_anchor=Some((base,first));
-                            self.sheet_inertia=0.0;
                             self.choose_sheet_stamp(pair,base,first,first);
                         }else if travel>10.0 {
                             // An immediate finger swipe scrolls the sheet.
@@ -1419,12 +1414,6 @@ impl MapStudioApp {
                         }
                     }
                 }
-            }
-            if self.sheet_hold.is_none() && response.dragged()
-                && self.sheet_anchor.is_none() {
-                let delta=response.drag_delta();
-                ui.scroll_with_delta(delta);
-                self.sheet_inertia=delta.y.clamp(-65.0,65.0);
             }
         }
         if released {
