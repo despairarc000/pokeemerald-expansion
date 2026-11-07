@@ -956,35 +956,33 @@ impl MapStudioApp {
                     }
                 }
                 let chosen=self.current_pair();
-                let mut filter_changed=false;
                 ui.horizontal_wrapped(|ui|{
                     ui.label("Find");
+                    let mut filter_changed=false;
                     egui::ComboBox::from_id_salt("metatile-highlight")
                         .selected_text(self.tile_filter.label())
-                        .width(132.0)
+                        .width(122.0)
                         .show_ui(ui,|ui|{
                             for filter in tiles::TileFilter::ALL {
                                 filter_changed |= ui.selectable_value(
                                     &mut self.tile_filter,filter,filter.label()).changed();
                             }
                         });
-                });
-                let matches=if self.tile_filter==tiles::TileFilter::All {
-                    Vec::new()
-                }else{
-                    tiles::tile_ids(chosen).into_iter()
-                        .filter(|id|tiles::matches_filter(chosen,*id,self.tile_filter))
-                        .collect::<Vec<_>>()
-                };
-                if filter_changed {
-                    self.find_index=0;
-                    self.find_target=matches.first().copied();
-                }
-                if !matches.is_empty() {
-                    self.find_index=self.find_index.min(matches.len()-1);
-                }
-                if self.tile_filter!=tiles::TileFilter::All {
-                    ui.horizontal(|ui|{
+                    let matches=if self.tile_filter==tiles::TileFilter::All {
+                        Vec::new()
+                    }else{
+                        tiles::tile_ids(chosen).into_iter()
+                            .filter(|id|tiles::matches_filter(chosen,*id,self.tile_filter))
+                            .collect::<Vec<_>>()
+                    };
+                    if filter_changed{
+                        self.find_index=0;
+                        self.find_target=matches.first().copied();
+                    }
+                    if !matches.is_empty(){
+                        self.find_index=self.find_index.min(matches.len()-1);
+                    }
+                    if self.tile_filter!=tiles::TileFilter::All {
                         if Self::find_arrow(ui,true,!matches.is_empty()){
                             self.find_index=(self.find_index+matches.len()-1)%matches.len();
                             self.find_target=Some(matches[self.find_index]);
@@ -993,11 +991,10 @@ impl MapStudioApp {
                             self.find_index=(self.find_index+1)%matches.len();
                             self.find_target=Some(matches[self.find_index]);
                         }
-                        ui.label(format!("{}/{}",
+                        ui.small(format!("{}/{}",
                             if matches.is_empty(){0}else{self.find_index+1},matches.len()));
-                        ui.small("Non-matches are dimmed");
-                    });
-                }
+                    }
+                });
     }
 
     fn terrain_sheet_content(&mut self, ui:&mut egui::Ui) {
