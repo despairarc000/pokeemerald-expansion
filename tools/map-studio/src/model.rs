@@ -420,23 +420,67 @@ impl World {
     }
 
     pub fn resize_frame(&mut self, id: u32, width: u32, height: u32) -> bool {
-        let Some(index) = self.maps.iter().position(|m| m.id == id) else { return false; };
-        let map = &self.maps[index];
-        if !self.fits_rect(id, map.origin, width, height) { return false; }
-        let new_len = (width as usize) * (height as usize);
-        let mut next = vec![None; new_len];
-        for y in 0..map.height.min(height) {
-            for x in 0..map.width.min(width) {
-                next[(y * width + x) as usize] = map.cell(x, y);
+        self.resize_frame_towards(id,width,height,ExpandDirection::LowerRight).is_ok()
+    }
+
+    /// Resize towards a chosen corner while retaining every occupied cell/event in
+    /// world coordinates. Reject truncation and overlap rather than erasing work.
+    pub fn resize_frame_towards(
+        &mut self,id:u32,width:u32,height:u32,direction:ExpandDirection,
+    )->Result<(),String> {
+        let index=self.maps.iter().position(|m|m.id==id).ok_or("Map not found")?;
+        let m=&self.maps[index];
+        let (old_x,old_y)=(i64::from(m.origin.x),i64::from(m.origin.y));
+        let new_x=old_x+if matches!(direction,ExpandDirection::UpperLeft|ExpandDirection::LowerLeft){
+            i64::from(m.width)-i64::from(width)
+        } else {0};
+        let new_y=old_y+if matches!(direction,ExpandDirection::UpperLeft|ExpandDirection::UpperRight){
+            i64::from(m.height)-i64::from(height)
+        } else {0};
+        let origin=GridPoint::new(
+            i32::try_from(new_x).map_err(|_|"Map extends beyond world coordinates")?,
+            i32::try_from(new_y).map_err(|_|"Map extends beyond world coordinates")?,
+        );
+        if !self.fits_rect(id,origin,width,height){
+            return Err("Map size overlaps a neighbor or exceeds editor limits".into());
+        }
+        let old=&self.maps[index];
+        let mut cells=vec![None;(width as usize)*(height as usize)];
+        for y in 0..old.height {
+            for x in 0..old.width {
+                if let Some(cell)=old.cell(x,y) {
+                    let new_lx=old_x+i64::from(x)-new_x;
+                    let new_ly=old_y+i64::from(y)-new_y;
+                    if new_lx<0 || new_ly<0 || new_lx>=i64::from(width) || new_ly>=i64::from(height) {
+                        return Err("Resize would discard painted tiles; erase them first".into());
+                    }
+                    cells[(new_ly as usize)*(width as usize)+(new_lx as usize)]=Some(cell);
+                }
             }
         }
-        let map = &mut self.maps[index];
-        map.cells = next;
-        map.markers.retain(|m| m.x < width && m.y < height);
-        map.events.retain(|e| e.x < width && e.y < height);
-        map.width = width;
-        map.height = height;
-        true
+        let transform=|x:u32,y:u32|->Result<(u32,u32),String>{
+            let nx=old_x+i64::from(x)-new_x;
+            let ny=old_y+i64::from(y)-new_y;
+            if nx<0 || ny<0 || nx>=i64::from(width) || ny>=i64::from(height) {
+                Err("Resize would discard an event; move it first".into())
+            } else {Ok((nx as u32,ny as u32))}
+        };
+        let mut markers=old.markers.clone();
+        for marker in &mut markers {
+            (marker.x,marker.y)=transform(marker.x,marker.y)?;
+        }
+        let mut events=old.events.clone();
+        for event in &mut events {
+            (event.x,event.y)=transform(event.x,event.y)?;
+        }
+        let updated=&mut self.maps[index];
+        updated.origin=origin;
+        updated.width=width;
+        updated.height=height;
+        updated.cells=cells;
+        updated.markers=markers;
+        updated.events=events;
+        Ok(())
     }
 
     fn fits_rect(&self, id: u32, origin: GridPoint, width: u32, height: u32) -> bool {
@@ -473,6 +517,34 @@ impl World {
             }
         }
         edges
+    }
+}
+
+/// Direction new terrain grows from the opposite fixed corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExpandDirection { UpperRight, LowerRight, UpperLeft, LowerLeft }
+
+impl ExpandDirection {
+    pub const ALL:[Self;4]=[
+        Self::UpperLeft, Self::UpperRight, Self::LowerLeft, Self::LowerRight
+    ];
+    pub const fn label(self)->&'static str {
+        match self {
+            Self::UpperRight=>"Upper right", Self::LowerRight=>"Lower right",
+            Self::UpperLeft=>"Upper left", Self::LowerLeft=>"Lower left",
+        }
+    }
+    /// The tapped cell is the fixed corner; includes it in the new rectangle.
+    pub fn origin_at(self, fixed:GridPoint, width:u32, height:u32)->Result<GridPoint,String> {
+        if width==0 || height==0 {return Err("Map dimensions must be positive".into());}
+        let dx=i64::from(width)-1;
+        let dy=i64::from(height)-1;
+        let x=i64::from(fixed.x)-if matches!(self,Self::UpperLeft|Self::LowerLeft){dx}else{0};
+        let y=i64::from(fixed.y)-if matches!(self,Self::UpperLeft|Self::UpperRight){dy}else{0};
+        Ok(GridPoint::new(
+            i32::try_from(x).map_err(|_|"Map origin would overflow")?,
+            i32::try_from(y).map_err(|_|"Map origin would overflow")?,
+        ))
     }
 }
 
@@ -611,5 +683,51 @@ mod remove_map_tests {
         world.remove_frame(2).unwrap();
         assert_eq!(world.maps.len(),2);
         world.check_integrity().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod anchored_resize_tests {
+    use super::*;
+    #[test]
+    fn four_corner_expansion_preserves_absolute_tile_positions() {
+        for (dir,x,y) in [
+            (ExpandDirection::UpperRight,10,8),
+            (ExpandDirection::LowerRight,10,10),
+            (ExpandDirection::UpperLeft,8,8),
+            (ExpandDirection::LowerLeft,8,10),
+        ] {
+            let mut w=World::new();
+            let id=w.add_map("A",GridPoint::new(10,10),4,4).unwrap();
+            w.paint_metatile(GridPoint::new(11,11),0x170);
+            let (mid,index)=w.add_event(GridPoint::new(12,12),EventKind::Npc).unwrap();
+            assert_eq!(mid,id);
+            w.resize_frame_towards(id,6,6,dir).unwrap();
+            assert_eq!(w.maps[0].origin,GridPoint::new(x,y));
+            let map=&w.maps[0];
+            assert_eq!(map.cell((11-x) as u32,(11-y) as u32).unwrap().metatile_id,0x170);
+            assert_eq!((map.events[index].x,map.events[index].y),
+                ((12-x) as u32,(12-y) as u32));
+            w.check_integrity().unwrap();
+        }
+    }
+    #[test]
+    fn reject_overlap_and_destructive_shrink() {
+        let mut w=World::new();
+        let a=w.add_map("A",GridPoint::new(0,0),5,5).unwrap();
+        w.add_map("B",GridPoint::new(5,0),5,5).unwrap();
+        assert!(w.resize_frame_towards(a,6,5,ExpandDirection::LowerRight).is_err());
+        w.paint_metatile(GridPoint::new(0,0),1);
+        assert!(w.resize_frame_towards(a,4,4,ExpandDirection::UpperLeft).is_err());
+        assert_eq!(w.maps[0].width,5);
+        assert_eq!(w.maps[0].origin,GridPoint::new(0,0));
+    }
+    #[test]
+    fn fixed_tap_corner_origin_is_inclusive() {
+        let p=GridPoint::new(20,30);
+        assert_eq!(ExpandDirection::UpperLeft.origin_at(p,3,4).unwrap(),GridPoint::new(18,27));
+        assert_eq!(ExpandDirection::LowerRight.origin_at(p,3,4).unwrap(),p);
+        assert_eq!(ExpandDirection::UpperRight.origin_at(p,3,4).unwrap(),GridPoint::new(20,27));
+        assert_eq!(ExpandDirection::LowerLeft.origin_at(p,3,4).unwrap(),GridPoint::new(18,30));
     }
 }
