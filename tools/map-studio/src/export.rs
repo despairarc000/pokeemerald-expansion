@@ -243,3 +243,41 @@ mod tests {
         let _=fs::remove_file(&path);
     }
 }
+
+#[cfg(test)]
+mod map_event_export_tests {
+    use super::*;
+    use crate::model::{EventKind,GridPoint,TileKind,Cell};
+    fn ready_world()->World {
+        let mut world=World::new();
+        world.add_map("Village",GridPoint::new(0,0),10,10).unwrap();
+        world.add_map("House",GridPoint::new(10,0),10,10).unwrap();
+        for map in &mut world.maps {
+            map.cells.fill(Some(Cell::new(TileKind::Grass)));
+        }
+        world
+    }
+    #[test]
+    fn dialogues_compile_to_object_and_sign_events() {
+        let mut world=ready_world();
+        world.add_event(GridPoint::new(1,1),EventKind::Npc);
+        world.add_event(GridPoint::new(2,2),EventKind::Sign);
+        validate(&world).unwrap();
+        let m=&world.maps[0];
+        let json=map_json(m,&world);
+        assert_eq!(json["object_events"].as_array().unwrap().len(),1);
+        assert_eq!(json["bg_events"].as_array().unwrap().len(),1);
+        let scripts=script_text(m);
+        assert!(scripts.contains("MSGBOX_NPC"));
+        assert!(scripts.contains("MSGBOX_SIGN"));
+    }
+    #[test]
+    fn only_existing_destination_warps_are_exportable() {
+        let mut world=ready_world();
+        world.add_event(GridPoint::new(1,1),EventKind::Warp);
+        assert!(validate(&world).unwrap_err().contains("missing destination warp"));
+        world.add_event(GridPoint::new(11,1),EventKind::Warp);
+        validate(&world).unwrap();
+        assert_eq!(map_json(&world.maps[0],&world)["warp_events"][0]["dest_map"],"MAP_MEADOWMERE_HOUSE");
+    }
+}
