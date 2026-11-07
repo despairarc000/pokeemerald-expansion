@@ -4,9 +4,9 @@
 
 | Collection | Source | Count | Bundled? | Editor capability |
 | --- | --- | ---: | --- | --- |
-| Emerald metatile pairs | This fork's `data/layouts/layouts.json` and `data/tilesets/{primary,secondary}/*`, built by `scripts/build_catalog.py` | 129 usable layout pairs in previous CI; current build is authoritative | Yes | Paint native ID, source attributes, layers and palette rendering |
+| Emerald + FRLG native metatile pairs | This fork's `data/layouts/layouts.json` and `data/tilesets/{primary,secondary}/*`, built by `scripts/build_catalog.py` | 129 usable pairs in the previous CI, across Emerald and FireRed/LeafGreen; current build is authoritative | Yes | Separate built-in collections, original IDs, source attributes, layers and palettes |
 | Emerald prefab definitions | [huderlem/Porymap](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_emerald.json) | 71 source definitions | Yes | Filter by actual source tileset symbols + valid metatile ID; paint full 2D structure with collision and elevation |
-| FireRed Porymap prefabs | [Porymap default FireRed](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_firered.json) | 45 | No | The definitions require compatible FireRed assets; raw IDs are not Emerald IDs |
+| FireRed Porymap prefabs | [Porymap default FireRed](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_firered.json) | 45 | Yes, on this source branch after the v0.17 APK | Source-verified against native FRLG pairs already present in this fork; incompatible pairs never receive the raw IDs |
 | Ruby Porymap prefabs | [Porymap default Ruby](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_ruby.json) | 55 | No | Original Ruby tileset needs importing before prefabs can be used |
 
 Porymap's prefab data carries `name`, `width`, `height`, primary and
@@ -30,21 +30,24 @@ are never renumbered. Porymap license/attribution is included in
 | [Hypercutter](https://github.com/cuebitt/hypercutter) | Extraction/library utility for Emerald/FireRed/LeafGreen/Ruby/Sapphire tile/palette resources | Tooling reference; extracted ROM artwork is not automatically authorized for redistribution |
 | Pokémon Unbound | ROM patch and contributor art credits; no verified complete openly redistributable tileset archive | Not bundled and not shown as an empty collection |
 
-These third-party packages were **not** silently bundled into v0.17.
+The optional external artwork packages (Team Aqua, LeoB ORAS, Unbound, etc.) are **not** bundled by this patch. Only real source-backed Emerald and FRLG graphics already in the game fork are exposed; Porymap's 45 FireRed prefab definitions are newly added.
 Public GitHub access is not universal relicensing of original Pokémon artwork.
 An imported pack must contain explicit provenance/attribution; each source
 still requires separate permission verification where applicable.
 
 ## App UI hierarchy
 
-1. **Collection**: Emerald or a real imported collection. No placeholders for FireRed or Unbound.
+1. **Collection**: Emerald, FireRed/LeafGreen (native assets from this game fork), or a real imported collection. No fake entries for Ruby or Unbound.
 2. **Category**: swipe-scrollable categories (Towns, Houses, Interiors,
    Caves, Outdoor & Special), chosen from actual tileset metadata.
 3. **Tileset**: source pair in that category, with previous/next controls;
    original IDs and source order remain unchanged.
-4. **Metatiles / Prefabs**: metatile sheet or visual group cards. On Emerald,
-   tap a compatible prefab to stamp its real ID, collision and elevation
-   values. Imported reference packs remain unpaintable.
+4. **Metatiles / Prefabs**: source tile sheet or visual prefab cards. Emerald
+   (71 definitions) and FireRed/LeafGreen (45 definitions) show compatible
+   source-prefab cards for the active pair, and also let users browse the
+   other definitions and jump to their corresponding source tileset.
+   Native painting stamps the correct ID, collision and elevation.
+   Imported reference packs remain unpaintable.
 
 Touch swipes scroll categories **only inside that strip** and art scrolls
 vertically in the sheet. Swipes do not silently switch the collection or
@@ -67,7 +70,7 @@ not a huge archive containing all 129 pairs. Paths inside the ZIP:
 - `primary/metatile_attributes.bin`,
   `secondary/metatile_attributes.bin`: native attribute data.
 - `primary/palettes/*.pal`, `secondary/palettes/*.pal`: native palette banks.
-- `prefabs.json`: compatible verified Porymap Emerald prefabs
+- `prefabs.json`: compatible Porymap prefabs from the selected native source collection
   with source IDs and collision/elevation.
 
 An imported ZIP must parse, pass bounded input checks, contain all required
@@ -110,3 +113,20 @@ art game-paintable, build and test its native tileset in this fork.
 - P2: cross-project collection version references, deduplicated asset
   storage, import conflict resolution and dependency backups.
 - P2: larger collection gallery, install/uninstall, and package previews.
+
+## Source follow-up after the v0.17 preview
+
+The saved `MapStudio-v0.17-Art-Library-Preview.apk` predates this source
+revision. Its Collection menu has only Emerald and installed ZIPs; this
+revision exposes the already-compiled FRLG assets as **FireRed/LeafGreen**
+and bundles Porymap's 45 FireRed prefab definitions. The previous empty-looking
+prefab gallery occurred because it displayed only the active pair's matching
+prefabs; now it also provides a browse-and-switch list for valid prefabs of
+other pairs. The new APK is not considered verified until CI compiles and
+its UI is checked on a phone.
+
+The next external candidates remain Team Aqua's credited Great Tileset
+Exchange, LeoB's ORAS-inspired art, Ruby original assets, and Johto packs.
+Those require provenance checks and complete palette/metatile conversion.
+Unbound has no verified redistributable full source collection and must not
+appear as a fake built-in.
