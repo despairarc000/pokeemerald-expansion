@@ -29,6 +29,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
       - name: Format sources for compilation
         run: cargo fmt --all
+      - name: Install atlas generator dependency
+        run: python3 -m pip install --break-system-packages Pillow
       - name: Unit tests
         run: cargo test --lib
       - name: Compile desktop UI
@@ -63,6 +65,8 @@ jobs:
       - name: Generate temporary test signing key
         run: |
           keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/map-studio-test.keystore" -storepass android -keypass android -alias mapstudio -keyalg RSA -keysize 2048 -validity 365 -dname "CN=Map Studio Test,O=Development,C=US"
+      - name: Install atlas generator dependency
+        run: python3 -m pip install --break-system-packages Pillow
       - name: Package optimized APK
         env:
           CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/map-studio-test.keystore

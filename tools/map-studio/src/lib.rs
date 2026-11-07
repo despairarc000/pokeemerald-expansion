@@ -1,5 +1,7 @@
 //! Map Studio Android/desktop entry and platform-neutral GUI.
 pub mod model;
+pub mod export;
+pub mod storage;
 mod ui;
 
 pub use ui::MapStudioApp;
@@ -11,6 +13,9 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
         android_logger::Config::default().with_max_level(log::LevelFilter::Info),
     );
 
+    let save_path = app.internal_data_path().map(|p| p.join("map-studio-project.json"));
+    let export_dir = app.external_data_path().map(|p| p.join("MapStudio"));
+
     let options = eframe::NativeOptions {
         android_app: Some(app),
         ..Default::default()
@@ -19,7 +24,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) {
     if let Err(err) = eframe::run_native(
         "Map Studio",
         options,
-        Box::new(|cc| Ok(Box::new(MapStudioApp::new(&cc.egui_ctx)))),
+        Box::new(|cc| Ok(Box::new(MapStudioApp::with_paths(&cc.egui_ctx, save_path.clone(), export_dir.clone())))),
     ) {
         log::error!("Map Studio failed to start: {err}");
     }
