@@ -186,10 +186,10 @@ rows=[]
 for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in catalog:
     label=local.name.replace("_"," ").title()
     labels=[]
-    for mid,label in labels_by_source.get(main_sym,{}).items():
+    for mid,source_label in labels_by_source.get(main_sym,{}).items():
         if 0<=mid<512 and mask[mid//8]&(1<<(mid%8)):
-            labels.append((mid,label))
-    for mid,label in labels_by_source.get(sec_sym,{}).items():
+            labels.append((mid,source_label))
+    for mid,source_label in labels_by_source.get(sec_sym,{}).items():
         if 512<=mid<1024 and mask[mid//8]&(1<<(mid%8)):
             labels.append((mid,label))
     labels.sort()
