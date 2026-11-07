@@ -101,8 +101,10 @@ pub fn decode(bytes:&[u8])->Result<Package,String>{
     let prefab_file=zip_entry(&mut zip,"prefabs.json",MAX_READ_BYTES)?;
     let prefabs:Vec<Prefab>=serde_json::from_slice(&prefab_file)
         .map_err(|e|format!("Invalid prefab definitions: {e}"))?;
-    if prefabs.len()>256 || prefabs.iter().any(|p|p.width>32 || p.height>32
-        || p.metatiles.len()>1024 || p.name.len()>96) {
+    if prefabs.len()>256 || prefabs.iter().any(|p|p.width==0 || p.height==0
+        || p.width>32 || p.height>32 || p.metatiles.len()>1024 || p.name.len()>96
+        || p.metatiles.iter().any(|tile|tile.x>=p.width || tile.y>=p.height
+            || tile.metatile_id>=1024 || tile.collision>3 || tile.elevation>15)) {
         return Err("Artwork package contains oversized prefabs".into());
     }
     Ok(Package{filename:String::new(),manifest,atlas,prefabs})
@@ -135,7 +137,11 @@ pub fn export_pair(pair:&TilePair,destination:&Path)->Result<(),String>{
         ("primary/metatiles.bin".into(),pair.raw_primary_metatiles),
         ("secondary/metatiles.bin".into(),pair.raw_secondary_metatiles),
         ("primary/metatile_attributes.bin".into(),pair.attr_primary),
-        ("secondary/metatile_attributes.bin".into(),pair.attr_secondary)
+        ("secondary/metatile_attributes.bin".into(),pair.attr_secondary),
+        ("LICENSE-PORYMAP.md".into(),
+            include_bytes!("../assets/PORYMAP-LICENSE.md")),
+        ("ATTRIBUTION-PORYMAP.md".into(),
+            include_bytes!("../assets/PORYMAP-ATTRIBUTION.md"))
     ];
     for (name,bytes) in pair.raw_files{entries.push(((*name).to_string(),bytes));}
     if entries.len()>85{return Err("Too many source resources in package".into());}
