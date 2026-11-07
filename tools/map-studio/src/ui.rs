@@ -682,6 +682,25 @@ impl MapStudioApp {
         input.truncate(100);
     }
 
+    fn find_arrow(ui:&mut egui::Ui,up:bool,enabled:bool)->bool {
+        // Render the arrow as geometry: the default Android egui font does
+        // not always contain Unicode up/down glyphs.
+        let (area,response)=ui.allocate_exact_size(vec2(33.0,29.0),Sense::click());
+        ui.painter().rect_filled(area,5.0,
+            Color32::from_gray(if enabled{230}else{246}));
+        let c=area.center();
+        let col=if enabled{Color32::from_rgb(58,76,96)}
+            else{Color32::from_gray(186)};
+        let points=if up {
+            vec![c+vec2(0.0,-6.0),c+vec2(-6.0,4.0),c+vec2(6.0,4.0)]
+        }else{
+            vec![c+vec2(-6.0,-4.0),c+vec2(6.0,-4.0),c+vec2(0.0,6.0)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(
+            points,col,Stroke::NONE));
+        enabled && response.clicked()
+    }
+
     fn palette_content(&mut self, ui: &mut egui::Ui) {
         match self.mode {
             Mode::Terrain => {
@@ -735,21 +754,21 @@ impl MapStudioApp {
                 if !matches.is_empty() {
                     self.find_index=self.find_index.min(matches.len()-1);
                 }
-                ui.horizontal(|ui|{
-                    if ui.add_enabled(!matches.is_empty(),egui::Button::new("↑")).clicked(){
-                        self.find_index=(self.find_index+matches.len()-1)%matches.len();
-                        self.find_target=Some(matches[self.find_index]);
-                    }
-                    if ui.add_enabled(!matches.is_empty(),egui::Button::new("↓")).clicked(){
-                        self.find_index=(self.find_index+1)%matches.len();
-                        self.find_target=Some(matches[self.find_index]);
-                    }
-                    ui.label(format!("{}/{}",
-                        if matches.is_empty(){0}else{self.find_index+1},matches.len()));
-                    if self.tile_filter!=tiles::TileFilter::All {
+                if self.tile_filter!=tiles::TileFilter::All {
+                    ui.horizontal(|ui|{
+                        if Self::find_arrow(ui,true,!matches.is_empty()){
+                            self.find_index=(self.find_index+matches.len()-1)%matches.len();
+                            self.find_target=Some(matches[self.find_index]);
+                        }
+                        if Self::find_arrow(ui,false,!matches.is_empty()){
+                            self.find_index=(self.find_index+1)%matches.len();
+                            self.find_target=Some(matches[self.find_index]);
+                        }
+                        ui.label(format!("{}/{}",
+                            if matches.is_empty(){0}else{self.find_index+1},matches.len()));
                         ui.small("Non-matches are dimmed");
-                    }
-                });
+                    });
+                }
                 ui.small("Tap a tile to paint. Hold then slide to select a rectangle.");
                 self.metatile_sheet(ui,chosen,0,chosen.primary_count,"Shared terrain");
                 self.metatile_sheet(ui,chosen,512,chosen.secondary_count,"Local tiles");
