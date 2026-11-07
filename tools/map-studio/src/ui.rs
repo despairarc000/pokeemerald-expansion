@@ -234,10 +234,12 @@ impl MapStudioApp {
             }
             if ui.selectable_label(self.mode == Mode::Properties, "Properties").clicked() {
                 self.mode = Mode::Properties; self.gesture = CanvasGesture::Idle;
+                self.show_properties=true;
                 self.selected_event=None;self.event_editor_open=false;
             }
             if ui.selectable_label(self.mode == Mode::Events, "Events").clicked() {
                 self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
+                self.show_events=true;
             }
             ui.separator();
             ui.toggle_value(&mut self.show_events,"👁 Events")
