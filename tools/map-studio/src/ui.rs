@@ -1153,7 +1153,6 @@ impl MapStudioApp {
                             self.choose_sheet_stamp(pair,base,first,first);
                         }else if travel>10.0 {
                             // An immediate finger swipe scrolls the sheet.
-                            ui.scroll_with_delta(response.drag_delta());
                             self.sheet_hold=None;
                         }else{
                             ui.ctx().request_repaint_after(Duration::from_millis(25));
@@ -2028,9 +2027,9 @@ impl MapStudioApp {
                     }
                 }
             }
-            // Events keep touch-sized *screen* icons even at low world zoom.
-            // Only Events mode hit-tests or edits them: Terrain/Properties
-            // brushes can pass straight through their tile positions.
+            // Event-only overlay: other tools see unobstructed real tiles.
+            // Markers keep touch-sized *screen* icons even at low world zoom.
+            if self.mode==Mode::Events {
             for (event_index,event) in map.events.iter().enumerate() {
                 let center=self.screen_at(rect,
                     map.origin.x as f32+event.x as f32+0.5,
@@ -2142,6 +2141,7 @@ impl MapStudioApp {
                 painter.text(center,Align2::CENTER_CENTER,"!",
                     FontId::proportional(9.0),Color32::WHITE);
             }
+            } // end Events-only markers
             painter.text(top_left + vec2(5.0,5.0),Align2::LEFT_TOP,&map.name,
                 FontId::proportional(11.0),Color32::from_black_alpha(if is_editing {48} else {160}));
         }
