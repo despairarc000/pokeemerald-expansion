@@ -134,7 +134,8 @@ for main_sym,sec_sym in pairs:
     except (OSError,ValueError,struct.error) as exc:
         omitted.append((main_sym,sec_sym,str(exc)))
         continue
-    catalog.append((key,main,local,output,first,second,group_for(main.name,local.name)))
+    catalog.append((key,main,local,output,first,second,group_for(main.name,local.name),
+                    main_sym,sec_sym))
 if not any(c[0]=="general/petalburg" for c in catalog):
     raise RuntimeError("Default General/Petalburg atlas failed to build")
 if len(catalog)<60:
@@ -144,11 +145,13 @@ def literal(s):
     return json.dumps(str(s),ensure_ascii=True)
 sourcefile=out.parent/"tileset_catalog.rs"
 rows=[]
-for key,main,local,img,first,second,category in catalog:
+for key,main,local,img,first,second,category,main_sym,sec_sym in catalog:
     label=local.name.replace("_"," ").title()
     rows.append(
         "TilePair {key:"+literal(key)+", label:"+literal(label)+
-        ",category:"+literal(category)+",primary:"+literal(main.name)+
+        ",category:"+literal(category)+
+        ",primary_symbol:"+literal(main_sym)+",secondary_symbol:"+literal(sec_sym)+
+        ",primary:"+literal(main.name)+
         ",secondary:"+literal(local.name)+",primary_count:"+str(first)+
         ",secondary_count:"+str(second)+", atlas:include_bytes!("+literal(img)+")"+
         ",attr_primary:include_bytes!("+literal(main/"metatile_attributes.bin")+")"+
@@ -156,7 +159,7 @@ for key,main,local,img,first,second,category in catalog:
 sourcefile.write_text("pub static TILESET_PAIRS:&[TilePair]=&[\n"+"\n".join(rows)+"\n];\n")
 manifest={"available":len(catalog),"omitted":[{"primary":p,"secondary":s,"reason":reason} for p,s,reason in omitted],
     "pairs":[{"key":key,"category":category,"tiles":first+second}
-             for key,_,_,_,first,second,category in catalog]}
+             for key,_,_,_,first,second,category,_,_ in catalog]}
 (out/"catalog.json").write_text(json.dumps(manifest,indent=2))
 print(f"Generated {len(catalog)} real tile-pair atlases; omitted {len(omitted)} incomplete or unsupported pairs")
 for p,s,reason in omitted[:16]:print("SKIPPED",p,s,reason[:140])

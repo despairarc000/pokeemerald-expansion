@@ -15,6 +15,8 @@ pub struct TilePair {
     pub key:&'static str,
     pub label:&'static str,
     pub category:&'static str,
+    pub primary_symbol:&'static str,
+    pub secondary_symbol:&'static str,
     pub primary:&'static str,
     pub secondary:&'static str,
     pub primary_count:usize,
