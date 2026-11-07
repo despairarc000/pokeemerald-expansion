@@ -603,25 +603,71 @@ impl MapStudioApp {
         self.size_panel_open &= open;
     }
 
+    fn request_tileset(&mut self,key:&str) {
+        let Some(pair)=tiles::pair(key) else{return;};
+        self.tileset_group=pair.category.to_string();
+        if self.current_pair().key==key {
+            self.pending_tileset=None;
+            return;
+        }
+        let painted=self.selected_map.and_then(|id|
+            self.world.active_maps().find(|m|m.id==id))
+            .is_some_and(|m|m.cells.iter().any(Option::is_some));
+        if painted{
+            self.pending_tileset=Some(key.into());
+            self.message="Confirm the new tileset before changing painted art".into();
+        }else{
+            self.apply_pair(key);
+        }
+    }
+
     fn palette(&mut self, ui: &mut egui::Ui) {
-        // Large touch target: dragging the *top edge* resizes this dock, not the canvas.
-        let (handle,response)=ui.allocate_exact_size(vec2(ui.available_width(),38.0),
-            Sense::click_and_drag());
+        // The compact grab handle and tileset selector are always stationary.
+        // Only the tool options and artwork list beneath them scroll.
+        let (handle,response)=ui.allocate_exact_size(
+            vec2(ui.available_width(),21.0),Sense::click_and_drag());
         let center=handle.center();
         ui.painter().rect_filled(handle,0.0,Color32::from_gray(243));
         ui.painter().rect_filled(Rect::from_center_size(
-            pos2(center.x,center.y-9.0),vec2(58.0,4.0)),3.0,Color32::from_gray(150));
-        ui.painter().text(pos2(center.x,center.y+5.0),Align2::CENTER_CENTER,
-            "Drag to resize",FontId::proportional(10.0),Color32::DARK_GRAY);
+            center,vec2(46.0,4.0)),3.0,Color32::from_gray(144));
         if response.dragged() {
-            self.panel_height=(self.panel_height-response.drag_delta().y)
-                .clamp(126.0,ui.ctx().content_rect().height()*0.72);
+            let max=(ui.ctx().content_rect().height()*0.72).max(44.0);
+            self.panel_height=(self.panel_height-response.drag_delta().y).clamp(44.0,max);
             ui.ctx().request_repaint();
         }
         if response.double_clicked() {
-            self.panel_height=if self.panel_height<260.0 {390.0}else{185.0};
+            self.panel_height=if self.panel_height<230.0 {345.0}else{120.0};
         }
-
+        if self.mode==Mode::Terrain {
+            let chosen=self.current_pair();
+            ui.horizontal(|ui|{
+                ui.menu_button(format!("Tileset · {} ▾",chosen.label),|ui|{
+                    egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{
+                        for group in ["Towns","Houses","Interiors","Caves",
+                                      "Outdoor & Special"]{
+                            ui.collapsing(group,|ui|{
+                                let entries=tiles::pairs().iter()
+                                    .filter(|p|p.category==group).collect::<Vec<_>>();
+                                if let Some(first)=entries.first(){
+                                    if ui.small_button("Use first in category").clicked(){
+                                        self.request_tileset(first.key);
+                                        ui.close();
+                                    }
+                                }
+                                for item in entries {
+                                    if ui.selectable_label(
+                                        chosen.key==item.key,item.label).clicked(){
+                                        self.request_tileset(item.key);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
+                    });
+                });
+            });
+        }
+        ui.separator();
         egui::ScrollArea::vertical().id_salt("dock_content")
             .auto_shrink([false,false]).show(ui,|ui|{
                 self.palette_content(ui);
@@ -648,61 +694,6 @@ impl MapStudioApp {
                     if ui.selectable_label(self.erase_tool,"Eraser").clicked(){
                         self.erase_tool=true;self.bucket_tool=false;
                     }
-                });
-                ui.horizontal_wrapped(|ui|{
-                    ui.label("Tileset family");
-                    let mut family_changed=false;
-                    egui::ComboBox::from_id_salt("tileset-group")
-                        .selected_text(&self.tileset_group)
-                        .width(135.0)
-                        .show_ui(ui,|ui|{
-                            for group in ["Towns","Houses","Interiors","Caves","Outdoor & Special"]{
-                                if ui.selectable_value(&mut self.tileset_group,
-                                    group.to_string(),group).clicked(){
-                                    family_changed=true;
-                                }
-                            }
-                        });
-                    if family_changed {
-                        if let Some(first)=tiles::pairs().iter()
-                            .find(|p|p.category==self.tileset_group.as_str()) {
-                            let current=self.current_pair();
-                            if current.key!=first.key {
-                                let painted=self.selected_map
-                                    .and_then(|id|self.world.active_maps().find(|m|m.id==id))
-                                    .is_some_and(|m|m.cells.iter().any(Option::is_some));
-                                if painted {
-                                    self.pending_tileset=Some(first.key.to_string());
-                                    self.message="Confirm the new tileset before changing painted artwork".into();
-                                }else{
-                                    self.apply_pair(first.key);
-                                }
-                            }
-                        }
-                    }
-                    let current=self.current_pair();
-                    let category=self.tileset_group.clone();
-                    egui::ComboBox::from_id_salt("tileset-collection")
-                        .selected_text(current.label)
-                        .width(155.0)
-                        .show_ui(ui,|ui|{
-                            for pair in tiles::pairs().iter().filter(|p|p.category==category.as_str()){
-                                if ui.selectable_label(current.key==pair.key,
-                                    pair.label).clicked(){
-                                    let map=self.selected_map.and_then(|id|
-                                        self.world.active_maps().find(|m|m.id==id));
-                                    if map.is_some_and(|m|m.cells.iter().any(|c|c.is_some())) {
-                                        if current.key!=pair.key {
-                                            self.pending_tileset=Some(pair.key.into());
-                                            self.message="Apply to change this painted map's source tileset".into();
-                                        }
-                                    }else{
-                                        self.apply_pair(pair.key);
-                                    }
-                                    ui.close();
-                                }
-                            }
-                        });
                 });
                 if let Some(pending)=self.pending_tileset.clone(){
                     if let Some(p)=tiles::pair(&pending){
@@ -1142,7 +1133,7 @@ impl MapStudioApp {
                         self.selected_event=None;
                     }
                 }else{
-                    ui.small("Tap a map tile to place an event. Hold a marker to move it; double-tap to edit.");
+                    ui.small("Tap a map tile to place an event; hold to move, double-tap to edit.");
                     ui.small("Available: NPC dialogue, signs, linked/direct warps, step messages and one-time hidden items. Advanced scripted trainers, conditional scenes and special events are not yet authored here.");
                 }
             }
