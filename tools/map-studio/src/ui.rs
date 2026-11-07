@@ -853,75 +853,65 @@ impl MapStudioApp {
     }
 
     fn artwork_selectors(&mut self,ui:&mut egui::Ui){
-
-            // Independent, touch-sized selection boxes. The first filters the
-            // second; selecting a family immediately previews its first REAL
-            // repository-defined tileset (no nested collapsing menu).
-            let active=self.browsing_pair();
+        // Two separate touch-friendly dropdowns share one compact row.
+        // Category always filters the second box before it renders.
+        ui.horizontal(|ui|{
+            ui.strong("Art");
+            let width=((ui.available_width()-8.0)/2.0).max(88.0);
+            let current=self.browsing_pair();
             let mut selected_category:Option<&'static str>=None;
-            ui.horizontal(|ui|{
-                ui.label("Category");
-                egui::ComboBox::from_id_salt("source_art_category")
-                    .selected_text(active.category)
-                    .width(ui.available_width().max(120.0))
-                    .show_ui(ui,|ui|{
-                        for category in tiles::SOURCE_CATEGORIES {
-                            let selected=category==active.category;
-                            if ui.add_sized(vec2(ui.available_width().max(190.0),37.0),
-                                egui::Button::new(category).fill(
-                                    if selected {Color32::from_rgb(197,226,248)}
-                                    else{Color32::from_gray(242)})).clicked(){
-                                selected_category=Some(category);
-                                ui.close();
-                            }
+            egui::ComboBox::from_id_salt("source_art_category")
+                .selected_text(current.category)
+                .width(width)
+                .show_ui(ui,|ui|{
+                    for category in tiles::SOURCE_CATEGORIES{
+                        if ui.add_sized(vec2(ui.available_width().max(175.0),37.0),
+                            egui::Button::new(category).fill(
+                                if category==current.category{
+                                    Color32::from_rgb(197,226,248)
+                                }else{Color32::from_gray(242)}
+                            )).clicked(){
+                            selected_category=Some(category);
+                            ui.close();
                         }
-                    });
-            });
+                    }
+                });
             if let Some(category)=selected_category{
                 if let Some(first)=tiles::first_in_category(category){
                     self.request_tileset(first.key);
                 }
             }
-            // Re-read after a category change so the second box and
-            // metatile gallery update in this same UI frame.
-            let active=self.browsing_pair();
+            let current=self.browsing_pair();
             let mut selected_key:Option<&'static str>=None;
-            ui.horizontal(|ui|{
-                ui.label("Tileset");
-                egui::ComboBox::from_id_salt("source_art_tileset")
-                    .selected_text(active.label)
-                    .width(ui.available_width().max(120.0))
-                    .show_ui(ui,|ui|{
-                        egui::ScrollArea::vertical().max_height(310.0)
-                            .id_salt("source_art_choices").show(ui,|ui|{
-                            for pair in tiles::pairs().iter()
-                                .filter(|pair|pair.category==active.category){
-                                let selected=pair.key==active.key;
-                                if ui.add_sized(vec2(ui.available_width().max(190.0),38.0),
-                                    egui::Button::new(pair.label).fill(
-                                        if selected {Color32::from_rgb(197,226,248)}
-                                        else{Color32::from_gray(242)})).clicked(){
-                                    selected_key=Some(pair.key);
-                                    ui.close();
-                                }
+            egui::ComboBox::from_id_salt("source_art_tileset")
+                .selected_text(current.label)
+                .width(width)
+                .show_ui(ui,|ui|{
+                    egui::ScrollArea::vertical().max_height(310.0)
+                        .id_salt("source_art_choices").show(ui,|ui|{
+                        for pair in tiles::pairs().iter()
+                            .filter(|pair|pair.category==current.category){
+                            if ui.add_sized(vec2(ui.available_width().max(190.0),38.0),
+                                egui::Button::new(pair.label).fill(
+                                    if pair.key==current.key{
+                                        Color32::from_rgb(197,226,248)
+                                    }else{Color32::from_gray(242)}
+                                )).clicked(){
+                                selected_key=Some(pair.key);
+                                ui.close();
                             }
-                        });
+                        }
                     });
-            });
-            if let Some(key)=selected_key{self.request_tileset(key);}
+                });
+            if let Some(key)=selected_key{
+                self.request_tileset(key);
+            }
+        });
         if let Some(pending)=self.pending_tileset.clone(){
             if let Some(pair)=tiles::pair(&pending){
-                let map_name=self.selected_map.and_then(|id|
-                    self.world.active_maps().find(|m|m.id==id))
-                    .map(|map|map.name.clone())
-                    .unwrap_or_else(||"map".into());
                 ui.horizontal_wrapped(|ui|{
-                    ui.label(egui::RichText::new(
-                        format!("Preview: {} · {} unchanged",pair.label,map_name))
-                        .small().color(Color32::from_rgb(118,84,39)));
+                    ui.small(format!("Preview: {}",pair.label));
                     if ui.small_button("Use artwork").clicked(){
-                        // Explicit action; previewing never changes existing
-                        // painted map data or reinterprets tile IDs.
                         self.apply_pair(&pending);
                     }
                     if ui.small_button("Revert").clicked(){
@@ -1395,6 +1385,44 @@ impl MapStudioApp {
                                                 for (name,symbol) in choices::NPC_SPRITES {
                                                     changed|=ui.selectable_value(&mut ev.graphics_id,
                                                         (*symbol).into(),*name).changed();
+                                                }
+                                            });
+                                    });
+                                    ui.horizontal_wrapped(|ui|{
+                                        ui.label("Movement");
+                                        let movement_name=choices::NPC_MOVEMENTS.iter()
+                                            .find(|(_,value)|*value==ev.movement_type)
+                                            .map(|(label,_)|*label).unwrap_or("Unknown source movement");
+                                        egui::ComboBox::from_id_salt("npc-movement")
+                                            .selected_text(movement_name)
+                                            .show_ui(ui,|ui|{
+                                                for (label,value) in choices::NPC_MOVEMENTS{
+                                                    changed|=ui.selectable_value(
+                                                        &mut ev.movement_type,
+                                                        (*value).to_string(),*label).changed();
+                                                }
+                                            });
+                                    });
+                                    ui.horizontal_wrapped(|ui|{
+                                        ui.label("Movement area");
+                                        ui.label("X");
+                                        egui::ComboBox::from_id_salt("npc-range-x")
+                                            .selected_text(ev.movement_range_x.to_string())
+                                            .show_ui(ui,|ui|{
+                                                for value in 0..=15u8{
+                                                    changed|=ui.selectable_value(
+                                                        &mut ev.movement_range_x,
+                                                        value,value.to_string()).changed();
+                                                }
+                                            });
+                                        ui.label("Y");
+                                        egui::ComboBox::from_id_salt("npc-range-y")
+                                            .selected_text(ev.movement_range_y.to_string())
+                                            .show_ui(ui,|ui|{
+                                                for value in 0..=15u8{
+                                                    changed|=ui.selectable_value(
+                                                        &mut ev.movement_range_y,
+                                                        value,value.to_string()).changed();
                                                 }
                                             });
                                     });
