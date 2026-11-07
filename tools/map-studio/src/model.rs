@@ -878,6 +878,41 @@ impl World {
         Ok((origin,width,height))
     }
 
+    /// Maximum safe size for one axis while keeping the other axis fixed.
+    /// This uses exactly the same map collision/content rules as Apply, so
+    /// the keypad can show a truthful limit rather than guessing from edges.
+    /// The 100-tile upper bound is the current UI editor limit.
+    pub fn resize_axis_limit(
+        &self,id:u32,fixed:u32,direction:ExpandDirection,width_axis:bool
+    )->u32 {
+        let mut maximum=0;
+        for size in 1..=100u32 {
+            let (width,height)=if width_axis{(size,fixed)}else{(fixed,size)};
+            if self.preview_resize(id,width,height,direction).is_ok(){
+                maximum=size;
+            }
+        }
+        maximum
+    }
+
+    /// Geometry-only preview, including sizes that are invalid due to
+    /// overlap. This never mutates the map and is safe for a red ghost.
+    pub fn resize_ghost(
+        &self,id:u32,width:u32,height:u32,direction:ExpandDirection
+    )->Option<(GridPoint,u32,u32)>{
+        let m=self.maps.iter().find(|map|map.id==id)?;
+        let x=i64::from(m.origin.x)
+            +if matches!(direction,ExpandDirection::UpperLeft|ExpandDirection::LowerLeft){
+                i64::from(m.width)-i64::from(width)
+            }else{0};
+        let y=i64::from(m.origin.y)
+            +if matches!(direction,ExpandDirection::UpperLeft|ExpandDirection::UpperRight){
+                i64::from(m.height)-i64::from(height)
+            }else{0};
+        Some((GridPoint::new(i32::try_from(x).ok()?,
+            i32::try_from(y).ok()?),width,height))
+    }
+
     pub fn move_frame(&mut self, id: u32, origin: GridPoint) -> bool {
         let Some(index) = self.maps.iter().position(|m| m.id == id) else { return false; };
         let (width, height) = (self.maps[index].width, self.maps[index].height);
@@ -1488,5 +1523,29 @@ mod bucket_fill_tests{
         assert_eq!(w.bucket_fill(GridPoint::new(2,2),2),1);
         let c=w.maps[0].cell(2,2).unwrap();
         assert_eq!((c.metatile_id,c.collision,c.elevation),(2,3,15));
+    }
+}
+
+#[cfg(test)]
+mod editor_resize_guidance_tests {
+    use super::*;
+    #[test]
+    fn limit_comes_from_real_neighbor_collision(){
+        let mut world=World::new();
+        let left=world.add_map("Left",GridPoint::new(0,0),7,7).unwrap();
+        world.add_map("Right",GridPoint::new(10,0),7,7).unwrap();
+        assert_eq!(world.resize_axis_limit(left,7,ExpandDirection::LowerRight,true),10);
+        assert_eq!(world.resize_axis_limit(left,7,ExpandDirection::LowerLeft,true),100);
+        assert!(world.preview_resize(left,11,7,ExpandDirection::LowerRight).is_err());
+        assert_eq!(world.resize_ghost(left,11,7,ExpandDirection::LowerRight)
+            .unwrap().0,GridPoint::new(0,0));
+    }
+    #[test]
+    fn paint_is_never_discarded_when_shrinking(){
+        let mut world=World::new();
+        let id=world.add_map("Paint",GridPoint::new(0,0),7,7).unwrap();
+        assert!(world.paint_metatile(GridPoint::new(6,6),1));
+        assert!(world.preview_resize(id,6,7,ExpandDirection::LowerRight).is_err());
+        assert_eq!(world.resize_axis_limit(id,7,ExpandDirection::LowerRight,true),100);
     }
 }
