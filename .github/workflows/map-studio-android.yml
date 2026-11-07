@@ -9,6 +9,7 @@ on:
       - feature/map-studio-responsive-visibility-coordinate-ux
       - feature/map-studio-resize-keypad-and-dock
       - feature/map-studio-touch-paint-overlays-warp-ux
+      - feature/map-studio-v0-14-artwork-dropdowns
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'

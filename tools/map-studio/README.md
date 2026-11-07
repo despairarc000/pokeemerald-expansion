@@ -345,3 +345,23 @@ and verifies its signature with Android's `apksigner` before publication.
 Temporary CI signing certificates still change between runs. Numbered APK
 filenames are **not** a fix for signing consistency or automatic upgrades.
 Back up/export valuable maps before uninstalling a previous preview.
+
+## v0.14 — two direct artwork selectors
+
+The Terrain dock has **two independent, touch-sized dropdowns** — **Category**
+(Towns, Houses, Interiors, Caves, Outdoor & Special) and **Tileset** (the
+actual source-backed entries in the selected category). No nested expanders,
+"No destinations" explanation, "Use first in category" button, or collapsing
+menus are needed. The entire choice row accepts taps.
+
+Changing Category selects the first genuine source tileset in that family,
+updates the Tileset control and shows its atlas in the same frame. Changing
+Tileset selects that pair directly. If the selected map is already painted,
+the new art is previewed without reinterpreting stored IDs until Apply is
+confirmed. Cancel returns to the prior map tileset. The source metatile
+catalogue and map export rules are unchanged.
+
+Android package: `dev.despairarc.mapstudio.artworkpreview`, kept separate
+from prior test installations to preserve private saves. Release v0.14 is
+derived from `Cargo.toml`, and CI uploads **only the final signed APK**
+without the unaligned intermediate. Live phone touch testing remains needed.

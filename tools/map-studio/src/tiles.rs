@@ -29,7 +29,15 @@ pub struct TilePair {
 }
 include!(concat!(env!("OUT_DIR"),"/tileset_catalog.rs"));
 pub const DEFAULT_PAIR:&str="general/petalburg";
+pub const SOURCE_CATEGORIES:[&str;5]=[
+    "Towns","Houses","Interiors","Caves","Outdoor & Special"
+];
 pub fn pairs()->&'static [TilePair]{TILESET_PAIRS}
+/// Deterministic source-catalog order, so a category always has an
+/// immediate first option and never creates a fabricated tileset.
+pub fn first_in_category(category:&str)->Option<&'static TilePair>{
+    pairs().iter().find(|pair|pair.category==category)
+}
 pub fn pair(key:&str)->Option<&'static TilePair>{
     TILESET_PAIRS.iter().find(|p|p.key==key)
 }
@@ -324,5 +332,24 @@ mod source_properties_tests{
             prop.layer_type.starts_with("Covered")||
             prop.layer_type.starts_with("Split"));
         assert!(attributes_in(pair,1024).is_none());
+    }
+}
+
+#[cfg(test)]
+mod artwork_category_tests{
+    use super::*;
+    #[test]
+    fn every_category_has_real_art_and_its_first_pair_belongs_to_it(){
+        for category in SOURCE_CATEGORIES {
+            let first=first_in_category(category)
+                .unwrap_or_else(||panic!("No source tilesets for {category}"));
+            assert_eq!(first.category,category);
+            assert!(pair(first.key).is_some());
+            assert!(pairs().iter().any(|p|p.key==first.key));
+        }
+    }
+    #[test]
+    fn unknown_category_cannot_create_a_fake_tileset(){
+        assert!(first_in_category("Not a real tileset family").is_none());
     }
 }

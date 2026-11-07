@@ -434,7 +434,10 @@ impl MapStudioApp {
     }
 
     fn apply_pair(&mut self,key:&str){
-        if !tiles::pair(key).is_some(){self.message="Tileset unavailable".into();return;}
+        let Some(pair)=tiles::pair(key) else{
+            self.message="Tileset unavailable".into();return;
+        };
+        self.tileset_group=pair.category.to_string();
         if let Some(map_id)=self.selected_map.filter(|id|
             self.world.space_for_map(*id)==Some(self.world.active_space_id)){
             self.begin_edit();
@@ -818,6 +821,14 @@ impl MapStudioApp {
         self.size_panel_open&=open;
     }
 
+    /// Gallery previews can switch to a proposed pair before a painted
+    /// map's irreversible metatile-ID reinterpretation is confirmed.
+    fn browsing_pair(&self)->&'static tiles::TilePair {
+        self.pending_tileset.as_deref()
+            .and_then(tiles::pair)
+            .unwrap_or_else(||self.current_pair())
+    }
+
     fn request_tileset(&mut self,key:&str) {
         let Some(pair)=tiles::pair(key) else{return;};
         self.tileset_group=pair.category.to_string();
@@ -825,6 +836,11 @@ impl MapStudioApp {
             self.pending_tileset=None;
             return;
         }
+        // Do not keep a metatile stamp from a different source pair.
+        self.selected_stamp=None;
+        self.tile_preview=None;
+        self.find_index=0;
+        self.find_target=None;
         let painted=self.selected_map.and_then(|id|
             self.world.active_maps().find(|m|m.id==id))
             .is_some_and(|m|m.cells.iter().any(Option::is_some));
@@ -856,34 +872,61 @@ impl MapStudioApp {
             self.panel_height=if self.panel_height<230.0 {370.0}else{165.0};
         }
         if self.mode==Mode::Terrain {
-            let chosen=self.current_pair();
+            // Independent, touch-sized selection boxes. The first filters the
+            // second; selecting a family immediately previews its first REAL
+            // repository-defined tileset (no nested collapsing menu).
+            let active=self.browsing_pair();
+            let mut selected_category:Option<&'static str>=None;
             ui.horizontal(|ui|{
-                ui.menu_button(format!("Artwork · {}",chosen.label),|ui|{
-                    egui::ScrollArea::vertical().max_height(280.0).show(ui,|ui|{
-                        ui.small("Emerald tileset names, not destinations.");
-                        for group in ["Towns","Houses","Interiors","Caves",
-                                      "Outdoor & Special"]{
-                            ui.collapsing(group,|ui|{
-                                let entries=tiles::pairs().iter()
-                                    .filter(|p|p.category==group).collect::<Vec<_>>();
-                                if let Some(first)=entries.first(){
-                                    if ui.small_button("Use first in category").clicked(){
-                                        self.request_tileset(first.key);
-                                        ui.close();
-                                    }
-                                }
-                                for item in entries {
-                                    if ui.selectable_label(
-                                        chosen.key==item.key,item.label).clicked(){
-                                        self.request_tileset(item.key);
-                                        ui.close();
-                                    }
-                                }
-                            });
+                ui.label("Category");
+                egui::ComboBox::from_id_salt("source_art_category")
+                    .selected_text(active.category)
+                    .width(ui.available_width().max(120.0))
+                    .show_ui(ui,|ui|{
+                        for category in tiles::SOURCE_CATEGORIES {
+                            let selected=category==active.category;
+                            if ui.add_sized(vec2(ui.available_width().max(190.0),37.0),
+                                egui::Button::new(category).fill(
+                                    if selected {Color32::from_rgb(197,226,248)}
+                                    else{Color32::from_gray(242)})).clicked(){
+                                selected_category=Some(category);
+                                ui.close();
+                            }
                         }
                     });
-                });
             });
+            if let Some(category)=selected_category{
+                if let Some(first)=tiles::first_in_category(category){
+                    self.request_tileset(first.key);
+                }
+            }
+            // Re-read after a category change so the second box and
+            // metatile gallery update in this same UI frame.
+            let active=self.browsing_pair();
+            let mut selected_key:Option<&'static str>=None;
+            ui.horizontal(|ui|{
+                ui.label("Tileset");
+                egui::ComboBox::from_id_salt("source_art_tileset")
+                    .selected_text(active.label)
+                    .width(ui.available_width().max(120.0))
+                    .show_ui(ui,|ui|{
+                        egui::ScrollArea::vertical().max_height(310.0)
+                            .id_salt("source_art_choices").show(ui,|ui|{
+                            for pair in tiles::pairs().iter()
+                                .filter(|pair|pair.category==active.category){
+                                let selected=pair.key==active.key;
+                                if ui.add_sized(vec2(ui.available_width().max(190.0),38.0),
+                                    egui::Button::new(pair.label).fill(
+                                        if selected {Color32::from_rgb(197,226,248)}
+                                        else{Color32::from_gray(242)})).clicked(){
+                                    selected_key=Some(pair.key);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+            });
+            if let Some(key)=selected_key{self.request_tileset(key);}
         }
         if self.mode==Mode::Terrain {
             self.terrain_toolbar(ui);
@@ -955,11 +998,16 @@ impl MapStudioApp {
                             ui.colored_label(Color32::from_rgb(157,83,33),
                                 format!("Change existing map to {}?",p.label));
                             if ui.button("Apply").clicked(){self.apply_pair(&pending);}
-                            if ui.small_button("Cancel").clicked(){self.pending_tileset=None;}
+                            if ui.small_button("Cancel").clicked(){
+                            self.pending_tileset=None;
+                            self.tileset_group=self.current_pair().category.into();
+                            self.selected_stamp=None;
+                            self.find_target=None;
+                        }
                         });
                     }
                 }
-                let chosen=self.current_pair();
+                let chosen=self.browsing_pair();
                 ui.horizontal_wrapped(|ui|{
                     ui.label("Find");
                     let mut filter_changed=false;
@@ -1002,7 +1050,11 @@ impl MapStudioApp {
     }
 
     fn terrain_sheet_content(&mut self, ui:&mut egui::Ui) {
-        let chosen=self.current_pair();
+        let chosen=self.browsing_pair();
+        if self.pending_tileset.is_some(){
+            ui.colored_label(Color32::from_rgb(150,84,26),
+                "Artwork preview only — confirm the change above before painting.");
+        }
                 ui.small("Tap a tile to paint. Hold then slide to select a rectangle.");
                 self.metatile_sheet(ui,chosen,0,chosen.primary_count,"Shared terrain");
                 self.metatile_sheet(ui,chosen,512,chosen.secondary_count,"Local tiles");
