@@ -195,7 +195,7 @@ impl MapStudioApp {
             gesture: CanvasGesture::Idle,
             preview_error: None,
             collision_brush: 0,
-            panel_height: 205.0,
+            panel_height: 280.0,
             map_width: 12,
             map_height: 10,
             expand_direction: ExpandDirection::LowerRight,
@@ -821,8 +821,8 @@ impl MapStudioApp {
     }
 
     fn palette(&mut self, ui: &mut egui::Ui) {
-        // The compact grab handle and tileset selector are always stationary.
-        // Only the tool options and artwork list beneath them scroll.
+        // Only the long source-art sheet is scrollable. The palette handle,
+        // source-pair selector, painting tools and Find navigation stay pinned.
         let (handle,response)=ui.allocate_exact_size(
             vec2(ui.available_width(),21.0),Sense::click_and_drag());
         let center=handle.center();
@@ -835,7 +835,7 @@ impl MapStudioApp {
             ui.ctx().request_repaint();
         }
         if response.double_clicked() {
-            self.panel_height=if self.panel_height<230.0 {345.0}else{120.0};
+            self.panel_height=if self.panel_height<230.0 {370.0}else{165.0};
         }
         if self.mode==Mode::Terrain {
             let chosen=self.current_pair();
@@ -866,10 +866,25 @@ impl MapStudioApp {
                 });
             });
         }
+        if self.mode==Mode::Terrain {
+            self.terrain_toolbar(ui);
+        }
         ui.separator();
         egui::ScrollArea::vertical().id_salt("dock_content")
             .auto_shrink([false,false]).show(ui,|ui|{
-                self.palette_content(ui);
+                if self.mode==Mode::Terrain {
+                    // Inertia advances the source sheet after a quick swipe.
+                    if self.sheet_inertia.abs()>=0.45 {
+                        ui.scroll_with_delta(vec2(0.0,self.sheet_inertia));
+                        self.sheet_inertia*=0.86;
+                        ui.ctx().request_repaint_after(Duration::from_millis(16));
+                    }else{
+                        self.sheet_inertia=0.0;
+                    }
+                    self.terrain_sheet_content(ui);
+                }else{
+                    self.palette_content(ui);
+                }
             });
     }
 
@@ -898,9 +913,8 @@ impl MapStudioApp {
         enabled && response.clicked()
     }
 
-    fn palette_content(&mut self, ui: &mut egui::Ui) {
-        match self.mode {
-            Mode::Terrain => {
+
+    fn terrain_toolbar(&mut self, ui:&mut egui::Ui) {
                 ui.horizontal_wrapped(|ui|{
                     ui.strong("Tool");
                     if ui.selectable_label(!self.erase_tool && !self.bucket_tool,"Brush").clicked(){
@@ -966,6 +980,10 @@ impl MapStudioApp {
                         ui.small("Non-matches are dimmed");
                     });
                 }
+    }
+
+    fn terrain_sheet_content(&mut self, ui:&mut egui::Ui) {
+        let chosen=self.current_pair();
                 ui.small("Tap a tile to paint. Hold then slide to select a rectangle.");
                 self.metatile_sheet(ui,chosen,0,chosen.primary_count,"Shared terrain");
                 self.metatile_sheet(ui,chosen,512,chosen.secondary_count,"Local tiles");
@@ -976,7 +994,13 @@ impl MapStudioApp {
                     ui.label(format!("Selected · {}",tiles::source_label_in(chosen,tile)
                         .unwrap_or("unnamed source metatile")));
                 }
-            }
+
+        ui.small(&self.message);
+    }
+
+    fn palette_content(&mut self, ui: &mut egui::Ui) {
+        match self.mode {
+            Mode::Terrain => {}
             Mode::Properties => {
                 ui.heading("Tile properties");
                 ui.horizontal_wrapped(|ui|{
@@ -1405,6 +1429,7 @@ impl MapStudioApp {
                     if self.sheet_anchor.is_none(){
                         if now-since>=0.46 && travel<=10.0 {
                             self.sheet_anchor=Some((base,first));
+                            self.sheet_inertia=0.0;
                             self.choose_sheet_stamp(pair,base,first,first);
                         }else if travel>10.0 {
                             // An immediate finger swipe scrolls the sheet.
@@ -1422,7 +1447,9 @@ impl MapStudioApp {
             }
             if self.sheet_hold.is_none() && response.dragged()
                 && self.sheet_anchor.is_none() {
-                ui.scroll_with_delta(response.drag_delta());
+                let delta=response.drag_delta();
+                ui.scroll_with_delta(delta);
+                self.sheet_inertia=delta.y.clamp(-65.0,65.0);
             }
         }
         if released {
