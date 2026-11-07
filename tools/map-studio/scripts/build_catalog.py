@@ -124,8 +124,10 @@ def group_for(primary_name,secondary_name):
     n=secondary_name.lower()
     if "cave" in n or any(v in n for v in ("tunnel","falls","pyramid","ruins","rock","underwater","tower")):
         return "Caves"
-    if "building" in primary_name or any(v in n for v in ("shop","house","center","gym","lab","school","mart","hospital","museum","hotel","store","club")):
-        return "Buildings"
+    if "house" in n or "building" in n:
+        return "Houses"
+    if "building" in primary_name or any(v in n for v in ("shop","center","gym","lab","school","mart","hospital","museum","hotel","store","club")):
+        return "Interiors"
     if any(v in n for v in ("town","city","petalburg","rustboro","mauville","slateport","lilycove","fortree","sootopolis","dewford","fallarbor","lavaridge","mossdeep","pacifidlog","vermilion","fuchsia","cerulean","saffron","pallet","pewter","viridian","lavender","cinnabar")):
         return "Towns"
     return "Outdoor & Special"

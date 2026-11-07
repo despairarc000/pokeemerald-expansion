@@ -566,7 +566,7 @@ impl MapStudioApp {
                         .selected_text(&self.tileset_group)
                         .width(135.0)
                         .show_ui(ui,|ui|{
-                            for group in ["Towns","Buildings","Caves","Outdoor & Special"]{
+                            for group in ["Towns","Houses","Interiors","Caves","Outdoor & Special"]{
                                 if ui.selectable_value(&mut self.tileset_group,
                                     group.to_string(),group).clicked(){
                                     self.palette_page=0;
