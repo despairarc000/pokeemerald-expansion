@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 //! Engine-independent map geometry and provisional editor cells.
 //! The visual tile kinds are placeholders until the real Emerald tilesets are decoded.
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GridPoint {
     pub x: i32,
     pub y: i32,
@@ -13,7 +14,7 @@ impl GridPoint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TileKind {
     Grass,
     Path,
@@ -45,17 +46,22 @@ impl TileKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cell {
     pub terrain: TileKind,
+    #[serde(default = "default_metatile_id")]
+    pub metatile_id: u16,
     pub collision: u8,
     pub elevation: u8,
 }
+
+fn default_metatile_id() -> u16 { 1 }
 
 impl Cell {
     pub const fn new(terrain: TileKind) -> Self {
         Self {
             terrain,
+            metatile_id: match terrain { TileKind::Water => 0x170, TileKind::Trees => 0x00D, TileKind::Path => 0x015, _ => 0x001 },
             collision: match terrain {
                 TileKind::Trees | TileKind::Roof | TileKind::Cliff => 1,
                 _ => 0,
@@ -75,13 +81,13 @@ impl Cell {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
     pub x: u32,
     pub y: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapFrame {
     pub id: u32,
     pub name: String,
@@ -113,10 +119,10 @@ impl MapFrame {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction { Up, Down, Left, Right }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {
     pub from: u32,
     pub to: u32,
@@ -126,7 +132,7 @@ pub struct Connection {
     pub common_tiles: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct World {
     pub maps: Vec<MapFrame>,
     next_id: u32,
@@ -213,6 +219,93 @@ impl World {
         false
     }
 
+
+    pub fn paint_metatile(&mut self, p: GridPoint, id: u16) -> bool {
+        if id >= 1024 { return false; }
+        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+            let x = (p.x - map.origin.x) as u32;
+            let y = (p.y - map.origin.y) as u32;
+            if let Some(i) = map.index(x, y) {
+                let old = map.cells[i];
+                let value = Some(match old {
+                    Some(mut cell) => {
+                        cell.metatile_id = id;
+                        cell
+                    }
+                    None => Cell { terrain: TileKind::Grass, metatile_id: id,
+                        collision: 0, elevation: if id == 0x170 { 1 } else { 3 } },
+                });
+                if map.cells[i] != value { map.cells[i] = value; return true; }
+            }
+        }
+        false
+    }
+
+    pub fn erase(&mut self, p: GridPoint) -> bool {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+            let x = (p.x - map.origin.x) as u32;
+            let y = (p.y - map.origin.y) as u32;
+            if let Some(i) = map.index(x, y) {
+                return map.cells[i].take().is_some();
+            }
+        }
+        false
+    }
+
+    pub fn set_elevation(&mut self, p: GridPoint, value: u8) -> bool {
+        if value > 15 { return false; }
+        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+            let x = (p.x - map.origin.x) as u32;
+            let y = (p.y - map.origin.y) as u32;
+            if let Some(i) = map.index(x, y) {
+                if let Some(mut cell) = map.cells[i] {
+                    if cell.elevation != value {
+                        cell.elevation = value;
+                        map.cells[i] = Some(cell);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub fn move_frame(&mut self, id: u32, origin: GridPoint) -> bool {
+        let Some(index) = self.maps.iter().position(|m| m.id == id) else { return false; };
+        let (width, height) = (self.maps[index].width, self.maps[index].height);
+        if !self.fits_rect(id, origin, width, height) { return false; }
+        self.maps[index].origin = origin;
+        true
+    }
+
+    pub fn resize_frame(&mut self, id: u32, width: u32, height: u32) -> bool {
+        let Some(index) = self.maps.iter().position(|m| m.id == id) else { return false; };
+        let map = &self.maps[index];
+        if !self.fits_rect(id, map.origin, width, height) { return false; }
+        let new_len = (width as usize) * (height as usize);
+        let mut next = vec![None; new_len];
+        for y in 0..map.height.min(height) {
+            for x in 0..map.width.min(width) {
+                next[(y * width + x) as usize] = map.cell(x, y);
+            }
+        }
+        let map = &mut self.maps[index];
+        map.cells = next;
+        map.markers.retain(|m| m.x < width && m.y < height);
+        map.width = width;
+        map.height = height;
+        true
+    }
+
+    fn fits_rect(&self, id: u32, origin: GridPoint, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 || (width as u64) * (height as u64) > 100_000 { return false; }
+        let (l, t) = (i64::from(origin.x), i64::from(origin.y));
+        let (r, b) = (l + i64::from(width), t + i64::from(height));
+        self.maps.iter().filter(|m| m.id != id).all(|m|
+            l >= m.right() || r <= i64::from(m.origin.x)
+                || t >= m.bottom() || b <= i64::from(m.origin.y))
+    }
+
     pub fn connections(&self) -> Vec<Connection> {
         let mut edges = Vec::new();
         for a in &self.maps {
@@ -272,8 +365,8 @@ mod tests {
 
     #[test]
     fn packed_emerald_cell_has_the_expected_bit_fields() {
-        let c=Cell { terrain:TileKind::Grass, collision:1, elevation:3 };
-        assert_eq!(c.pack(0x155),0x3555);
+        let c=Cell { terrain:TileKind::Grass, metatile_id:0x155, collision:1, elevation:3 };
+        assert_eq!(c.pack(c.metatile_id),0x3555);
     }
 
     #[test]
@@ -283,5 +376,35 @@ mod tests {
         assert_eq!(w.maps[2].cell(0,0).unwrap().terrain,TileKind::Water);
         assert!(w.maps[0].cells.iter().all(Option::is_none));
         assert!(!w.paint(GridPoint::new(-1,10),TileKind::Grass));
+    }
+}
+
+#[cfg(test)]
+mod more_tests {
+    use super::*;
+    #[test]
+    fn move_and_resize_preserve_cells_without_overlaps() {
+        let mut w=World::sample();
+        assert!(w.paint_metatile(GridPoint::new(1,1),0x155));
+        assert!(!w.move_frame(2, GridPoint::new(10,0)));
+        assert!(w.move_frame(2, GridPoint::new(25,0)));
+        assert!(w.resize_frame(1, 11, 9));
+        assert_eq!(w.maps[0].cell(1,1).unwrap().metatile_id,0x155);
+        assert!(w.maps[0].cell(11,1).is_none());
+    }
+    #[test]
+    fn serialize_is_lossless_for_numeric_tiles() {
+        let mut w=World::sample();
+        w.paint_metatile(GridPoint::new(2,1),0x170);
+        let b=serde_json::to_vec(&w).unwrap();
+        let restored:World=serde_json::from_slice(&b).unwrap();
+        assert_eq!(w,restored);
+    }
+    #[test]
+    fn rejects_overflow_metatile_and_outside_paint() {
+        let mut w=World::sample();
+        assert!(!w.paint_metatile(GridPoint::new(2,2),1024));
+        assert!(!w.paint_metatile(GridPoint::new(-200,0),1));
+        assert!(w.paint_metatile(GridPoint::new(2,2),1));
     }
 }
