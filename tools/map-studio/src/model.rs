@@ -714,6 +714,32 @@ impl World {
         false
     }
 
+    /// Paint a source-authentic rectangle. Empty source slots remain empty, and
+    /// the stamp is clipped to its starting map (never another nearby frame).
+    /// Collision/elevation on existing cells remain untouched.
+    pub fn paint_stamp(&mut self, at:GridPoint, stamp:&crate::tiles::MetatileStamp)->usize{
+        let target=self.maps.iter().find(|m|m.space_id==self.active_space_id && m.contains(at));
+        let Some(map)=target else{return 0;};
+        if format!("{}/{}",map.primary_tileset,map.secondary_tileset)!=stamp.pair_key {
+            return 0;
+        }
+        let map_id=map.id;
+        let mut changed=0;
+        for row in 0..stamp.height {
+            for column in 0..stamp.width {
+                let Some(id)=stamp.cells[row*stamp.width+column] else{continue;};
+                let Some(x)=at.x.checked_add(column as i32) else{continue;};
+                let Some(y)=at.y.checked_add(row as i32) else{continue;};
+                let position=GridPoint::new(x,y);
+                if !self.maps.iter().any(|m|m.id==map_id && m.contains(position)) {
+                    continue;
+                }
+                if self.paint_metatile(position,id){changed+=1;}
+            }
+        }
+        changed
+    }
+
     pub fn erase(&mut self, p: GridPoint) -> bool {
         if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
@@ -1376,5 +1402,22 @@ mod cross_space_event_tests {
         w.set_active_space(inside_space).unwrap();
         assert_eq!(w.event_at(GridPoint::new(2,2)),Some((inside,0)));
         w.check_integrity().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod metatile_stamp_tests{
+    use super::*;
+    #[test]
+    fn grouped_tiles_do_not_spill_into_neighbor_map(){
+        let mut world=World::new();
+        world.add_map("Left",GridPoint::new(0,0),10,10).unwrap();
+        world.add_map("Right",GridPoint::new(10,0),10,10).unwrap();
+        let source=crate::tiles::pair(crate::tiles::DEFAULT_PAIR).unwrap();
+        let group=crate::tiles::stamp_from_sheet(source,0,16,25).unwrap();
+        assert_eq!(world.paint_stamp(GridPoint::new(9,2),&group),2);
+        let right=world.maps.iter().find(|m|m.name=="Right").unwrap();
+        assert!(right.cells.iter().all(Option::is_none));
+        assert_eq!(world.paint_stamp(GridPoint::new(1,1),&group),4);
     }
 }
