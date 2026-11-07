@@ -23,7 +23,10 @@ The owner asked for a final review before implementation of the Android map make
 ## Log 17: First native Map Studio APK compiled (2026-11-07)
 The owner explicitly initiated implementation of the native Rust map maker. The first working code is on branch `feature/map-studio-native-android` under `tools/map-studio/`: `eframe`/`egui` with `wgpu`, a white grid, three gray adjoining frames, provisional color-tile painting, collision overlays, event markers and touch pan/pinch UI. The pure Rust world model prevents map overlap, packs Emerald collision/elevation fields and calculates shared-edge connections. GitHub Actions run `42319371555` passed its Rust unit tests, desktop compile and ARM64 Android APK packaging; downloadable artifact `map-studio-arm64-debug` is available in that run. This is **not device-tested**: launch, touchscreen behavior, performance and lifecycle handling remain unverified. The tiles are placeholders, and the app does not yet support persistent saves, actual tilesets, GBA export, GitHub synchronization, or live collaboration.
 
-## State (as of log 17)
+## Log 18: Map Studio optimized Android test APK (2026-11-07)
+The owner asked to shrink the 228 MiB native Rust debug APK. On branch `feature/map-studio-native-android` the `Cargo.toml` release profile now enables size optimization, LTO, single codegen unit, symbol stripping and abort-on-panic; its Android CI workflow produces a temporarily signed ARM64 release APK. Run `42322214875` passed both the Rust desktop/tests job and the optimized Android packaging job. Downloaded `map-studio.apk` was checked: 3,273,066 bytes (3.12 MiB) versus the previous 238,711,146 bytes (227.65 MiB), a 98.63% size reduction. The APK archive passed integrity checking and the JAR signature verified (self-signed test certificate). **Device startup, touch UI and real map export remain untested.** Test signing keys are ephemeral per CI run, so an earlier APK may need uninstalling before installing another.
+
+## State (as of log 18)
 
 **Done**
 - Meadowmere natural environment design, down to 20 natural maps (`design/region-meadowmere.md`, `meadowmere-areas.md`, `meadowmere-places.md`, `meadowmere-interiors.md`, `meadowmere-maps-natural.md`).
@@ -38,7 +41,7 @@ The owner explicitly initiated implementation of the native Rust map maker. The 
 - Villages and other buildings are not designed in any region.
 - Species per zone not assigned. The species list has not been checked in the repo. Rarity tier numbers are AI estimates.
 - Real tile art and the tileset pipeline. The map maker's format is unknown to the AI.
-- Map Studio: ARM64 debug APK compiled successfully in Actions run `42319371555` from the feature branch. Owner to install and smoke-test the app; actual Pokémon tilesets, saves/export and collaboration are not yet implemented. See `design/map-studio-implementation.md`.
+- Map Studio: ARM64 size-optimized APK compiled in Actions run `42322214875` (3.12 MiB). Owner to install and smoke-test; actual tilesets, saves/export and collaboration are not yet implemented. See `design/map-studio-implementation.md`.
 - Healing and rest rules, where the player begins, and which regions have gyms are undecided.
 - Owner to confirm the world layout sketch (diary log 10) and whether the "world feel rules" become a core design rule in `design/CORE.md`.
 - Ladder rows were drafted by the AI and need owner review.
