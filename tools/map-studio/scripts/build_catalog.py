@@ -210,6 +210,7 @@ sourcefile=out.parent/"tileset_catalog.rs"
 rows=[]
 for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in catalog:
     label=local.name.replace("_"," ").title()
+    collection=("FireRed/LeafGreen" if main_sym in ("gTileset_General_Frlg","gTileset_BuildingFrlg") else "Emerald")
     labels=[]
     for mid,source_label in labels_by_source.get(main_sym,{}).items():
         if 0<=mid<512 and mask[mid//8]&(1<<(mid%8)):
@@ -226,7 +227,7 @@ for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in cat
                 ",include_bytes!("+literal(entry)+"))")
     rows.append(
         "TilePair {key:"+literal(key)+", label:"+literal(label)+
-        ",category:"+literal(category)+
+        ",collection:"+literal(collection)+",category:"+literal(category)+
         ",primary_symbol:"+literal(main_sym)+",secondary_symbol:"+literal(sec_sym)+
         ",primary:"+literal(main.name)+
         ",secondary:"+literal(local.name)+",primary_count:"+str(first)+
