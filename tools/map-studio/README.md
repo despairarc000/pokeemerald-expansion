@@ -365,3 +365,29 @@ Android package: `dev.despairarc.mapstudio.artworkpreview`, kept separate
 from prior test installations to preserve private saves. Release v0.14 is
 derived from `Cargo.toml`, and CI uploads **only the final signed APK**
 without the unaligned intermediate. Live phone touch testing remains needed.
+
+## v0.15 — clearer artwork previews and Android-safe dock
+
+- Browsing a new source tileset on a previously painted map is a **preview**,
+  not a request to turn the map into a named town or venue. The two selection
+  boxes immediately show the chosen source art, but the underlying map retains
+  its old tile IDs until the owner explicitly presses **Use artwork**. The
+  UI now states that the named map is unchanged and provides **Revert**.
+  The former misleading "Change existing map to Battle Pyramid?" question
+  has been removed from the painting toolbar.
+- There is exactly **one** bottom-dock grab handle. Its size is constrained
+  to available window height after header and a small Android navigation
+  safety inset; fullscreen, split-screen and small freeform windows cannot
+  ask for a dock taller than the available region.
+- In normal windows, the artwork selectors and Brush/Bucket/Eraser/Find
+  remain fixed while only the metatile gallery scrolls. In unusually short
+  window heights, the grip stays anchored and the remaining controls move
+  into a bounded scrolling region instead of overflowing beneath the
+  Android gesture/navigation bar.
+- New Rust dock-bound regression tests cover very short and full-height
+  windows. Physical-device split-screen acceptance is still required.
+
+The v0.15 test APK has its own package
+`dev.despairarc.mapstudio.dockpreview` so it cannot overwrite private saves
+from older preview installations. The CI artifact contains one signed APK,
+not cargo-apk's unaligned intermediate.
