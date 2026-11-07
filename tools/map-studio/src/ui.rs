@@ -7,6 +7,22 @@ use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode { Terrain, Properties, Events }
 
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum SizeAxis { Width, Height }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum ResizeEdge { Left, Right, Top, Bottom }
+
+#[derive(Clone,Copy,Debug)]
+struct ResizeGuidance {
+    map_id:u32,
+    width:u32,
+    height:u32,
+    direction:ExpandDirection,
+    max_width:u32,
+    max_height:u32,
+}
+
+
 /// Only a long hold creates/moves a frame. Immediate dragging still paints/pans.
 #[derive(Clone,Copy,Debug)]
 enum CanvasGesture {
@@ -44,6 +60,7 @@ pub struct MapStudioApp {
     selected_stamp:Option<tiles::MetatileStamp>,
     sheet_anchor:Option<(u16,u16)>,
     sheet_hold:Option<(u16,u16,f64,Pos2)>,
+    sheet_inertia:f32,
     bucket_tool:bool,
     erase_tool: bool,
     find_index:usize,
@@ -72,8 +89,13 @@ pub struct MapStudioApp {
     map_width: u32,
     map_height: u32,
     expand_direction: ExpandDirection,
+    number_axis:Option<SizeAxis>,
+    replace_number:bool,
+    resize_guidance:Option<ResizeGuidance>,
     size_panel_open: bool,
     show_parent:bool,
+    overlays_open:bool,
+    overlays_button:Option<Rect>,
     show_events:bool,
     show_properties:bool,
     zoom: f32,
@@ -148,6 +170,7 @@ impl MapStudioApp {
             selected_stamp:None,
             sheet_anchor:None,
             sheet_hold:None,
+            sheet_inertia:0.0,
             bucket_tool:false,
             erase_tool: false,
             find_index:0,
@@ -176,8 +199,13 @@ impl MapStudioApp {
             map_width: 12,
             map_height: 10,
             expand_direction: ExpandDirection::LowerRight,
+            number_axis:Some(SizeAxis::Width),
+            replace_number:true,
+            resize_guidance:None,
             size_panel_open: false,
             show_parent:true,
+            overlays_open:false,
+            overlays_button:None,
             show_events:true,
             show_properties:false,
             zoom: 14.0,
