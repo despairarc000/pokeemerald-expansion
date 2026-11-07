@@ -747,7 +747,7 @@ impl MapStudioApp {
                         Mode::Events => {
                             if pressed {
                                 self.selected_event=self.world.add_event(p,self.event_brush);
-                                self.event_editor_open=response.double_clicked();
+                                self.event_editor_open=false;
                                 if let Some((map_id,_))=self.selected_event{
                                     self.selected_map=Some(map_id);
                                     self.message="Event selected · choose type or double-tap to edit".into();
@@ -777,6 +777,10 @@ impl MapStudioApp {
                     }
                 }
             }
+        }
+        // egui signals double-click on release, not on pointer press.
+        if self.mode==Mode::Events && response.double_clicked() && self.selected_event.is_some() {
+            self.event_editor_open=true;
         }
         if released || !down {
             self.blank_pan=false;
