@@ -2616,36 +2616,73 @@ impl MapStudioApp {
                 FontId::proportional(11.0),Color32::from_black_alpha(if is_editing {48} else {160}));
         }
 
-        // Highlight travel links only when event overlays are enabled.
+        // Show the actual connection whenever a linked warp is selected.
+        // Same-Space routes connect true map positions. Separate Spaces have
+        // independent coordinates, so a labelled tether is shown instead:
+        // never invent a physically continuous route across dimensions.
         if self.show_events && self.mode==Mode::Events {
-        if let Some((from_id,event_index))=self.selected_event {
-            if let Some(map)=self.world.maps.iter().find(|m|m.id==from_id) {
-                if let Some(warp)=map.events.get(event_index).filter(|e|e.kind==EventKind::Warp){
-                    if let Some(target)=self.world.active_maps().find(|m|m.id==warp.dest_map_id) {
-                        let to=if warp.warp_mode==WarpMode::Direct {
-                            Some((warp.dest_x,warp.dest_y))
-                        }else{
-                            target.events.iter().filter(|e|e.kind==EventKind::Warp &&
-                                e.warp_mode!=WarpMode::Direct)
-                                .nth(usize::from(warp.dest_warp_id))
-                                .map(|e|(e.x,e.y))
-                        };
-                        if let Some((tx,ty))=to {
-                            let source=self.screen_at(rect,
-                                map.origin.x as f32+warp.x as f32+0.5,
-                                map.origin.y as f32+warp.y as f32+0.5);
-                            let destination=self.screen_at(rect,
-                                target.origin.x as f32+tx as f32+0.5,
-                                target.origin.y as f32+ty as f32+0.5);
-                            painter.line_segment([source,destination],
-                                Stroke::new(1.7,Color32::from_rgb(39,105,195)));
+            if let Some((map_id,event_index))=self.selected_event {
+                if let Some(source_map)=self.world.maps.iter().find(|m|m.id==map_id) {
+                    if source_map.space_id==self.world.active_space_id {
+                        if let Some(warp)=source_map.events.get(event_index)
+                            .filter(|e|e.kind==EventKind::Warp && !e.arrival_only
+                                && e.dest_map_id!=0) {
+                            if let Some(target_map)=self.world.maps.iter()
+                                .find(|m|m.id==warp.dest_map_id) {
+                                let source=self.screen_at(rect,
+                                    source_map.origin.x as f32+warp.x as f32+0.5,
+                                    source_map.origin.y as f32+warp.y as f32+0.5);
+                                let target=if warp.warp_mode==WarpMode::Direct {
+                                    Some((warp.dest_x,warp.dest_y))
+                                }else{
+                                    target_map.events.iter().filter(|e|
+                                        e.kind==EventKind::Warp
+                                        && e.warp_mode!=WarpMode::Direct)
+                                        .nth(warp.dest_warp_id as usize).map(|e|(e.x,e.y))
+                                };
+                                if let Some((tx,ty))=target {
+                                    let line_color=Color32::from_rgb(36,113,196);
+                                    if target_map.space_id==source_map.space_id{
+                                        let destination=self.screen_at(rect,
+                                            target_map.origin.x as f32+tx as f32+0.5,
+                                            target_map.origin.y as f32+ty as f32+0.5);
+                                        painter.line_segment([source,destination],
+                                            Stroke::new(2.1,line_color));
+                                        painter.circle_stroke(destination,
+                                            (s*0.28).max(3.0),
+                                            Stroke::new(1.6,line_color));
+                                    }else{
+                                        let destination=pos2(
+                                            (source.x+72.0).min(rect.right()-98.0)
+                                                .max(rect.left()+98.0),
+                                            (source.y-38.0).max(rect.top()+27.0)
+                                                .min(rect.bottom()-27.0));
+                                        painter.line_segment([source,destination],
+                                            Stroke::new(1.9,line_color));
+                                        let space_name=self.world.spaces.iter()
+                                            .find(|space|space.id==target_map.space_id)
+                                            .map(|space|space.name.as_str())
+                                            .unwrap_or("Other space");
+                                        let label=format!("To {} / {}",space_name,target_map.name);
+                                        let label_rect=Rect::from_center_size(destination,
+                                            vec2((label.chars().count() as f32*6.2+16.0)
+                                                .clamp(112.0,240.0),27.0));
+                                        painter.rect_filled(label_rect,5.0,
+                                            Color32::from_rgb(232,244,252));
+                                        painter.rect_stroke(label_rect,5.0,
+                                            Stroke::new(1.2,line_color),StrokeKind::Inside);
+                                        painter.text(destination,Align2::CENTER_CENTER,label,
+                                            FontId::proportional(10.5),
+                                            Color32::from_rgb(25,79,138));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        }
         if self.show_events && self.mode==Mode::Events {
             if let Some(p)=self.warp_focus{
                 let cell=Rect::from_min_size(self.screen_at(rect,p.x as f32,p.y as f32),
