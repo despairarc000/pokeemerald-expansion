@@ -1,0 +1,112 @@
+# Artwork Library v0.17 — source audit and architecture
+
+## Source-backed built-ins
+
+| Collection | Source | Count | Bundled? | Editor capability |
+| --- | --- | ---: | --- | --- |
+| Emerald metatile pairs | This fork's `data/layouts/layouts.json` and `data/tilesets/{primary,secondary}/*`, built by `scripts/build_catalog.py` | 129 usable layout pairs in previous CI; current build is authoritative | Yes | Paint native ID, source attributes, layers and palette rendering |
+| Emerald prefab definitions | [huderlem/Porymap](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_emerald.json) | 71 source definitions | Yes | Filter by actual source tileset symbols + valid metatile ID; paint full 2D structure with collision and elevation |
+| FireRed Porymap prefabs | [Porymap default FireRed](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_firered.json) | 45 | No | The definitions require compatible FireRed assets; raw IDs are not Emerald IDs |
+| Ruby Porymap prefabs | [Porymap default Ruby](https://github.com/huderlem/porymap/blob/master/resources/text/prefabs_default_ruby.json) | 55 | No | Original Ruby tileset needs importing before prefabs can be used |
+
+Porymap's prefab data carries `name`, `width`, `height`, primary and
+secondary source symbols, and an array of `{x,y,metatile_id,collision,elevation}`.
+A blank source symbol is a wildcard. All 71 default Emerald prefab definitions
+match at least one of our fork's **layout-declared symbol pairings**, but
+**not all 71 are available on every map**. The editor applies an additional
+per-metatile validity check against the compiled pair. Original metatile IDs
+are never renumbered. Porymap license/attribution is included in
+`../assets/PORYMAP-ATTRIBUTION.md` and `../assets/PORYMAP-LICENSE.md`.
+
+## Further Pokémon artwork sources discovered
+
+| Source | What is available | Safe integration status |
+| --- | --- | --- |
+| [Team Aqua's Asset Repo / Full Tilesets](https://github.com/TeamAquasHideout/Team-Aquas-Asset-Repo/tree/main/Tilesets/The%20Great%20Tileset%20Exchange/Full%20Tilesets) | Multiple full, titled primary and secondary tilesets, such as Gen 4 Cave Secondary, Brick City, Gatehouses, underwater sets, Autumn Ruins, Sewers and LeoB ORAS | Strong import candidate. Their README describes default free use/edit with creator-specific exceptions. Check each directory's README and retain credits before redistribution. |
+| [LeoB ORAS Pokémon Emerald](https://github.com/lbsbezerra/pokeemerald-modern-oras) and [public-use announcement](https://www.reddit.com/r/PokemonROMhacks/comments/1de5m2z) | ORAS-inspired overworld, paths, trees, water and building artwork in an Emerald project | Explicit author public-use statement with attribution; requires compatible source resources and deliberate conversion |
+| [Liamjd14 FireRed Tileset Port](https://github.com/Liamjd14/Firered-Tileset-Port) | WIP native FireRed-to-Emerald source port including tilesets | Technical reference, not presumed redistribution permission for the art; verify assets and project licensing first |
+| [Pokémon Heart and Soul prefabs](https://github.com/PokemonHnS-Development/pokemonHnS/blob/main/prefabs.json) | Named Johto prefabs with custom `gTileset_Johto_*` symbols | Compatible *data structure*, incompatible native IDs without matching Johto tile graphics |
+| [Porytiles](https://github.com/grunt-lucas/porytiles) | Generation III metatile/tileset compiler | Good next integration target for user-created source PNG/attribute conversion |
+| [Hypercutter](https://github.com/cuebitt/hypercutter) | Extraction/library utility for Emerald/FireRed/LeafGreen/Ruby/Sapphire tile/palette resources | Tooling reference; extracted ROM artwork is not automatically authorized for redistribution |
+| Pokémon Unbound | ROM patch and contributor art credits; no verified complete openly redistributable tileset archive | Not bundled and not shown as an empty collection |
+
+These third-party packages were **not** silently bundled into v0.17.
+Public GitHub access is not universal relicensing of original Pokémon artwork.
+An imported pack must contain explicit provenance/attribution; each source
+still requires separate permission verification where applicable.
+
+## App UI hierarchy
+
+1. **Collection**: Emerald or a real imported collection. No placeholders for FireRed or Unbound.
+2. **Category**: swipe-scrollable categories (Towns, Houses, Interiors,
+   Caves, Outdoor & Special), chosen from actual tileset metadata.
+3. **Tileset**: source pair in that category, with previous/next controls;
+   original IDs and source order remain unchanged.
+4. **Metatiles / Prefabs**: metatile sheet or visual group cards. On Emerald,
+   tap a compatible prefab to stamp its real ID, collision and elevation
+   values. Imported reference packs remain unpaintable.
+
+Touch swipes scroll categories **only inside that strip** and art scrolls
+vertically in the sheet. Swipes do not silently switch the collection or
+tileset while painting. Full-window height and system navigation reserve
+remain bounded by the existing responsive dock code.
+
+## Portable artwork ZIP format (v1)
+
+The current export creates a **source-complete ZIP for the selected pair**,
+not a huge archive containing all 129 pairs. Paths inside the ZIP:
+
+- `manifest.json`: `format = "mapstudio-artwork-pack"`, version 1;
+  collection, engine, source, attribution, pair key, source symbols,
+  category, native counts and 128-byte validity mask.
+- `atlas.png`: 256×1024 sheet of 1024 positions (16 columns ×64 rows),
+  containing the locally compiled 16×16 source metatiles.
+- `primary/tiles.png`, `secondary/tiles.png`: original indexed 8×8 art.
+- `primary/metatiles.bin`, `secondary/metatiles.bin`: true 8-subtile
+  native metatile definitions.
+- `primary/metatile_attributes.bin`,
+  `secondary/metatile_attributes.bin`: native attribute data.
+- `primary/palettes/*.pal`, `secondary/palettes/*.pal`: native palette banks.
+- `prefabs.json`: compatible verified Porymap Emerald prefabs
+  with source IDs and collision/elevation.
+
+An imported ZIP must parse, pass bounded input checks, contain all required
+source files, contain a valid-sized atlas and consistent counts, and have
+a supported manifest version. It is stored globally in the app-private
+artwork library; maps are not changed by import.
+
+**Native compatibility** is deliberately strict: the imported atlas,
+source symbols, valid mask and pair key must match the built-in Emerald
+pair before the user can explicitly choose "Use matching Emerald source".
+Otherwise the imported collection is **browse-only**. The source-complete
+package gives the next compiler stage all core resources, but full
+import-and-compile of foreign palettes, behavioral constants, layer modes,
+tile count budgets and map bank allocation remains future work.
+
+On Android, the current import UI browses ZIP archives readable in this
+app's `Downloads/MapStudio` MediaStore folder. A general system document
+picker is not yet present. Export publishes to that same Downloads folder.
+CLI/desktop programmatic imports can use the format directly.
+
+## Tested behavior & known validation gaps
+
+Unit tests cover source prefab count, compatibility checks, paint bounds,
+collision/elevation preservation, portable package export/reimport, malformed
+ZIP rejection, CLI/editor regression tests, and original map export.
+The Android workflow includes an ARM64 signature check plus desktop build.
+
+**Not established**: physical Samsung swipe/resize usability, full ROM
+engine round-trip for any *new* external tileset, preservation of animation
+tiles beyond copied native source files, or legal entitlement to distribute
+any third-party source without license review. Before making imported
+art game-paintable, build and test its native tileset in this fork.
+
+## Follow-up phases
+
+- P0: direct Android Storage Access Framework picker and safe ZIP browsing.
+- P1: convert a complete external pack (ORAS or FRLG) against explicit
+  Emerald palette/ID/layer limits with a playable ROM integration test.
+- P1: user-curated local prefab creation + ZIP export, names and revisions.
+- P2: cross-project collection version references, deduplicated asset
+  storage, import conflict resolution and dependency backups.
+- P2: larger collection gallery, install/uninstall, and package previews.

@@ -417,3 +417,25 @@ not cargo-apk's unaligned intermediate.
   written under this installation's Downloads/MapStudio, **not arbitrary
   files through the Android system picker**. Cross-preview backups
   must be transferred through a supported readable location.
+
+## v0.17 — artwork library and source-backed prefab collection
+
+- **Collection → swipeable Category → Tileset → Metatiles / Prefabs** replaces
+  the previous two-selector-only Terrain browser. Emerald is the only
+  built-in graphics collection until complete, verified external resources
+  are imported.
+- The **71 original Porymap Emerald prefab definitions** are bundled with
+  Porymap LGPL-3.0 attribution and rendered from this fork's native source
+  atlas; each prefab is filtered by source symbol and valid tile IDs. Tapping
+  one stamps its real metatiles, collision and elevation, without reaching
+  other maps.
+- Export a **single source-complete artwork ZIP** from the Pack menu, or
+  import a validated one from this app's accessible Downloads/MapStudio
+  folder. Imported external art can be browsed, but cannot paint game maps
+  until a native converter/validator exists. A byte-identical Emerald
+  package provides an explicit "Use matching Emerald source" action.
+- Imported packages persist globally in app-private storage, separate
+  from project autosaves, and don't rewrite native map IDs.
+- See [artwork library architecture and provenance](docs/ARTWORK_LIBRARY_V1.md)
+  for compatibility guarantees, all researched external sources, and work
+  remaining before FireRed/Unbound artwork can be inserted into Emerald.
