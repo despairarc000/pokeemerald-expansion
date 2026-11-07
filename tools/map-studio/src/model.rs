@@ -292,8 +292,11 @@ impl World {
             if map.name.len()>128 {
                 return Err("Map name is too long".into());
             }
+            let pair=crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+                .ok_or_else(||format!("Map {} has an unsupported tileset combination",map.name))?;
             for cell in map.cells.iter().flatten() {
-                if cell.metatile_id>=1024 || cell.collision>3 || cell.elevation>15 {
+                if !crate::tiles::valid_in(pair,cell.metatile_id) ||
+                    cell.collision>3 || cell.elevation>15 {
                     return Err(format!("Invalid native cell value in {}",map.name));
                 }
             }
@@ -360,6 +363,17 @@ impl World {
         self.active_space_id=id;
         Ok(id)
     }
+    pub fn set_map_tileset(&mut self,id:u32,key:&str)->Result<(),String>{
+        let tileset=crate::tiles::pair(key).ok_or("Tileset not available")?;
+        let m=self.maps.iter_mut().find(|m|m.id==id).ok_or("Map not found")?;
+        if m.cells.iter().flatten().any(|cell|!crate::tiles::valid_in(tileset,cell.metatile_id)){
+            return Err("The new tileset lacks a tile already painted on this map".into());
+        }
+        m.primary_tileset=tileset.primary.into();
+        m.secondary_tileset=tileset.secondary.into();
+        Ok(())
+    }
+
     pub fn active_maps(&self)->impl Iterator<Item=&MapFrame> {
         self.maps.iter().filter(|m|m.space_id==self.active_space_id)
     }
@@ -589,8 +603,11 @@ impl World {
         let x=(i64::from(p.x)-i64::from(map.origin.x)) as u32;
         let y=(i64::from(p.y)-i64::from(map.origin.y)) as u32;
         let Some(cell)=map.cell(x,y) else {return false;};
-        cell.collision==0 && crate::tiles::valid_metatile(cell.metatile_id)
-            && !crate::tiles::is_warp_behavior(cell.metatile_id)
+        crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+            .map(|tileset|cell.collision==0 &&
+                crate::tiles::valid_in(tileset,cell.metatile_id) &&
+                !crate::tiles::is_warp_in(tileset,cell.metatile_id))
+            .unwrap_or(false)
     }
 
     pub fn set_direct_arrival(&mut self,source:(u32,usize),p:GridPoint)->Result<(),String>{
@@ -673,6 +690,10 @@ impl World {
     pub fn paint_metatile(&mut self, p: GridPoint, id: u16) -> bool {
         if id >= 1024 { return false; }
         if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
+            let Some(pair)=crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset) else{
+                return false;
+            };
+            if !crate::tiles::valid_in(pair,id){return false;}
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if let Some(i) = map.index(x, y) {
@@ -1312,5 +1333,23 @@ mod editing_space_tests {
         restored.check_integrity().unwrap();
         assert_eq!(restored.spaces.len(),1);
         assert!(restored.maps.iter().all(|map|map.space_id==0));
+    }
+}
+
+#[cfg(test)]
+mod space_tileset_tests {
+    use super::*;
+    #[test]
+    fn tileset_is_per_map_not_per_world(){
+        let mut w=World::new();
+        let outside=w.add_map("Town",GridPoint::new(0,0),4,4).unwrap();
+        let sid=w.create_space(SpaceKind::Interior,Some(outside),GridPoint::new(2,2)).unwrap();
+        let inside=w.add_map("House",GridPoint::new(0,0),4,4).unwrap();
+        assert_ne!(sid,0);
+        assert_eq!(w.maps[1].primary_tileset,"building");
+        assert_eq!(w.maps[1].secondary_tileset,"generic_building");
+        w.check_integrity().unwrap();
+        assert!(w.set_map_tileset(inside,"building/pokemon_center").is_ok());
+        w.check_integrity().unwrap();
     }
 }

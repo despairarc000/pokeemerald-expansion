@@ -4,8 +4,6 @@ use crate::model::{MapFrame, World, EventKind, WarpMode};
 use std::{collections::HashMap, fs, io::Write, path::Path};
 use serde_json::{json, Value};
 
-const PRIMARY: &str = "gTileset_General";
-const SECONDARY: &str = "gTileset_Petalburg";
 const GROUP: &str = "gMapGroup_Meadowmere";
 
 pub fn map_name(map: &MapFrame) -> String {
@@ -19,6 +17,8 @@ pub fn validate(world:&World) -> Result<(), String> {
     let mut pickup_slots=std::collections::HashSet::new();
     for m in &world.maps {
         if !names.insert(map_name(m)) {return Err(format!("Duplicate Emerald map name: {}",map_name(m))); }
+        let tileset=crate::tiles::pair_for(&m.primary_tileset,&m.secondary_tileset)
+            .ok_or_else(||format!("{} uses an unsupported source tileset",m.name))?;
         if m.width == 0 || m.height == 0 ||
             (u64::from(m.width)+15)*(u64::from(m.height)+14)>10240 {
             return Err(format!("{} exceeds current Emerald map buffer capacity",m.name));
@@ -31,7 +31,7 @@ pub fn validate(world:&World) -> Result<(), String> {
                 m.name,index%(m.width as usize),index/(m.width as usize)));
         }
         for c in m.cells.iter().flatten() {
-            if !crate::tiles::valid_metatile(c.metatile_id) || c.collision>3 || c.elevation>15 {
+            if !crate::tiles::valid_in(tileset,c.metatile_id) || c.collision>3 || c.elevation>15 {
                 return Err(format!("{} contains invalid native tile values",m.name));
             }
         }
@@ -63,7 +63,12 @@ pub fn validate(world:&World) -> Result<(), String> {
                             i32::try_from(i64::from(m.origin.x)+i64::from(e.x)).map_err(|_|"Overflow")?,
                             i32::try_from(i64::from(m.origin.y)+i64::from(e.y)).map_err(|_|"Overflow")?,
                         );
-                        if !world.safe_arrival_at(p) {
+                        if !Some(m).and_then(|frame|{
+                            let tiles=crate::tiles::pair_for(&frame.primary_tileset,&frame.secondary_tileset)?;
+                            let cell=frame.cell(e.x,e.y)?;
+                            Some(cell.collision==0 && crate::tiles::valid_in(tiles,cell.metatile_id) &&
+                                !crate::tiles::is_warp_in(tiles,cell.metatile_id))
+                        }).unwrap_or(false) {
                             return Err(format!("{} arrival marker needs safe, non-warp terrain",m.name));
                         }
                     }
@@ -76,8 +81,11 @@ pub fn validate(world:&World) -> Result<(), String> {
                     }else{
                         let cell=target.cell(e.dest_x,e.dest_y).ok_or_else(||
                             format!("{} direct arrival needs a painted destination tile",m.name))?;
-                        if cell.collision!=0 || crate::tiles::is_warp_behavior(cell.metatile_id)
-                            || !crate::tiles::valid_metatile(cell.metatile_id) {
+                        let target_tiles=crate::tiles::pair_for(
+                            &target.primary_tileset,&target.secondary_tileset)
+                            .ok_or("Warp destination uses unsupported tileset")?;
+                        if cell.collision!=0 || crate::tiles::is_warp_in(target_tiles,cell.metatile_id)
+                            || !crate::tiles::valid_in(target_tiles,cell.metatile_id) {
                             return Err(format!("{} direct arrival needs walkable, non-warp terrain",m.name));
                         }
                     }
@@ -110,14 +118,21 @@ fn safe_dialogue(s:&str)->bool {
 pub fn layout_json(map:&MapFrame) -> Value {
     let cells:Vec<Vec<u16>> = map.cells.chunks(map.width as usize).map(|row|row.iter()
         .map(|c|{let v=c.expect("validated before export");v.pack(v.metatile_id)}).collect()).collect();
+    let tileset=crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+        .expect("validated tileset pair");
+    let w=map.width as usize;
+    let h=map.height as usize;
+    let border=[cells[0][0],cells[0][w-1],cells[h-1][0],cells[h-1][w-1]];
     json!({
         "format": "mapstudio-numeric-v1",
         "header": {
             "id": format!("LAYOUT_{}",map_name(map).to_uppercase()),
             "name": format!("{}_Layout",map_name(map)),
-            "primary":PRIMARY,"secondary":SECONDARY,"group":GROUP
+            "primary":tileset.primary_symbol,
+            "secondary":tileset.secondary_symbol,
+            "group":GROUP
         },
-        "border":[0x170,0x170,0x170,0x170],
+        "border":border,
         "cells": cells
     })
 }
