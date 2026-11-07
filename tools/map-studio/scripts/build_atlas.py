@@ -70,6 +70,19 @@ for metatile in range(COUNT):
     entries=struct.unpack_from("<8H",raw,local*16)
     x=(metatile%COLS)*16
     y=(metatile//COLS)*16
+    # Use the actual GBA backdrop and layer-type-specific NORMAL BG3
+    # filler, not palette-bank zero pixels as fake opaque scenery.
+    for py in range(y,y+16):
+        for px in range(x,x+16):
+            pix[px,py]=(*palettes[0][0],255)
+    attrs_path=(PRIMARY if metatile<512 else SECONDARY)/"metatile_attributes.bin"
+    # Attributes stay in the checked-in source, parallel to metatiles.bin.
+    attrs=attrs_path.read_bytes()
+    if (local+1)*2<=len(attrs):
+        layer=(struct.unpack_from("<H",attrs,local*2)[0]>>12)&15
+        if layer==0:
+            for corner in range(4):
+                draw_subtile(0x3014,corner,x,y,False)
     for n,sub in enumerate(entries):
         draw_subtile(sub,n%4,x,y,n>=4)
 
