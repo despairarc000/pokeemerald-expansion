@@ -722,7 +722,7 @@ impl MapStudioApp {
 
         if let Some(screen)=pointer {
             let p=self.grid_at(rect,screen);
-            if pressed && rect.contains(screen) {
+            if pressed && rect.contains(screen) && response.is_pointer_button_down_on() {
                 self.last_painted=None;
                 self.blank_pan=false;
 
