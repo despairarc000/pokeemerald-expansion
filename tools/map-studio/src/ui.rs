@@ -373,15 +373,14 @@ impl MapStudioApp {
                     ).small().color(Color32::DARK_GRAY));
                 } else {
                     ui.horizontal_wrapped(|ui| {
-                        for value in 0..4 {
-                            if ui.selectable_label(self.collision_brush==value,
-                                format!("C{value}")).clicked() {
+                        for (value,label) in [(0,"Passable"),(1,"Blocked"),(2,"C2"),(3,"C3")] {
+                            if ui.selectable_label(self.collision_brush==value,label).clicked() {
                                 self.collision_brush=value;
                             }
                         }
                     });
                     ui.label(egui::RichText::new(
-                        "C0 clear · C1 blocking · C2/C3 other native collision values. Paint across tiles to apply."
+                        "Green C0 = passable · Red C1 = blocked · C2/C3 = advanced native values"
                     ).small().color(Color32::DARK_GRAY));
                 }
             }
