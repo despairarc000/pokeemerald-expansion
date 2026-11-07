@@ -1870,6 +1870,12 @@ impl MapStudioApp {
     }
 
     fn handle_canvas_input(&mut self, ui:&egui::Ui,rect:Rect,response:&egui::Response) {
+        // A tap outside the overlay panel dismisses it without accidentally
+        // painting, creating an event, or moving a map underneath.
+        if self.overlays_open {
+            self.gesture=CanvasGesture::Idle;
+            return;
+        }
         const DRAG_PX:f32=9.0;
         let (multi,pressed,down,released,pointer,now)=ui.input(|input|(
             input.multi_touch(),
