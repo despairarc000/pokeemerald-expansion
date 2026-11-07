@@ -34,11 +34,34 @@ pub fn emerald()->&'static [Prefab]{
     })
 }
 
+/// Original vanilla FireRed prefab definitions from huderlem/porymap, LGPL-3.0.
+/// Their general tileset symbol uses the upstream FireRed name; this fork
+/// names its native FRLG primary art gTileset_General_Frlg.
+pub fn firered()->&'static [Prefab]{
+    static PREFABS:OnceLock<Vec<Prefab>>=OnceLock::new();
+    PREFABS.get_or_init(||{
+        serde_json::from_str(include_str!("../assets/porymap-firered-prefabs.json"))
+            .expect("Bundled Porymap FireRed prefabs must parse")
+    })
+}
+pub fn by_collection(collection:&str)->&'static [Prefab]{
+    match collection{
+        "FireRed/LeafGreen"=>firered(),
+        _=>emerald(),
+    }
+}
+
 /// Source symbol pairing is part of the Porymap format; an empty symbol
 /// represents a wildcard. Reject invalid or modified source IDs rather than
 /// painting a lookalike with silently different graphics.
 pub fn compatible(prefab:&Prefab,pair:&TilePair)->bool{
-    (prefab.primary_tileset.is_empty() || prefab.primary_tileset==pair.primary_symbol)
+    let primary_matches=prefab.primary_tileset.is_empty()
+        || prefab.primary_tileset==pair.primary_symbol
+        || (pair.collection=="FireRed/LeafGreen" && matches!(
+            (prefab.primary_tileset.as_str(),pair.primary_symbol),
+            ("gTileset_General","gTileset_General_Frlg")
+                | ("gTileset_Building","gTileset_BuildingFrlg")));
+    primary_matches
         && (prefab.secondary_tileset.is_empty() || prefab.secondary_tileset==pair.secondary_symbol)
         && prefab.width>0 && prefab.height>0
         && prefab.width<=32 && prefab.height<=32
@@ -48,7 +71,8 @@ pub fn compatible(prefab:&Prefab,pair:&TilePair)->bool{
             && tiles::valid_in(pair,p.metatile_id))
 }
 pub fn compatible_indices(pair:&TilePair)->Vec<usize>{
-    emerald().iter().enumerate().filter_map(|(i,p)|compatible(p,pair).then_some(i)).collect()
+    by_collection(pair.collection).iter().enumerate()
+        .filter_map(|(i,p)|compatible(p,pair).then_some(i)).collect()
 }
 
 impl World {
@@ -95,6 +119,20 @@ mod tests{
         assert_eq!(emerald().len(),71);
         assert!(emerald().iter().any(|p|p.name=="Mart"));
         assert!(emerald().iter().any(|p|p.name=="Player House"));
+    }
+    #[test]
+    fn firered_definitions_are_bundled_and_source_scoped(){
+        assert_eq!(firered().len(),45);
+        let pairs:Vec<_>=tiles::pairs().iter()
+            .filter(|pair|pair.collection=="FireRed/LeafGreen").collect();
+        assert!(!pairs.is_empty(),"The fork contains native FRLG source pairs");
+        assert!(pairs.iter().any(|pair|!compatible_indices(pair).is_empty()),
+            "No bundled FireRed prefab is source-compatible");
+        for pair in pairs{
+            for index in compatible_indices(pair){
+                assert!(compatible(&firered()[index],pair));
+            }
+        }
     }
     #[test]
     fn built_in_prefabs_are_only_exposed_when_matching_real_pair(){
