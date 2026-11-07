@@ -102,7 +102,10 @@ pub fn behavior_name(id:u16)->Option<&'static str>{
 }
 /// Verified from metatile attribute behavior values, never guessed from graphics.
 pub fn behavior_overlay(id:u16)->Option<&'static str> {
-    match behavior_name(id)? {
+    behavior_overlay_in(pair(DEFAULT_PAIR)?,id)
+}
+pub fn behavior_overlay_in(pair:&TilePair,id:u16)->Option<&'static str> {
+    match behavior_name_in(pair,id)? {
         "MB_ICE"|"MB_THIN_ICE"|"MB_CRACKED_ICE"=>Some("❄"),
         "MB_POND_WATER"|"MB_INTERIOR_DEEP_WATER"|"MB_DEEP_WATER"
           |"MB_WATERFALL"|"MB_SOOTOPOLIS_DEEP_WATER"|"MB_OCEAN_WATER"
