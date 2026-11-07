@@ -51,6 +51,47 @@ jobs:
         run: python3 -m unittest discover -s tests -p "test_*.py"
       - name: Unit tests
         run: cargo test --lib
+      - name: Audit source-defined tileset and NPC artwork
+        run: |
+          python3 - <<'PY'
+          import glob,json,os,shutil
+          from pathlib import Path
+          from PIL import Image
+          candidates=glob.glob('target/**/atlases/catalog.json',recursive=True)
+          assert candidates,"Rust build did not generate a source tileset catalog"
+          catalog_file=Path(max(candidates,key=os.path.getmtime))
+          obj=json.loads(catalog_file.read_text())
+          print("Usable source-defined tileset pairs:",obj["available"],
+                "unavailable:",len(obj["omitted"]))
+          assert obj["available"]>=60,obj["available"]
+          keys={p["key"] for p in obj["pairs"]}
+          required={"general/petalburg":"general__petalburg.png",
+                    "general/cave":"general__cave.png",
+                    "building/generic_building":"building__generic_building.png"}
+          assert set(required).issubset(keys),keys
+          audit=Path("target/studio-asset-audit")
+          audit.mkdir(exist_ok=True,parents=True)
+          shutil.copy2(catalog_file,audit/"catalog.json")
+          for name in required.values():
+              path=catalog_file.parent/name
+              assert path.is_file(),path
+              picture=Image.open(path).convert("RGBA")
+              assert picture.size==(256,1024)
+              assert len(set(picture.getdata()))>30,(name,"unexpectedly blank")
+              shutil.copy2(path,audit/name)
+          sprites=list(catalog_file.parent.parent.glob("sprites/npc-previews.png"))
+          assert sprites,"NPC sprites were not built"
+          npc=Image.open(sprites[0])
+          assert npc.width==192 and npc.height>=80
+          shutil.copy2(sprites[0],audit/"npc-previews.png")
+          print("Verified real atlas gallery and selected NPC previews")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: map-studio-source-visual-audit
+          path: tools/map-studio/target/studio-asset-audit/
+          if-no-files-found: error
+
       - name: CLI geometry regression tests
         run: cargo test --bin map-studio-cli
       - name: Headless Rust-to-Python export smoke test
