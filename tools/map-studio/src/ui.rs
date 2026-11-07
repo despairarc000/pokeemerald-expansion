@@ -661,13 +661,11 @@ impl MapStudioApp {
                     return;
                 }
 
-                if let Some(map)=self.world.map_at(p) {
-                    self.selected_map=Some(map.id);
+                if let Some((id,origin,width,height))=self.world.map_at(p)
+                    .map(|map|(map.id,map.origin,map.width,map.height)) {
+                    self.selected_map=Some(id);
                     self.begin_edit();
                     if self.move_tool {
-                        let id=map.id;
-                        let origin=map.origin;
-                        let (width,height)=(map.width,map.height);
                         if p.x>=origin.x+(width as i32)-2 && p.y>=origin.y+(height as i32)-2 {
                             self.resizing=Some((id,p,width,height));
                         } else {
