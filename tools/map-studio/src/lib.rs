@@ -4,6 +4,7 @@ pub mod export;
 pub mod storage;
 pub mod tiles;
 pub mod prefabs;
+pub mod artwork;
 pub mod choices;
 #[cfg(target_os = "android")]
 mod android_export;
