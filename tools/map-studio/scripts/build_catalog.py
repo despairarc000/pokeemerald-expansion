@@ -101,6 +101,27 @@ def generate(main,local,output):
             continue
         valid.append(mid)
         x=(mid%16)*16;y=(mid//16)*16
+        # Compose a static approximation of the GBA's three BG layers.
+        # All indexed zeros are transparent, but the GBA has an opaque
+        # backdrop (BG palette 0, entry 0). NORMAL metatiles also draw
+        # primary tile 0x14, palette 3, on BG3 behind the other layers.
+        # This prevents apparently missing scenery in the picker without
+        # treating arbitrary palette-bank zeros as painted pixels.
+        if 0 not in palettes or 3 not in palettes:
+            raise ValueError("Primary backdrop palette missing")
+        atlas.paste((*palettes[0][0],255),(x,y,x+16,y+16))
+        layer_type=(struct.unpack_from("<H",attrs[src],sub*2)[0]>>12)&15
+        if layer_type==0:
+            filler_index=0x14
+            filler_img=tile_banks[0][3]
+            tile_x=(filler_index%(filler_img.width//8))*8
+            tile_y=(filler_index//(filler_img.width//8))*8
+            filler=filler_img.crop((tile_x,tile_y,tile_x+8,tile_y+8))
+            indexed=images[0].crop((tile_x,tile_y,tile_x+8,tile_y+8))
+            filler.putalpha(indexed.point(lambda value:0 if value==0 else 255).convert("L"))
+            for fy in (0,8):
+                for fx in (0,8):
+                    atlas.alpha_composite(filler,(x+fx,y+fy))
         for n,entry in enumerate(entries):
             tile=entry&1023
             flipx=bool(entry&0x400)
