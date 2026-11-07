@@ -398,6 +398,19 @@ impl World {
         false
     }
 
+    pub fn remove_frame(&mut self, id:u32) -> Result<(),String> {
+        if !self.maps.iter().any(|m|m.id==id) {
+            return Err("Map not found".into());
+        }
+        if self.maps.iter().any(|m|m.id!=id && m.events.iter().any(
+            |e|e.kind==EventKind::Warp && e.dest_map_id==id
+        )) {
+            return Err("Map is a warp destination; remove incoming warps first".into());
+        }
+        self.maps.retain(|m|m.id!=id);
+        Ok(())
+    }
+
     pub fn move_frame(&mut self, id: u32, origin: GridPoint) -> bool {
         let Some(index) = self.maps.iter().position(|m| m.id == id) else { return false; };
         let (width, height) = (self.maps[index].width, self.maps[index].height);
@@ -583,5 +596,20 @@ mod integrity_tests {
     #[test]
     fn normal_editable_sample_is_valid() {
         World::sample().check_integrity().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod remove_map_tests {
+    use super::*;
+    #[test]
+    fn deletion_refuses_to_break_warp_destinations() {
+        let mut world=World::sample();
+        world.add_event(GridPoint::new(13,1),EventKind::Warp);
+        assert!(world.remove_frame(1).unwrap_err().contains("warp destination"));
+        assert_eq!(world.maps.len(),3);
+        world.remove_frame(2).unwrap();
+        assert_eq!(world.maps.len(),2);
+        world.check_integrity().unwrap();
     }
 }
