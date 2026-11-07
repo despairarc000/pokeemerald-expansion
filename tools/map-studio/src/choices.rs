@@ -55,3 +55,56 @@ mod sprite_validation_tests {
         }
     }
 }
+
+
+/// Actual inventory items from this fork's constants/items.h.
+/// A hidden item does not default to an item: the player must choose one.
+pub const HIDDEN_ITEMS:&[(&str,&str)]=&[
+    ("Poké Ball","ITEM_POKE_BALL"),
+    ("Potion","ITEM_POTION"),
+    ("Super Potion","ITEM_SUPER_POTION"),
+    ("Antidote","ITEM_ANTIDOTE"),
+    ("Full Heal","ITEM_FULL_HEAL"),
+    ("Revive","ITEM_REVIVE"),
+    ("Escape Rope","ITEM_ESCAPE_ROPE"),
+    ("Ether","ITEM_ETHER"),
+    ("Rare Candy","ITEM_RARE_CANDY"),
+    ("Nugget","ITEM_NUGGET"),
+    ("Tiny Mushroom","ITEM_TINY_MUSHROOM"),
+];
+
+/// These 16 persistent slots are marked unused in the checked-in Emerald flags
+/// and must be treated as reserved to Map Studio projects. Never accept arbitrary
+/// user-supplied flag identifiers. Conflicts with external mods still require review.
+pub const PICKUP_SLOTS:[&str;16]=[
+    "FLAG_UNUSED_0x020","FLAG_UNUSED_0x021","FLAG_UNUSED_0x022","FLAG_UNUSED_0x023",
+    "FLAG_UNUSED_0x024","FLAG_UNUSED_0x025","FLAG_UNUSED_0x026","FLAG_UNUSED_0x027",
+    "FLAG_UNUSED_0x028","FLAG_UNUSED_0x029","FLAG_UNUSED_0x02A","FLAG_UNUSED_0x02B",
+    "FLAG_UNUSED_0x02C","FLAG_UNUSED_0x02D","FLAG_UNUSED_0x02E","FLAG_UNUSED_0x02F",
+];
+pub fn valid_hidden_item(value:&str)->bool {
+    HIDDEN_ITEMS.iter().any(|(_,id)|*id==value)
+}
+pub fn valid_pickup_slot(value:&str)->bool {
+    PICKUP_SLOTS.contains(&value)
+}
+pub fn free_pickup_slot<'a>(in_use:impl Iterator<Item=&'a str>)->Option<&'static str>{
+    let used:std::collections::HashSet<&str>=in_use.collect();
+    PICKUP_SLOTS.iter().copied().find(|slot|!used.contains(slot))
+}
+#[cfg(test)]
+mod item_picker_tests {
+    #[test]
+    fn item_and_flag_choices_exist_in_this_fork(){
+        let items=include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+            "/../../include/constants/items.h"));
+        let flags=include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+            "/../../include/constants/flags.h"));
+        for (_,id) in super::HIDDEN_ITEMS{
+            assert!(items.contains(id),"Missing real item {id}");
+        }
+        for flag in super::PICKUP_SLOTS {
+            assert!(flags.contains(flag),"Missing reserved unused flag {flag}");
+        }
+    }
+}

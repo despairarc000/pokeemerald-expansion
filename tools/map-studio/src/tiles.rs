@@ -44,6 +44,14 @@ pub fn behavior_overlay(id:u16)->Option<&'static str> {
         _=>None
     }
 }
+/// Disallow arrival-only markers on automatic transition tiles to avoid
+/// unintentional self-warping in the unmodified GBA engine.
+pub fn is_warp_behavior(id:u16)->bool{
+    let Some(name)=behavior_name(id) else {return true;};
+    ["WARP","DOOR","LADDER","ESCALATOR","HOLE","STAIR","TELEPORT"]
+        .iter().any(|part|name.contains(part))
+}
+
 pub fn friendly_behavior(id:u16)->Option<&'static str> {
     match behavior_overlay(id) {
         Some("❄")=>Some("Ice"),

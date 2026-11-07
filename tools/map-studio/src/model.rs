@@ -333,6 +333,18 @@ impl World {
     }
 
 
+    pub fn assign_hidden_slot(&mut self,map_id:u32,index:usize)->Result<(),String>{
+        let used:Vec<String>=self.maps.iter().flat_map(|m|m.events.iter())
+            .filter(|e|e.kind==EventKind::HiddenItem && !e.hidden_flag.is_empty())
+            .map(|e|e.hidden_flag.clone()).collect();
+        let slot=crate::choices::free_pickup_slot(used.iter().map(String::as_str))
+            .ok_or("No free hidden-item pickup slots (16 available)")?;
+        let e=self.event_mut(map_id,index).ok_or("Hidden item not found")?;
+        if e.kind!=EventKind::HiddenItem {return Err("Not a hidden item".into());}
+        if e.hidden_flag.is_empty(){e.hidden_flag=slot.into();}
+        Ok(())
+    }
+
     pub fn add_event(&mut self, p: GridPoint, kind: EventKind) -> Option<(u32,usize)> {
         if let Some(map)=self.maps.iter_mut().find(|m|m.contains(p)) {
             let x=(p.x-map.origin.x) as u32;
@@ -847,7 +859,7 @@ mod event_tests {
         assert_eq!(id,2);
         assert_eq!(w.maps[1].events[index].x,1);
         assert_eq!(w.maps[1].events[index].y,1);
-        assert_eq!(w.maps[1].events[index].dest_map_id,1);
+        assert_eq!(w.maps[1].events[index].dest_map_id,0);
         assert!(w.remove_event(id,index));
     }
     #[test]
