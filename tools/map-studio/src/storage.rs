@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 use std::{fs, io, path::{Path, PathBuf}};
 
 pub const SCHEMA_VERSION: u32 = 1;
+pub const MAX_PROJECT_BYTES: usize = 20 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
@@ -15,22 +16,39 @@ impl Project {
     pub fn new(world: World) -> Self { Self { schema_version: SCHEMA_VERSION, world } }
 }
 
-pub fn load(path: &Path) -> Result<World, String> {
-    let bytes=fs::read(path).map_err(|e|format!("Read project: {e}"))?;
-    // Verify the version before interpreting the world schema; newer document
-    // formats may not be decodable with this version's World type.
-    let envelope:serde_json::Value=serde_json::from_slice(&bytes)
+pub fn decode(bytes:&[u8]) -> Result<World,String> {
+    if bytes.len()>MAX_PROJECT_BYTES {
+        return Err("Project exceeds the 20 MiB import safety limit".into());
+    }
+    let envelope:serde_json::Value=serde_json::from_slice(bytes)
         .map_err(|e|format!("Parse project: {e}"))?;
     let version=envelope.get("schema_version").and_then(|v|v.as_u64())
         .ok_or("Project is missing a numeric schema_version")?;
-    if version != u64::from(SCHEMA_VERSION) {
+    if version!=u64::from(SCHEMA_VERSION) {
         return Err(format!("Project version {} is not supported (expected {})",
-            version, SCHEMA_VERSION));
+            version,SCHEMA_VERSION));
     }
     let project:Project=serde_json::from_value(envelope)
         .map_err(|e|format!("Parse project: {e}"))?;
     project.world.check_integrity()?;
     Ok(project.world)
+}
+
+pub fn load(path:&Path)->Result<World,String> {
+    let metadata=fs::metadata(path).map_err(|e|format!("Read project metadata: {e}"))?;
+    if metadata.len()>(MAX_PROJECT_BYTES as u64) {
+        return Err("Project exceeds the 20 MiB import safety limit".into());
+    }
+    let bytes=fs::read(path).map_err(|e|format!("Read project: {e}"))?;
+    decode(&bytes)
+}
+
+/// Replaces a live project only after its contents are fully validated.
+/// The caller must first preserve its previous project as a recovery snapshot.
+pub fn replace_validated(path:&Path,bytes:&[u8])->Result<World,String> {
+    let new_world=decode(bytes)?;
+    save(path,&new_world)?;
+    Ok(new_world)
 }
 
 pub fn save(path: &Path, world: &World) -> Result<(), String> {
@@ -67,5 +85,43 @@ mod tests {
         fs::write(&p,br#"{"schema_version":999,"world":{}}"#).unwrap();
         assert!(load(&p).unwrap_err().contains("version 999"));
         let _=fs::remove_file(p);
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    #[test]
+    fn decode_accepts_exported_project_bytes() {
+        let w=World::sample();
+        let bytes=serde_json::to_vec(&Project::new(w.clone())).unwrap();
+        assert_eq!(decode(&bytes).unwrap(),w);
+    }
+    #[test]
+    fn decode_rejects_oversized_and_corrupt_input_without_crash() {
+        let oversized=vec![0u8;MAX_PROJECT_BYTES+1];
+        assert!(decode(&oversized).unwrap_err().contains("20 MiB"));
+        assert!(decode(b"{broken json").is_err());
+    }
+    #[test]
+    fn invalid_import_cannot_overwrite_a_saved_project() {
+        let path=std::env::temp_dir()
+            .join(format!("mapstudio-restore-test-{}.json",std::process::id()));
+        let world=World::sample();
+        save(&path,&world).unwrap();
+        assert!(replace_validated(&path,b"not json").is_err());
+        assert_eq!(load(&path).unwrap(),world);
+        let _=fs::remove_file(&path);
+    }
+    #[test]
+    fn valid_import_replaces_only_after_validation() {
+        let path=std::env::temp_dir()
+            .join(format!("mapstudio-restore-good-{}.json",std::process::id()));
+        save(&path,&World::sample()).unwrap();
+        let incoming=World::new();
+        let bytes=serde_json::to_vec(&Project::new(incoming.clone())).unwrap();
+        assert_eq!(replace_validated(&path,&bytes).unwrap(),incoming);
+        assert_eq!(load(&path).unwrap(),incoming);
+        let _=fs::remove_file(&path);
     }
 }
