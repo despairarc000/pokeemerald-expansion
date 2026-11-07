@@ -33,6 +33,11 @@ enum CanvasGesture {
     MapPress { id:u32, at: GridPoint, screen: Pos2, since:f64, origin:GridPoint },
     Painting { last: GridPoint },
     MoveFrame { id:u32, from:GridPoint, origin:GridPoint },
+    ResizeFrame {
+        id:u32,edge:ResizeEdge,from:GridPoint,
+        base_width:u32,base_height:u32,width:u32,height:u32,
+        direction:ExpandDirection,
+    },
     EventPress { map_id:u32, index:usize, at:GridPoint, screen:Pos2, since:f64 },
     MoveEvent { map_id:u32, index:usize },
     PickWarp { at:GridPoint },
@@ -1751,6 +1756,25 @@ impl MapStudioApp {
 
     /// Match a marker's visible screen-sized hit area, even at low world
     /// zoom where its owning metatile can be only a few physical pixels.
+    fn edge_at_screen(&self,canvas:Rect,id:u32,point:Pos2)->Option<ResizeEdge>{
+        let map=self.world.maps.iter().find(|map|map.id==id)?;
+        let top_left=self.screen_at(canvas,
+            map.origin.x as f32,map.origin.y as f32);
+        let outline=Rect::from_min_size(top_left,
+            vec2(map.width as f32*self.zoom,map.height as f32*self.zoom));
+        if outline.width()<32.0 || outline.height()<32.0
+            || !outline.contains(point){return None;}
+        let options=[
+            ((point.x-outline.left()).abs(),ResizeEdge::Left),
+            ((point.x-outline.right()).abs(),ResizeEdge::Right),
+            ((point.y-outline.top()).abs(),ResizeEdge::Top),
+            ((point.y-outline.bottom()).abs(),ResizeEdge::Bottom),
+        ];
+        options.into_iter().filter(|(distance,_)|*distance<=12.0)
+            .min_by(|a,b|a.0.total_cmp(&b.0))
+            .map(|(_,edge)|edge)
+    }
+
     fn event_at_screen(&self,rect:Rect,point:Pos2)->Option<(u32,usize)>{
         self.world.active_maps().flat_map(|map|{
             map.events.iter().enumerate().filter_map(move |(index,event)|{
@@ -1953,9 +1977,28 @@ impl MapStudioApp {
                     CanvasGesture::MapPress{id,at:start,screen:origin,since,origin:map_origin}=>{
                         let delta=(screen-origin).length();
                         if Self::long_hold_complete(since,now,delta) {
-                            self.gesture=CanvasGesture::MoveFrame{id,from:start,origin:map_origin};
-                            self.begin_edit();
-                            self.message="Slide the map to move it".into();
+                            if let Some(edge)=self.edge_at_screen(rect,id,origin){
+                                if let Some(map)=self.world.maps.iter().find(|m|m.id==id){
+                                    let (base_width,base_height)=(map.width,map.height);
+                                    let direction=match edge{
+                                        ResizeEdge::Left=>ExpandDirection::LowerLeft,
+                                        ResizeEdge::Right=>ExpandDirection::LowerRight,
+                                        ResizeEdge::Top=>ExpandDirection::UpperRight,
+                                        ResizeEdge::Bottom=>ExpandDirection::LowerRight,
+                                    };
+                                    self.gesture=CanvasGesture::ResizeFrame{
+                                        id,edge,from:start,base_width,base_height,
+                                        width:base_width,height:base_height,direction
+                                    };
+                                    self.message="Drag edge to preview, then release to resize".into();
+                                }
+                            }else{
+                                self.gesture=CanvasGesture::MoveFrame{
+                                    id,from:start,origin:map_origin
+                                };
+                                self.begin_edit();
+                                self.message="Slide the map to move it".into();
+                            }
                             ui.ctx().request_repaint();
                         }else if delta>DRAG_PX {
                             if self.mode==Mode::Terrain && self.bucket_tool {
@@ -1979,6 +2022,28 @@ impl MapStudioApp {
                             self.paint_line(last,at);
                         }
                         self.gesture=CanvasGesture::Painting{last:at};
+                        ui.ctx().request_repaint();
+                    }
+                    CanvasGesture::ResizeFrame{
+                        id,edge,from,base_width,base_height,direction,..
+                    }=>{
+                        let dx=i64::from(at.x)-i64::from(from.x);
+                        let dy=i64::from(at.y)-i64::from(from.y);
+                        let change=match edge{
+                            ResizeEdge::Left=>-dx,ResizeEdge::Right=>dx,
+                            ResizeEdge::Top=>-dy,ResizeEdge::Bottom=>dy,
+                        };
+                        let mut width=base_width;
+                        let mut height=base_height;
+                        if matches!(edge,ResizeEdge::Left|ResizeEdge::Right){
+                            width=(i64::from(base_width)+change).clamp(1,100) as u32;
+                        }else{
+                            height=(i64::from(base_height)+change).clamp(1,100) as u32;
+                        }
+                        self.preview_error=self.world.preview_resize(id,width,height,direction).err();
+                        self.gesture=CanvasGesture::ResizeFrame{
+                            id,edge,from,base_width,base_height,width,height,direction
+                        };
                         ui.ctx().request_repaint();
                     }
                     CanvasGesture::MoveFrame{id,from,origin}=>{
@@ -2129,6 +2194,23 @@ impl MapStudioApp {
                         self.begin_edit();
                         self.paint_line(start,start);
                         self.commit_edit();
+                    }
+                }
+                CanvasGesture::ResizeFrame{id,width,height,direction,..}=>{
+                    match self.world.preview_resize(id,width,height,direction){
+                        Ok(_)=>{
+                            self.begin_edit();
+                            match self.world.resize_frame_towards(id,width,height,direction){
+                                Ok(())=>{
+                                    self.map_width=width;self.map_height=height;
+                                    self.resize_guidance=None;
+                                    self.message=format!("Map resized to {width} x {height}");
+                                }
+                                Err(err)=>self.message=err,
+                            }
+                            self.commit_edit();
+                        }
+                        Err(err)=>self.message=format!("Cannot resize: {err}"),
                     }
                 }
                 CanvasGesture::Painting{..} | CanvasGesture::MoveFrame{..}=>{
@@ -2524,6 +2606,25 @@ impl MapStudioApp {
             painter.rect_filled(box_rect,5.0,Color32::from_rgb(255,226,225));
             painter.text(box_rect.center(),Align2::CENTER_CENTER,err,
                 FontId::proportional(12.0),Color32::from_rgb(154,29,29));
+        }
+        // Interactive edge preview is non-destructive until the finger
+        // releases. Blocked geometry is red; valid expansion is green.
+        if let CanvasGesture::ResizeFrame{id,width,height,direction,..}=self.gesture {
+            if let Some((origin,w,h))=self.world.resize_ghost(id,width,height,direction){
+                let from=self.screen_at(rect,origin.x as f32,origin.y as f32);
+                let target=Rect::from_min_size(from,vec2(w as f32*s,h as f32*s));
+                if rect.intersects(target){
+                    let valid=self.world.preview_resize(id,w,h,direction).is_ok();
+                    let col=if valid{Color32::from_rgb(42,152,94)}
+                        else{Color32::from_rgb(210,62,62)};
+                    painter.rect_filled(target,0.0,
+                        if valid{Color32::from_rgba_unmultiplied(39,157,97,42)}
+                        else{Color32::from_rgba_unmultiplied(206,53,53,60)});
+                    painter.rect_stroke(target,0.0,Stroke::new(2.4,col),StrokeKind::Inside);
+                    painter.text(target.center(),Align2::CENTER_CENTER,
+                        format!("{w} x {h}"),FontId::proportional(12.0),col);
+                }
+            }
         }
         // Outlines drawn LAST, above terrain, properties, labels, and markers.
         let colors = [
