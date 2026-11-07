@@ -10,6 +10,7 @@ on:
       - feature/map-studio-resize-keypad-and-dock
       - feature/map-studio-touch-paint-overlays-warp-ux
       - feature/map-studio-v0-14-artwork-dropdowns
+      - feature/map-studio-v0-15-tileset-confirm-dock
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'
