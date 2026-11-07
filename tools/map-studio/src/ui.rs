@@ -83,6 +83,7 @@ pub struct MapStudioApp {
     multitouch_in_progress: bool,
     selected_map: Option<u32>,
     selected_cell: Option<GridPoint>,
+    warp_focus: Option<GridPoint>,
     confirm_delete: Option<u32>,
     message: String,
     project_restore_open: bool,
@@ -186,6 +187,7 @@ impl MapStudioApp {
             multitouch_in_progress: false,
             selected_map: None,
             selected_cell: None,
+            warp_focus: None,
             confirm_delete: None,
             message,
             project_restore_open: false,
@@ -422,6 +424,7 @@ impl MapStudioApp {
         self.commit_edit();
         self.selected_map=None;
         self.selected_cell=None;
+        self.warp_focus=None;
         if self.warp_pick.is_none(){self.selected_event=None;}
         self.gesture=CanvasGesture::Idle;
         self.tile_preview=None;
@@ -948,10 +951,41 @@ impl MapStudioApp {
                             if let Some((destination_id,destination_space))=
                                 self.world.maps.iter().find(|m|m.id==ev.dest_map_id)
                                     .map(|m|(m.id,m.space_id)) {
-                                if ui.small_button("Open destination map").clicked(){
+                                if ui.small_button("Open destination warp").clicked(){
+                                    // Native linked warp IDs index only numbered
+                                    // warp events; direct arrivals are coordinates.
+                                    let target=self.world.maps.iter()
+                                        .find(|m|m.id==destination_id)
+                                        .and_then(|target|{
+                                            if ev.warp_mode==WarpMode::Direct {
+                                                Some((None,ev.dest_x,ev.dest_y,
+                                                    target.origin))
+                                            }else{
+                                                target.events.iter().enumerate()
+                                                    .filter(|(_,e)|e.kind==EventKind::Warp
+                                                        && e.warp_mode!=WarpMode::Direct)
+                                                    .nth(ev.dest_warp_id as usize)
+                                                    .map(|(i,e)|(Some(i),e.x,e.y,target.origin))
+                                            }
+                                        });
                                     self.switch_space(destination_space);
+                                    self.mode=Mode::Events;
                                     self.selected_map=Some(destination_id);
-                                    self.fit_world();
+                                    if let Some((event_index,x,y,origin))=target {
+                                        let at=GridPoint::new(
+                                            origin.x.saturating_add(x as i32),
+                                            origin.y.saturating_add(y as i32));
+                                        self.selected_event=event_index.map(|i|(destination_id,i));
+                                        self.selected_cell=Some(at);
+                                        self.warp_focus=Some(at);
+                                        self.zoom=self.zoom.max(16.0);
+                                        self.offset=self.canvas_size*0.5
+                                            -vec2(at.x as f32+0.5,at.y as f32+0.5)*self.zoom;
+                                        self.message="Destination warp selected and centered".into();
+                                    }else{
+                                        self.selected_event=None;
+                                        self.message="Destination map opened; warp target is unavailable".into();
+                                    }
                                 }
                             }
                         }
@@ -1643,6 +1677,7 @@ impl MapStudioApp {
         if pressed && response.is_pointer_button_down_on() {
             if let Some(screen)=pointer.filter(|pos|rect.contains(*pos)) {
                 let at=self.grid_at(rect,screen);
+                self.warp_focus=None;
                 if self.warp_pick.is_some() {
                     self.gesture=CanvasGesture::PickWarp{at};
                 }else if let Some((map_id,index))=if self.mode==Mode::Events {
