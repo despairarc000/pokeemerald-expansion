@@ -68,14 +68,14 @@ impl MapStudioApp {
         let (world, load_error)=match save_path.as_deref() {
             Some(path) if path.exists() => match storage::load(path) {
                 Ok(world)=>(world,None),
-                Err(err)=>(World::sample(),Some(err)),
+                Err(err)=>(World::new(),Some(err)),
             },
-            _=>(World::sample(),None),
+            _=>(World::new(),None),
         };
         let message=if let Some(err)=&load_error {
             format!("Saved project cannot be loaded; autosave disabled: {err}")
         } else {
-            "Paint real Emerald tiles. Edits autosave locally.".to_string()
+            "Drag empty canvas to pan. Tap + Map to create a frame.".to_string()
         };
         let save_path=if load_error.is_some(){None}else{save_path};
         Self {
