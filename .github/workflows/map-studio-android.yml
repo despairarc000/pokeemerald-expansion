@@ -31,6 +31,22 @@ jobs:
         run: cargo fmt --all
       - name: Install atlas generator dependency
         run: python3 -m pip install --break-system-packages Pillow
+      - name: Generate visual atlas verification artifact
+        run: |
+          python3 scripts/build_atlas.py ../.. target/emerald-metatiles.png
+          python3 - <<'PY'
+          from PIL import Image
+          img=Image.open("target/emerald-metatiles.png").convert("RGBA")
+          colors=set(img.getdata())
+          assert img.size==(256,1024), img.size
+          assert len(colors)>64, f"unexpectedly blank or low-color atlas: {len(colors)} colors"
+          print("Verified atlas:",img.size,len(colors),"distinct RGBA colors")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: map-studio-emerald-atlas-preview
+          path: tools/map-studio/target/emerald-metatiles.png
+          if-no-files-found: error
       - name: Validate numerical map conversion
         run: python3 -m unittest discover -s tests -p "test_*.py"
       - name: Unit tests
