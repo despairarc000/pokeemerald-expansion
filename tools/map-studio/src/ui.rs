@@ -961,8 +961,7 @@ impl MapStudioApp {
                 FontId::proportional(11.0),Color32::from_gray(110));
         }
         if response.dragged(){
-            let available=ui.ctx().available_rect().height()
-                .max(ui.ctx().content_rect().height()*0.40);
+            let available=ui.ctx().content_rect().height()*0.76;
             let (minimum,maximum)=Self::dock_height_bounds(available);
             self.panel_height=(self.panel_height-response.drag_delta().y)
                 .clamp(minimum,maximum);
