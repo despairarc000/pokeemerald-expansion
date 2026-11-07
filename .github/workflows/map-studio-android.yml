@@ -176,12 +176,50 @@ jobs:
           CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/map-studio-test.keystore
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: android
         run: cargo apk build --release --lib --target aarch64-linux-android
-      - name: Measure APK size
+      # cargo-apk also emits *-unaligned.apk as an internal intermediate.
+      # Only the final installable, signed APK belongs in the download ZIP.
+      - name: Prepare versioned signed APK
+        id: release
         run: |
-          ls -lh target/release/apk/*.apk
-          du -h target/release/apk/*.apk
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, shutil, subprocess, tomllib, zipfile
+
+          config=tomllib.loads(Path("Cargo.toml").read_text())
+          version=config["package"]["version"]
+          major,minor,patch=version.split(".")
+          display_version=f"{major}.{minor}" if patch=="0" else version
+          android=config["package"]["metadata"]["android"]
+          apk=Path("target/release/apk") / (android["apk_name"] + ".apk")
+          assert apk.is_file(), f"Signed APK missing: {apk}"
+          assert apk.stat().st_size>100_000, f"Unexpectedly small APK: {apk}"
+          with zipfile.ZipFile(apk) as archive:
+              assert archive.testzip() is None, "APK ZIP integrity check failed"
+              assert any(name.endswith("/libmap_studio.so")
+                         for name in archive.namelist()), "Native ARM64 library missing"
+
+          signer=Path(os.environ["ANDROID_HOME"])/"build-tools"/"35.0.0"/"apksigner"
+          subprocess.run([str(signer),"verify","--min-sdk-version","26",str(apk)],
+                         check=True)
+
+          label=android["application"]["label"]
+          suffix=label.removeprefix("Map Studio ").replace(" ","-")
+          filename=f"MapStudio-v{display_version}-{suffix}.apk"
+          output=Path("target/release/apk/distribution")
+          output.mkdir(parents=True,exist_ok=True)
+          shutil.copy2(apk,output/filename)
+          assert len(list(output.glob("*.apk")))==1, "Release must contain exactly one APK"
+          with open(os.environ["GITHUB_OUTPUT"],"a") as result:
+              print(f"version=v{display_version}",file=result)
+          print("Release artifact:",output/filename)
+          print("Unaligned intermediate omitted from downloadable artifact")
+          PY
+      - name: Measure final APK size
+        run: |
+          ls -lh target/release/apk/distribution/*.apk
+          du -h target/release/apk/distribution/*.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: map-studio-arm64-optimized
-          path: tools/map-studio/target/release/apk/*.apk
+          name: map-studio-${{ steps.release.outputs.version }}-arm64
+          path: tools/map-studio/target/release/apk/distribution/*.apk
           if-no-files-found: error

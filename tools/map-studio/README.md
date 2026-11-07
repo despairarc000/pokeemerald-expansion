@@ -327,3 +327,21 @@ data between previews. This is a test build, not an update-in-place package.
 
 CI validates Rust model behavior, desktop UI build, and Android packaging.
 On-device touch/scroll smoothness and resize behavior require phone testing.
+
+## Numbered Android APK artifacts (v0.13 onward)
+
+Each editor release now has a numbered `Cargo.toml` version. The current
+Paint Preview is **v0.13** (`0.13.0` in Cargo); advance to `0.14.0`,
+`0.15.0`, and so on for subsequent releases. The Android CI workflow
+automatically derives the public filename from that version and the
+application label, such as `MapStudio-v0.13-Paint-Preview.apk`.
+
+The GitHub Actions **downloadable ZIP contains only the final signed APK**.
+`cargo-apk` internally builds an `-unaligned.apk` intermediate; it is not
+needed for sideload installation and is intentionally excluded from upload.
+The workflow checks APK ZIP integrity, confirms an embedded native library,
+and verifies its signature with Android's `apksigner` before publication.
+
+Temporary CI signing certificates still change between runs. Numbered APK
+filenames are **not** a fix for signing consistency or automatic upgrades.
+Back up/export valuable maps before uninstalling a previous preview.
