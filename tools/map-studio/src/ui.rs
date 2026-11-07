@@ -1028,7 +1028,14 @@ impl MapStudioApp {
                             }
                         });
                 });
-                ui.small("Imported source package · preview; conversion required before painting.");
+                if let Some(pair)=current.native_pair(){
+                    if ui.small_button("Use matching Emerald source").clicked(){
+                        self.active_pack=None;
+                        self.request_tileset(pair.key);
+                    }
+                }else{
+                    ui.small("Imported package · preview until converted into native Emerald source.");
+                }
             }
         }
         ui.horizontal(|ui|{
