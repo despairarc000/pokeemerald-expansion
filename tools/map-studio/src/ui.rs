@@ -2,7 +2,7 @@
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
 use crate::{storage, export, tiles, choices};
-use std::{path::PathBuf, time::{Duration, Instant}};
+use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode { Terrain, Properties, Events }
@@ -45,8 +45,12 @@ pub struct MapStudioApp {
     elevation_brush: u8,
     elevation_tool: bool,
     atlas: egui::TextureHandle,
+    atlas_cache: HashMap<String,egui::TextureHandle>,
+    preferred_pair: String,
+    tile_filter: tiles::TileFilter,
+    tileset_group:String,
+    pending_tileset:Option<String>,
     palette_page: usize,
-    palette_search: String,
     palette_hold: Option<(u16,f64)>,
     tile_preview: Option<u16>,
     save_path: Option<PathBuf>,
@@ -120,9 +124,13 @@ impl MapStudioApp {
             erase_tool: false,
             elevation_brush: 3,
             elevation_tool: false,
-            atlas: texture,
+            atlas: texture.clone(),
+            atlas_cache: HashMap::from([(tiles::DEFAULT_PAIR.to_string(),texture)]),
+            preferred_pair:tiles::DEFAULT_PAIR.into(),
+            tile_filter:tiles::TileFilter::All,
+            tileset_group:"Towns".into(),
+            pending_tileset:None,
             palette_page: 0,
-            palette_search: String::new(),
             palette_hold: None,
             tile_preview: None,
             save_path,
@@ -242,6 +250,81 @@ impl MapStudioApp {
         ui.add_space(4.0);
     }
 
+    fn current_pair(&self)->&'static tiles::TilePair {
+        let map=self.selected_map.and_then(|id|self.world.active_maps()
+            .find(|m|m.id==id));
+        let selected=map.map(|m|format!("{}/{}",m.primary_tileset,m.secondary_tileset))
+            .unwrap_or_else(||self.preferred_pair.clone());
+        tiles::pair(&selected).or_else(||tiles::pair(tiles::DEFAULT_PAIR))
+            .expect("default source tileset catalog must exist")
+    }
+
+    fn switch_preferred_to_space(&mut self){
+        let key=match self.world.active_space().kind {
+            SpaceKind::Interior=>"building/generic_building",
+            SpaceKind::Cave=>"general/cave",
+            _=>tiles::DEFAULT_PAIR,
+        };
+        if let Some(pair)=tiles::pair(key){
+            self.preferred_pair=pair.key.to_string();
+            self.tileset_group=pair.category.into();
+        }
+        self.pending_tileset=None;
+        self.tile_filter=tiles::TileFilter::All;
+        self.palette_page=0;
+    }
+
+    fn ensure_atlas_cache(&mut self,ctx:&egui::Context) {
+        let mut keys=vec![self.current_pair().key.to_string()];
+        for map in self.world.active_maps(){
+            keys.push(format!("{}/{}",map.primary_tileset,map.secondary_tileset));
+        }
+        if self.show_parent {
+            if let Some(p)=self.world.active_space().parent_map_id
+                .and_then(|id|self.world.maps.iter().find(|m|m.id==id)) {
+                keys.push(format!("{}/{}",p.primary_tileset,p.secondary_tileset));
+            }
+        }
+        if let Some(key)=self.pending_tileset.as_ref(){keys.push(key.clone());}
+        keys.sort();keys.dedup();
+        for key in keys {
+            if self.atlas_cache.contains_key(&key){continue;}
+            let Some(pair)=tiles::pair(&key) else{continue;};
+            if let Ok(decoded)=image::load_from_memory(pair.atlas) {
+                let rgba=decoded.to_rgba8();
+                let dimensions=[rgba.width() as usize,rgba.height() as usize];
+                let handle=ctx.load_texture(format!("Emerald {key}"),
+                    egui::ColorImage::from_rgba_unmultiplied(dimensions,rgba.as_raw()),
+                    egui::TextureOptions::NEAREST);
+                self.atlas_cache.insert(key,handle);
+            }
+        }
+    }
+
+    fn apply_pair(&mut self,key:&str){
+        if !tiles::pair(key).is_some(){self.message="Tileset unavailable".into();return;}
+        if let Some(map_id)=self.selected_map.filter(|id|
+            self.world.space_for_map(*id)==Some(self.world.active_space_id)){
+            self.begin_edit();
+            match self.world.set_map_tileset(map_id,key){
+                Ok(())=>{
+                    self.message="Map now uses the selected source tileset".into();
+                    self.preferred_pair=key.into();
+                    self.pending_tileset=None;
+                    self.palette_page=0;
+                    self.brush_id=1;
+                    self.commit_edit();
+                }
+                Err(err)=>{self.message=err;self.commit_edit();}
+            }
+        }else{
+            self.preferred_pair=key.into();
+            self.pending_tileset=None;
+            self.palette_page=0;
+            self.brush_id=1;
+        }
+    }
+
     fn switch_space(&mut self,id:u32){
         if id==self.world.active_space_id{return;}
         self.commit_edit();
@@ -258,6 +341,7 @@ impl MapStudioApp {
         self.palette_page=0;
         self.tile_preview=None;
         self.size_panel_open=false;
+        self.switch_preferred_to_space();
         self.fit_world();
         self.message=format!("Editing {} · overlays do not affect game coordinates",
             self.world.active_space().name);
@@ -285,6 +369,7 @@ impl MapStudioApp {
                 self.selected_map=None;
                 self.selected_event=None;
                 self.gesture=CanvasGesture::Idle;
+                self.switch_preferred_to_space();
                 self.fit_world();
                 self.commit_edit();
                 debug_assert_eq!(self.world.active_space_id,id);
@@ -462,69 +547,122 @@ impl MapStudioApp {
         match self.mode {
             Mode::Terrain => {
                 ui.horizontal_wrapped(|ui|{
-                    ui.strong("Tiles");
+                    ui.strong("Brush");
                     ui.toggle_value(&mut self.erase_tool,"Erase");
-                    if ui.small_button("Fill empty").clicked(){ self.fill_selected(); }
-                    if ui.small_button("◀").clicked(){self.palette_page=self.palette_page.saturating_sub(1);}
-                    let count=tiles::all_metatiles().len();
-                    if ui.small_button("▶").clicked(){
-                        self.palette_page=(self.palette_page+1).min(count.saturating_sub(1)/32);
-                    }
+                    if ui.small_button("Fill empty").clicked(){self.fill_selected();}
                 });
-                ui.horizontal(|ui|{
-                    ui.label("Find tile");
-                    if ui.add(egui::TextEdit::singleline(&mut self.palette_search)
-                        .desired_width(75.0).hint_text("number")).changed() {
-                        self.palette_search.retain(|ch|ch.is_ascii_digit());
-                    }
-                });
-                if !ui.input(|i|i.pointer.any_down()) {self.palette_hold=None;}
-                let available=tiles::all_metatiles();
-                let displayed:Vec<u16>=if let Ok(id)=self.palette_search.trim().parse::<u16>() {
-                    available.into_iter().filter(|candidate|*candidate==id).collect()
-                }else{
-                    let start=(self.palette_page*32).min(available.len());
-                    available.into_iter().skip(start).take(32).collect()
-                };
-                egui::ScrollArea::horizontal().id_salt("metatile_palette").show(ui,|ui|{
-                    ui.horizontal(|ui|{
-                        for id in displayed {
-                            ui.vertical(|ui|{
-                                let (tile,response)=ui.allocate_exact_size(vec2(52.0,52.0),Sense::click());
-                                ui.painter().rect_filled(tile,5.0,if id==self.brush_id&&!self.erase_tool
-                                    {Color32::from_rgb(153,208,241)}else{Color32::from_gray(231)});
-                                ui.painter().image(self.atlas.id(),tile.shrink(5.0),
-                                    Self::tile_uv(id),Color32::WHITE);
-                                if response.clicked(){
-                                    self.brush_id=id;
-                                    self.erase_tool=false;
-                                    self.tile_preview=Some(id);
+                ui.horizontal_wrapped(|ui|{
+                    ui.label("Collection");
+                    egui::ComboBox::from_id_salt("tileset-group")
+                        .selected_text(&self.tileset_group)
+                        .width(135.0)
+                        .show_ui(ui,|ui|{
+                            for group in ["Towns","Buildings","Caves","Outdoor & Special"]{
+                                if ui.selectable_value(&mut self.tileset_group,
+                                    group.to_string(),group).clicked(){
+                                    self.palette_page=0;
                                 }
-                                if response.is_pointer_button_down_on() {
-                                    let now=ui.input(|i|i.time);
-                                    match self.palette_hold {
-                                        Some((held,since)) if held==id => {
-                                            if now-since>=0.46 {
-                                                self.tile_preview=Some(id);
-                                                ui.ctx().request_repaint();
-                                            } else {
-                                                ui.ctx().request_repaint_after(Duration::from_millis(26));
-                                            }
+                            }
+                        });
+                    let current=self.current_pair();
+                    egui::ComboBox::from_id_salt("tileset-collection")
+                        .selected_text(current.label)
+                        .width(155.0)
+                        .show_ui(ui,|ui|{
+                            for pair in tiles::pairs().iter().filter(|p|p.category==self.tileset_group){
+                                if ui.selectable_label(current.key==pair.key,
+                                    pair.label).clicked(){
+                                    let map=self.selected_map.and_then(|id|
+                                        self.world.active_maps().find(|m|m.id==id));
+                                    if map.is_some_and(|m|m.cells.iter().any(|c|c.is_some())) {
+                                        if current.key!=pair.key {
+                                            self.pending_tileset=Some(pair.key.into());
+                                            self.message="Apply to change this painted map's source tileset".into();
                                         }
-                                        _ => self.palette_hold=Some((id,now))
+                                    }else{
+                                        self.apply_pair(pair.key);
                                     }
+                                    ui.close();
                                 }
-                                ui.label(egui::RichText::new(format!("{id}")).small());
-                            });
+                            }
+                        });
+                });
+                if let Some(pending)=self.pending_tileset.clone(){
+                    if let Some(p)=tiles::pair(&pending){
+                        ui.horizontal_wrapped(|ui|{
+                            ui.colored_label(Color32::from_rgb(157,83,33),
+                                format!("Change existing map to {}?",p.label));
+                            if ui.button("Apply").clicked(){self.apply_pair(&pending);}
+                            if ui.small_button("Cancel").clicked(){self.pending_tileset=None;}
+                        });
+                    }
+                }
+                ui.horizontal_wrapped(|ui|{
+                    for mode in tiles::TileFilter::ALL {
+                        if ui.selectable_label(self.tile_filter==mode,mode.label()).clicked(){
+                            self.tile_filter=mode;
+                            self.palette_page=0;
+                        }
+                    }
+                });
+                let chosen=self.current_pair();
+                let available=tiles::tile_ids(chosen).into_iter().filter(|id|
+                    tiles::matches_filter(chosen,*id,self.tile_filter)).collect::<Vec<_>>();
+                let total_pages=(available.len()+31)/32;
+                ui.horizontal(|ui|{
+                    if ui.add_enabled(self.palette_page>0,egui::Button::new("◀")).clicked(){
+                        self.palette_page=self.palette_page.saturating_sub(1);
+                    }
+                    ui.label(format!("{} tiles · page {}/{}",
+                        available.len(),self.palette_page.min(total_pages.saturating_sub(1))+1,
+                        total_pages.max(1)));
+                    if ui.add_enabled(self.palette_page+1<total_pages,
+                        egui::Button::new("▶")).clicked(){
+                        self.palette_page+=1;
+                    }
+                });
+                if !ui.input(|i|i.pointer.any_down()){self.palette_hold=None;}
+                let keys=available.into_iter().skip(self.palette_page*32).take(32)
+                    .collect::<Vec<_>>();
+                let cols=((ui.available_width()/60.0).floor() as usize).clamp(3,8);
+                let image_handle=self.atlas_cache.get(chosen.key).unwrap_or(&self.atlas).id();
+                egui::Grid::new("real_tile_gallery").num_columns(cols).spacing([6.0,6.0])
+                    .show(ui,|ui|{
+                        for (index,id) in keys.iter().enumerate(){
+                            let (tile,response)=ui.allocate_exact_size(vec2(53.0,53.0),Sense::click());
+                            ui.painter().rect_filled(tile,5.0,if *id==self.brush_id && !self.erase_tool{
+                                Color32::from_rgb(153,208,241)
+                            }else{Color32::from_gray(230)});
+                            ui.painter().image(image_handle,tile.shrink(4.0),
+                                Self::tile_uv(*id),Color32::WHITE);
+                            if response.clicked() {
+                                self.brush_id=*id;
+                                self.erase_tool=false;
+                                self.tile_preview=Some(*id);
+                            }
+                            if response.is_pointer_button_down_on(){
+                                let now=ui.input(|i|i.time);
+                                match self.palette_hold {
+                                    Some((held,since)) if held==*id => {
+                                        if now-since>=0.46{
+                                            self.tile_preview=Some(*id);
+                                        }else{ui.ctx().request_repaint_after(Duration::from_millis(25));}
+                                    }
+                                    _=>self.palette_hold=Some((*id,now))
+                                }
+                            }
+                            if (index+1)%cols==0{ui.end_row();}
                         }
                     });
-                });
                 if let Some(tile)=self.tile_preview {
-                    let label=tiles::friendly_behavior(tile).unwrap_or("Normal terrain");
-                    ui.label(egui::RichText::new(format!("Tile {tile} · {label}"))
+                    let behavior=tiles::behavior_name_in(chosen,tile)
+                        .unwrap_or("No known tile behavior");
+                    let friendly=behavior.strip_prefix("MB_").unwrap_or(behavior)
+                        .replace('_'," ").to_ascii_lowercase();
+                    ui.label(egui::RichText::new(format!("Selected tile · {friendly}"))
                         .small().color(Color32::DARK_GRAY));
                 }else{
-                    ui.small("Tap to select · hold a tile for details");
+                    ui.small("Select an image to paint. Hold to preview its behavior.");
                 }
             }
             Mode::Properties => {
@@ -1347,8 +1485,11 @@ impl MapStudioApp {
                             Ok(())=>{
                                 self.begin_edit();
                                 let next=self.world.maps.iter().map(|m|m.id).max().unwrap_or(0)+1;
-                                match self.world.add_map(format!("Map {next}"),origin,w,h){
+                                match self.world.add_map(format!("Map {next}"),origin,w,h){ 
                                     Ok(id)=>{
+                                        if let Err(err)=self.world.set_map_tileset(id,&self.preferred_pair){
+                                            self.message=format!("Tileset unavailable: {err}");
+                                        }
                                         self.selected_map=Some(id);
                                         self.map_width=w;
                                         self.map_height=h;
@@ -1468,6 +1609,9 @@ impl MapStudioApp {
             let mrect = Rect::from_min_size(top_left,vec2(map.width as f32*s,map.height as f32*s));
             if !rect.intersects(mrect) { continue; }
             painter.rect_filled(mrect,0.0,Color32::from_gray(225));
+            let pair_key=format!("{}/{}",map.primary_tileset,map.secondary_tileset);
+            let map_texture=self.atlas_cache.get(&pair_key).unwrap_or(&self.atlas).id();
+            let map_pair=tiles::pair(&pair_key);
 
             let lx0 = ((-self.offset.x / s).floor() as i32 - map.origin.x).max(0);
             let ly0 = ((-self.offset.y / s).floor() as i32 - map.origin.y).max(0);
@@ -1482,7 +1626,7 @@ impl MapStudioApp {
                         let min = self.screen_at(rect, (map.origin.x+x) as f32,
                             (map.origin.y+y) as f32);
                         let tile_rect = Rect::from_min_size(min,Vec2::splat(s));
-                        painter.image(self.atlas.id(),tile_rect,Self::tile_uv(cell.metatile_id),Color32::WHITE);
+                        painter.image(map_texture,tile_rect,Self::tile_uv(cell.metatile_id),Color32::WHITE);
                         if s >= 11.0 {
                             painter.rect_stroke(tile_rect,0.0,
                                 Stroke::new(0.5,Color32::from_white_alpha(48)),StrokeKind::Inside);
@@ -1493,7 +1637,7 @@ impl MapStudioApp {
                             // Water, ice and ledges are prominent at the *default* zoom;
                             // collision bits remain visible in the corner of those tiles.
                             let behavior=if self.elevation_tool{None}
-                                else {tiles::behavior_overlay(cell.metatile_id)};
+                                else {map_pair.and_then(|pair|tiles::behavior_overlay_in(pair,cell.metatile_id))};
                             if s>=10.0 {
                                 painter.text(tile_rect.center(),Align2::CENTER_CENTER,
                                     behavior.unwrap_or(symbol),
@@ -1653,8 +1797,11 @@ impl eframe::App for MapStudioApp {
         egui::Panel::top("status_inset").show(root,|ui| { ui.add_space(28.0); });
 
         egui::Panel::top("header").show(root,|ui|self.header(ui));
-        let maximum=(root.available_height()*0.76).max(145.0);
-        self.panel_height=self.panel_height.clamp(126.0,maximum);
+        self.ensure_atlas_cache(root.ctx());
+        let viewport=root.available_height();
+        let minimum=112.0f32.min((viewport*0.40).max(70.0));
+        let maximum=(viewport*0.70).max(minimum+18.0);
+        self.panel_height=self.panel_height.clamp(minimum,maximum);
         egui::Panel::bottom("palette")
             .resizable(false).exact_size(self.panel_height)
             .show(root,|ui|self.palette(ui));
