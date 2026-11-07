@@ -290,3 +290,40 @@ tests and participates in the normal desktop/Android CI. Device gesture
 feel and Android multi-window behavior still require real-phone testing.
 No new gameplay mechanics or non-source Pokémon metatile properties
 are introduced.
+
+## Paint & overlays preview (experimental, source-backed)
+
+Branch: `feature/map-studio-touch-paint-overlays-warp-ux`. APK application ID
+`dev.despairarc.mapstudio.paintpreview` is deliberately separate from earlier
+preview APKs and their local autosaves. Export or back up old projects to move
+data between previews. This is a test build, not an update-in-place package.
+
+- **Tools can be deselected.** Tapping an already selected Brush, Bucket or
+  Eraser toggles it off, leaving a neutral pan-only Terrain canvas. A sheet
+  metatile tap reselects Brush. Bucket flood fill is one-shot: it reverts to
+  Brush after a valid fill. Source metatiles and per-cell properties remain
+  untouched by choosing a different tool.
+- **Overlay checkboxes persist across all tab switches**; a hidden layer
+  remains hidden until explicitly checked again. Only the relevant editing
+  tab accepts touches on that layer.
+- **Visual-only map properties:** the transparent collision palette keeps
+  the actual values 0–3 (green/red/purple/amber). Elevation uses a 16-color
+  graduated palette for real source values 0–15. No numeric or behavior
+  characters are painted over the terrain; the values are not invented.
+- **Art scrolling:** the source metatile sheet uses egui's native touch drag
+  scrolling without the previous doubled `scroll_with_delta` plus manual
+  momentum. The 0.46-second hold still selects a native-order stamp. The
+  broader resize grabber and painting tool / Find controls stay pinned.
+- **Visual event choices:** large source-art or representative icon cards
+  for Person, Sign, Warp, Step Message, Hidden Item. These are only the
+  event kinds currently implemented, not a claim to cover all Emerald
+  scripting. NPC and item previews are taken from the checked-in source.
+- **Warp connections:** selecting a linked warp draws a line to its actual
+  destination tile if both maps share a Space. Across independent Spaces,
+  it draws a clearly labelled link stub naming the destination Space and
+  map, without inventing adjacent world coordinates.
+- The `Rustboro`, `Slateport`, etc. artwork labels are **real source
+  tileset names**, not map connections. The selector now clarifies this.
+
+CI validates Rust model behavior, desktop UI build, and Android packaging.
+On-device touch/scroll smoothness and resize behavior require phone testing.
