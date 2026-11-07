@@ -242,10 +242,11 @@ impl MapStudioApp {
                 self.show_events=true;
             }
             ui.separator();
-            ui.toggle_value(&mut self.show_events,"👁 Events")
-                .on_hover_text("Show event sprites in any tab; edit only in Events");
-            ui.toggle_value(&mut self.show_properties,"👁 Properties")
-                .on_hover_text("Show collision/elevation overlays in any tab; edit only in Properties");
+            ui.menu_button("Overlays",|ui|{
+                ui.checkbox(&mut self.show_events,"Show events");
+                ui.checkbox(&mut self.show_properties,"Show properties");
+                ui.small("Visibility only; editing follows the active tab.");
+            });
         });
         if compact{
             ui.horizontal_wrapped(|ui|{
