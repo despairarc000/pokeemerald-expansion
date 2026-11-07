@@ -73,6 +73,39 @@ pub fn map_json(map:&MapFrame, world:&World) -> Value {
             json!({"map":format!("MAP_{}",by_id[&c.to].to_uppercase()),
                 "offset":c.offset,"direction":direction})
         }).collect();
+    let mut objects=Vec::new();
+    let mut warps=Vec::new();
+    let mut coords=Vec::new();
+    let mut signs=Vec::new();
+    for (index,e) in map.events.iter().enumerate() {
+        let number=index+1;
+        match e.kind {
+            EventKind::Npc => objects.push(json!({
+                "graphics_id":e.graphics_id,
+                "x":e.x,"y":e.y,"elevation":e.elevation,
+                "movement_type":"MOVEMENT_TYPE_FACE_DOWN",
+                "movement_range_x":0,"movement_range_y":0,
+                "trainer_type":"TRAINER_TYPE_NONE",
+                "trainer_sight_or_berry_tree_id":"0",
+                "script":format!("{}_EventScript_Npc{}",map_name(map),number),
+                "flag":"0"
+            })),
+            EventKind::Sign => signs.push(json!({
+                "type":"sign","x":e.x,"y":e.y,"elevation":e.elevation,
+                "player_facing_dir":"BG_EVENT_PLAYER_FACING_ANY",
+                "script":format!("{}_EventScript_Sign{}",map_name(map),number)
+            })),
+            EventKind::Warp => warps.push(json!({
+                "x":e.x,"y":e.y,"elevation":e.elevation,
+                "dest_map":format!("MAP_{}",by_id[&e.dest_map_id].to_uppercase()),
+                "dest_warp_id":e.dest_warp_id.to_string()
+            })),
+            EventKind::Trigger => coords.push(json!({
+                "type":"trigger","x":e.x,"y":e.y,"elevation":e.elevation,
+                "var":e.var,"var_value":e.var_value.to_string(),"script":e.script
+            })),
+        }
+    }
     json!({
         "id":format!("MAP_{}",map_name(map).to_uppercase()),
         "name":map_name(map),
@@ -89,8 +122,27 @@ pub fn map_json(map:&MapFrame, world:&World) -> Value {
         "show_map_name":true,
         "battle_scene":"MAP_BATTLE_SCENE_NORMAL",
         "connections":connections,
-        "object_events":[],"warp_events":[],"coord_events":[],"bg_events":[]
+        "object_events":objects,"warp_events":warps,"coord_events":coords,"bg_events":signs
     })
+}
+
+
+fn script_text(map:&MapFrame) -> String {
+    let name=map_name(map);
+    let mut out=format!("{name}_MapScripts::\n\t.byte 0\n");
+    for (index,e) in map.events.iter().enumerate() {
+        let number=index+1;
+        match e.kind {
+            EventKind::Npc => out.push_str(&format!(
+                "\n{name}_EventScript_Npc{number}::\n\tmsgbox {name}_Text_Npc{number}, MSGBOX_NPC\n\tend\n\n{name}_Text_Npc{number}:\n\t.string \"{}$\"\n",
+                e.dialogue)),
+            EventKind::Sign => out.push_str(&format!(
+                "\n{name}_EventScript_Sign{number}::\n\tmsgbox {name}_Text_Sign{number}, MSGBOX_SIGN\n\tend\n\n{name}_Text_Sign{number}:\n\t.string \"{}$\"\n",
+                e.dialogue)),
+            _ => {}
+        }
+    }
+    out
 }
 
 pub fn export_zip(world:&World, destination:&Path) -> Result<(),String> {
@@ -106,7 +158,7 @@ pub fn export_zip(world:&World, destination:&Path) -> Result<(),String> {
         for (filename,contents) in [
             ("layout.mapstudio.json",serde_json::to_vec_pretty(&layout_json(map)).map_err(|e|e.to_string())?),
             ("map.json",serde_json::to_vec_pretty(&map_json(map,world)).map_err(|e|e.to_string())?),
-            ("scripts.inc",format!("{name}_MapScripts::\n\t.byte 0\n").into_bytes())
+            ("scripts.inc",script_text(map).into_bytes())
         ] {
             zip.start_file(format!("{folder}{filename}"),options)
                 .map_err(|e|format!("ZIP entry: {e}"))?;
