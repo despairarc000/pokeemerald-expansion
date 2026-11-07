@@ -5,6 +5,23 @@ Engineering baseline: [design/map-studio-implementation.md](../../design/map-stu
 
 This is a native `eframe` / `egui` / `wgpu` Android editor with source-generated visual tileset atlases for 129 of the 137 layout-declared primary/secondary combinations currently resolvable in the repository. Its nested editing Spaces and per-map tilesets do not change the Emerald engine's map-local coordinates. It is **not yet** a fully playtested GBA ROM tool or a live GitHub collaboration client.
 
+## Source update after the v0.17 Art Library Preview
+
+- **Built-in collections:** Emerald and FireRed/LeafGreen. The latter uses the
+  native FRLG tilesets already included in this expansion fork; it is not
+  renamed Emerald art or a fake gallery entry.
+- **Real Porymap prefabs:** 71 Emerald definitions and 45 FireRed definitions
+  (source-tileset IDs, collision and elevation preserved). The Prefabs browser
+  now shows compatible stamps and provides navigation to valid stamps from
+  other tilesets, rather than silently presenting an empty gallery.
+- **Not included:** Ruby/Unbound/Team Aqua/ORAS external source packages are
+  additional collection candidates, not yet a bundled, game-paintable format.
+  Full foreign tileset compilation, credit checks and ROM round-trip remain
+  separate requirements.
+- **APK status:** the previously saved v0.17 APK predates this source update.
+  Use a successful newer Android workflow artifact for device testing; do not
+  assume a repository commit itself creates a downloadable APK.
+
 ## What's implemented
 
 - White-grid canvas, adjoining colored map frames, touch painting, pinch zoom, panning and frame creation/movement/resizing.
