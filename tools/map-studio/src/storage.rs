@@ -17,11 +17,18 @@ impl Project {
 
 pub fn load(path: &Path) -> Result<World, String> {
     let bytes=fs::read(path).map_err(|e|format!("Read project: {e}"))?;
-    let project:Project=serde_json::from_slice(&bytes).map_err(|e|format!("Parse project: {e}"))?;
-    if project.schema_version != SCHEMA_VERSION {
+    // Verify the version before interpreting the world schema; newer document
+    // formats may not be decodable with this version's World type.
+    let envelope:serde_json::Value=serde_json::from_slice(&bytes)
+        .map_err(|e|format!("Parse project: {e}"))?;
+    let version=envelope.get("schema_version").and_then(|v|v.as_u64())
+        .ok_or("Project is missing a numeric schema_version")?;
+    if version != u64::from(SCHEMA_VERSION) {
         return Err(format!("Project version {} is not supported (expected {})",
-            project.schema_version, SCHEMA_VERSION));
+            version, SCHEMA_VERSION));
     }
+    let project:Project=serde_json::from_value(envelope)
+        .map_err(|e|format!("Parse project: {e}"))?;
     if project.world.maps.iter().any(|m| m.cells.len() != (m.width as usize)*(m.height as usize)) {
         return Err("Invalid project: map cell lengths do not match dimensions".into());
     }
