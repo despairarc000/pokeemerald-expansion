@@ -68,6 +68,8 @@ pub struct MapStudioApp {
     bucket_tool:bool,
     erase_tool: bool,
     tool_active:bool,
+    properties_active:bool,
+    events_active:bool,
     find_index:usize,
     find_target:Option<u16>,
     elevation_brush: u8,
@@ -178,6 +180,8 @@ impl MapStudioApp {
             bucket_tool:false,
             erase_tool: false,
             tool_active:true,
+            properties_active:true,
+            events_active:true,
             find_index:0,
             find_target:None,
             elevation_brush: 3,
@@ -230,142 +234,129 @@ impl MapStudioApp {
         }
     }
 
-    fn header(&mut self, ui: &mut egui::Ui) {
-        let compact=ui.ctx().content_rect().height()<530.0
-            || ui.available_width()<300.0;
-        ui.add_space(if compact{1.0}else{5.0});
-        ui.horizontal(|ui| {
-            if compact{ui.strong("Map Studio");}else{ui.heading("Map Studio");}
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("Project",|ui| {
-                    if ui.button("New blank project").clicked() {
-                        self.new_project_confirm=true;
-                        ui.close();
+    fn pan_only(&self)->bool{
+        match self.mode {
+            Mode::Terrain=>!self.tool_active,
+            Mode::Properties=>!self.properties_active,
+            Mode::Events=>!self.events_active,
+        }
+    }
+
+    fn header(&mut self,ui:&mut egui::Ui){
+        // Two compact control lines plus contextual map navigation. Hiding
+        // repeated metadata saves actual drawing space on small phones.
+        ui.spacing_mut().item_spacing=vec2(6.0,3.0);
+        ui.horizontal(|ui|{
+            ui.strong("Map Studio");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{
+                ui.menu_button("Project",|ui|{
+                    if ui.button("New").clicked(){
+                        self.new_project_confirm=true;ui.close();
                     }
-                    if ui.button("Backup to Downloads").clicked() {
-                        self.try_backup();
-                        ui.close();
+                    if ui.button("Backup JSON").clicked(){
+                        self.try_backup();ui.close();
                     }
-                    if ui.button("Restore backup").clicked() {
-                        self.open_backup_list();
-                        ui.close();
+                    if ui.button("Export editable ZIP").clicked(){
+                        self.try_export_project_zip();ui.close();
+                    }
+                    if ui.button("Import backup / ZIP").clicked(){
+                        self.open_backup_list();ui.close();
                     }
                     ui.separator();
-                    if ui.button("Export game maps").clicked() {
-                        self.try_export();
-                        ui.close();
+                    if ui.button("Export game-source ZIP").clicked(){
+                        self.try_export();ui.close();
                     }
                 });
-                if ui.small_button(if compact{"↷"}else{"Redo"}).clicked() { self.redo(); }
-                if ui.small_button(if compact{"↶"}else{"Undo"}).clicked() { self.undo(); }
+                if ui.small_button("Redo").clicked(){self.redo();}
+                if ui.small_button("Undo").clicked(){self.undo();}
             });
         });
-        ui.horizontal_wrapped(|ui| {
-            if ui.selectable_label(self.mode == Mode::Terrain, "Terrain").clicked() {
-                self.mode = Mode::Terrain; self.gesture = CanvasGesture::Idle;
-                self.selected_event=None;self.event_editor_open=false;
+        ui.horizontal_wrapped(|ui|{
+            for (mode,label) in [
+                (Mode::Terrain,"Terrain"),
+                (Mode::Properties,"Properties"),
+                (Mode::Events,"Events")
+            ]{
+                if ui.selectable_label(self.mode==mode,label).clicked(){
+                    if self.mode==mode {
+                        match mode {
+                            Mode::Terrain=>self.tool_active=false,
+                            Mode::Properties=>self.properties_active=false,
+                            Mode::Events=>self.events_active=false,
+                        }
+                    }else{
+                        self.mode=mode;
+                    }
+                    self.gesture=CanvasGesture::Idle;
+                    self.warp_pick=None;
+                    if mode!=Mode::Events{
+                        self.selected_event=None;
+                        self.event_editor_open=false;
+                    }
+                }
             }
-            if ui.selectable_label(self.mode == Mode::Properties, "Properties").clicked() {
-                self.mode = Mode::Properties; self.gesture = CanvasGesture::Idle;
-                self.selected_event=None;self.event_editor_open=false;
+            if ui.selectable_label(self.pan_only(),"Pan").clicked(){
+                match self.mode{
+                    Mode::Terrain=>self.tool_active=false,
+                    Mode::Properties=>self.properties_active=false,
+                    Mode::Events=>self.events_active=false,
+                }
+                self.gesture=CanvasGesture::Idle;
+                self.warp_pick=None;
             }
-            if ui.selectable_label(self.mode == Mode::Events, "Events").clicked() {
-                self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
-            }
-            ui.separator();
-            let overlays=ui.button("Overlays");
+            let overlays=ui.small_button("Overlays");
             self.overlays_button=Some(overlays.rect);
             if overlays.clicked(){self.overlays_open=!self.overlays_open;}
         });
-        if compact{
-            ui.horizontal_wrapped(|ui|{
-                let current=self.world.active_space().name.clone();
-                ui.menu_button(format!("Space: {current}"),|ui|{
-                    let entries:Vec<_>=self.world.spaces.iter()
-                        .map(|sp|(sp.id,sp.name.clone())).collect();
-                    for (space_id,name) in entries{
-                        if ui.button(name).clicked(){
-                            self.switch_space(space_id);ui.close();
-                        }
+        ui.horizontal_wrapped(|ui|{
+            let current=self.world.active_space();
+            let space_name=current.name.clone();
+            let parent_space=current.parent_map_id
+                .and_then(|map_id|self.world.space_for_map(map_id));
+            ui.menu_button(format!("Space: {space_name}"),|ui|{
+                let entries:Vec<_>=self.world.spaces.iter()
+                    .map(|sp|(sp.id,sp.name.clone())).collect();
+                for (id,name) in entries{
+                    if ui.selectable_label(id==self.world.active_space_id,name).clicked(){
+                        self.switch_space(id);ui.close();
                     }
+                }
+                if let Some(parent)=parent_space{
                     ui.separator();
+                    if ui.button("Go to parent map").clicked(){
+                        self.switch_space(parent);ui.close();
+                    }
+                }
+                if self.world.active_space_id!=0{
+                    ui.checkbox(&mut self.show_parent,"Show parent underlay");
+                }
+                ui.separator();
+                ui.menu_button("Advanced: create space",|ui|{
                     for kind in [SpaceKind::Interior,SpaceKind::Cave,SpaceKind::Other]{
-                        if ui.button(format!("+ {}",kind.label())).clicked(){
+                        if ui.button(format!("New {}",kind.label())).clicked(){
                             self.create_editor_space(kind);ui.close();
                         }
                     }
                 });
-                if ui.small_button("Fit").clicked(){self.fit_world();}
-                let selected=self.selected_map.and_then(|id|
-                    self.world.active_maps().find(|m|m.id==id).map(|m|m.name.clone()));
-                ui.small(format!("Selected: {}",selected.unwrap_or_else(||"None".into())));
-                if ui.add_enabled(self.selected_map.is_some(),
-                    egui::Button::new("Size")).clicked(){
-                    if let Some(map)=self.selected_map.and_then(|id|
-                        self.world.maps.iter().find(|m|m.id==id)){
-                        self.map_width=map.width;self.map_height=map.height;
-                    }
-                    self.number_axis=Some(SizeAxis::Width);
-                    self.replace_number=true;
-                    self.resize_guidance=None;
-                    self.size_panel_open=true;
-                }
             });
-            return;
-        }
-        // Spaces are editor-only; maps retain native map-local coordinates.
-        let current=self.world.active_space();
-        let space_label=current.name.clone();
-        let parent_space=current.parent_map_id
-            .and_then(|map_id|self.world.space_for_map(map_id));
-        ui.horizontal_wrapped(|ui|{
-            ui.menu_button(format!("◫ {space_label}"),|ui|{
-                let entries:Vec<_>=self.world.spaces.iter()
-                    .map(|sp|(sp.id,sp.name.clone(),sp.kind)).collect();
-                for (id,name,kind) in entries {
-                    if ui.selectable_label(id==self.world.active_space_id,
-                        format!("{} · {}",kind.label(),name)).clicked(){
-                        self.switch_space(id);
-                        ui.close();
-                    }
-                }
-            });
-            ui.menu_button("+ Space",|ui|{
-                for kind in [SpaceKind::Interior,SpaceKind::Cave,SpaceKind::Other]{
-                    if ui.button(format!("New {}",kind.label())).clicked(){
-                        self.create_editor_space(kind);
-                        ui.close();
-                    }
-                }
-            });
-            if let Some(parent)=parent_space {
-                if ui.small_button("↑ Parent").clicked(){self.switch_space(parent);}
-            }
-            if self.world.active_space_id!=0 {
-                ui.toggle_value(&mut self.show_parent,"◉ Overlay");
-            }
-        });
-        ui.horizontal(|ui| {
-            if ui.add_enabled(self.selected_map.is_some(),egui::Button::new("Size")).clicked(){
-                if let Some(map)=self.world.maps.iter().find(|m|Some(m.id)==self.selected_map){
-                    self.map_width=map.width;
-                    self.map_height=map.height;
+            if ui.small_button("Fit").clicked(){self.fit_world();}
+            if ui.add_enabled(self.selected_map.is_some(),
+                egui::Button::new("Size")).clicked(){
+                if let Some(map)=self.selected_map.and_then(|id|
+                    self.world.maps.iter().find(|m|m.id==id)){
+                    self.map_width=map.width;self.map_height=map.height;
                 }
                 self.number_axis=Some(SizeAxis::Width);
                 self.replace_number=true;
                 self.resize_guidance=None;
                 self.size_panel_open=true;
             }
-            if ui.small_button("Fit").clicked() { self.fit_world(); }
-            ui.separator();
-            let selected=self.selected_map.and_then(|id|
-                self.world.active_maps().find(|m|m.id==id).map(|m|m.name.clone()));
-            ui.strong(format!("Selected: {}",
-                selected.unwrap_or_else(||"None".into())));
-            ui.label(egui::RichText::new(format!("{} maps", self.world.active_maps().count()))
-                .small().color(Color32::GRAY));
+            if let Some(name)=self.selected_map.and_then(|id|
+                self.world.active_maps().find(|m|m.id==id)
+                    .map(|m|m.name.clone())){
+                ui.small(format!("Map: {name}"));
+            }
         });
-        ui.add_space(4.0);
     }
 
     fn current_pair(&self)->&'static tiles::TilePair {
@@ -1194,11 +1185,19 @@ impl MapStudioApp {
         match self.mode {
             Mode::Terrain => {}
             Mode::Properties => {
-                ui.strong("Paint map properties");
                 ui.horizontal_wrapped(|ui|{
-                    ui.label("Paint layer");
-                    ui.selectable_value(&mut self.elevation_tool,false,"Collision");
-                    ui.selectable_value(&mut self.elevation_tool,true,"Elevation");
+                    ui.strong("Property brush");
+                    let collision=self.properties_active && !self.elevation_tool;
+                    if ui.selectable_label(collision,"Collision").clicked(){
+                        self.properties_active=!collision;
+                        self.elevation_tool=false;
+                    }
+                    let elevation=self.properties_active && self.elevation_tool;
+                    if ui.selectable_label(elevation,"Elevation").clicked(){
+                        self.properties_active=!elevation;
+                        self.elevation_tool=true;
+                    }
+                    if !self.properties_active {ui.small("Pan only");}
                 });
                 // Focus on the editable map-block properties only.
                 // Detailed source metatile metadata was reference information,
@@ -1216,6 +1215,7 @@ impl MapStudioApp {
                                     if ui.add_sized(vec2(72.0,34.0),
                                         egui::Button::new(label).fill(color)).clicked(){
                                         self.elevation_brush=level;
+                                        self.properties_active=true;
                                     }
                                     if level%4==3{ui.end_row();}
                                 }
@@ -1227,14 +1227,13 @@ impl MapStudioApp {
                             for (value,label,color) in [
                                 (0u8,"0 · Walk",Color32::from_rgb(180,234,193)),
                                 (1,"1 · Block",Color32::from_rgb(245,190,190)),
-                                (2,"2",Color32::from_rgb(215,194,244)),
-                                (3,"3",Color32::from_rgb(248,219,172)),
                             ]{
                                 let fill=if self.collision_brush==value{color}
                                     else{Color32::from_gray(235)};
                                 if ui.add_sized(vec2(104.0,36.0),
                                     egui::Button::new(label).fill(fill)).clicked(){
                                     self.collision_brush=value;
+                                    self.properties_active=true;
                                 }
                             }
                         });
@@ -1287,13 +1286,15 @@ impl MapStudioApp {
                         EventKind::Npc,EventKind::Sign,EventKind::Warp,
                         EventKind::Trigger,EventKind::HiddenItem
                     ]{
-                        let selected=self.event_brush==kind;
+                        let selected=self.events_active && self.event_brush==kind;
                         if Self::event_card(ui,kind,selected,
                             self.npc_atlas.id(),self.item_atlas.id()){
+                            self.events_active=!selected;
                             self.event_brush=kind;
                         }
                     }
                 });
+                if !self.events_active {ui.small("Pan only — choose an event to place.");}
                 if let Some(pick)=self.warp_pick {
                     let instruction=match pick.method {
                         WarpPickMethod::Existing=>"Tap an existing warp in the destination map",
@@ -2078,7 +2079,7 @@ impl MapStudioApp {
                 if self.warp_pick.is_some() {
                     self.gesture=CanvasGesture::PickWarp{at};
                 }else if let Some((map_id,index))=if self.mode==Mode::Events
-                    && self.show_events {
+                    && self.events_active && self.show_events {
                     self.event_at_screen(rect,screen)
                 }else{None} {
                     self.selected_map=Some(map_id);
@@ -2137,12 +2138,12 @@ impl MapStudioApp {
                     }
                     CanvasGesture::EmptyPress{at:start,screen:origin,since}=>{
                         let delta=(screen-origin).length();
-                        if self.mode==Mode::Terrain && !self.tool_active && delta>DRAG_PX {
+                        if self.pan_only() && delta>DRAG_PX {
                             self.gesture=CanvasGesture::PanBlank;
                             self.offset+=response.drag_delta();
                             ui.ctx().request_repaint();
                         }else if Self::long_hold_complete(since,now,delta)
-                            && !(self.mode==Mode::Terrain && !self.tool_active) {
+                            && !self.pan_only() {
                             self.gesture=CanvasGesture::DrawFrame{from:start,to:at};
                             self.message="Drag to draw map boundary".into();
                             ui.ctx().request_repaint();
@@ -2172,12 +2173,12 @@ impl MapStudioApp {
                     }
                     CanvasGesture::MapPress{id,at:start,screen:origin,since,origin:map_origin}=>{
                         let delta=(screen-origin).length();
-                        if self.mode==Mode::Terrain && !self.tool_active && delta>DRAG_PX {
+                        if self.pan_only() && delta>DRAG_PX {
                             self.gesture=CanvasGesture::PanBlank;
                             self.offset+=response.drag_delta();
                             ui.ctx().request_repaint();
                         }else if Self::long_hold_complete(since,now,delta)
-                            && !(self.mode==Mode::Terrain && !self.tool_active) {
+                            && !self.pan_only() {
                             if let Some(edge)=self.edge_at_screen(rect,id,origin){
                                 if let Some(map)=self.world.maps.iter().find(|m|m.id==id){
                                     let (base_width,base_height)=(map.width,map.height);
@@ -2204,7 +2205,7 @@ impl MapStudioApp {
                         }else if delta>DRAG_PX {
                             if self.mode==Mode::Terrain && self.tool_active && self.bucket_tool {
                                 self.gesture=CanvasGesture::Idle;
-                            }else if self.mode==Mode::Events{
+                            }else if self.mode==Mode::Events || self.pan_only(){
                                 self.gesture=CanvasGesture::PanBlank;
                                 self.offset+=response.drag_delta();
                                 ui.ctx().request_repaint();
@@ -2219,7 +2220,7 @@ impl MapStudioApp {
                         }
                     }
                     CanvasGesture::Painting{last}=>{
-                        if self.mode!=Mode::Events {
+                        if self.mode!=Mode::Events && !self.pan_only() {
                             self.paint_line(last,at);
                         }
                         self.gesture=CanvasGesture::Painting{last:at};
@@ -2366,7 +2367,7 @@ impl MapStudioApp {
                         }else if self.mode!=Mode::Events {
                             self.configure_map_from_double_tap(id);
                         }
-                    }else if self.mode==Mode::Events {
+                    }else if self.mode==Mode::Events && self.events_active {
                         if let Some(point)=at {
                             if self.world.map_at(point).is_some(){
                                 self.begin_edit();
@@ -2395,7 +2396,7 @@ impl MapStudioApp {
                             self.erase_tool=false;
                             self.tool_active=true;
                         }
-                    }else if self.mode==Mode::Properties
+                    }else if (self.mode==Mode::Properties && self.properties_active)
                         || (self.mode==Mode::Terrain && self.tool_active) {
                         self.begin_edit();
                         self.paint_line(start,start);
