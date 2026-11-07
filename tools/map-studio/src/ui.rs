@@ -215,9 +215,11 @@ impl MapStudioApp {
         ui.horizontal(|ui| {
             if ui.selectable_label(self.mode == Mode::Terrain, "Terrain").clicked() {
                 self.mode = Mode::Terrain; self.gesture = CanvasGesture::Idle;
+                self.selected_event=None;self.event_editor_open=false;
             }
             if ui.selectable_label(self.mode == Mode::Properties, "Properties").clicked() {
                 self.mode = Mode::Properties; self.gesture = CanvasGesture::Idle;
+                self.selected_event=None;self.event_editor_open=false;
             }
             if ui.selectable_label(self.mode == Mode::Events, "Events").clicked() {
                 self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
@@ -1423,7 +1425,9 @@ impl MapStudioApp {
                 let at=self.grid_at(rect,screen);
                 if self.warp_pick.is_some() {
                     self.gesture=CanvasGesture::PickWarp{at};
-                }else if let Some((map_id,index))=self.world.event_at(at) {
+                }else if let Some((map_id,index))=if self.mode==Mode::Events {
+                    self.world.event_at(at)
+                }else{None} {
                     self.selected_map=Some(map_id);
                     self.selected_event=Some((map_id,index));
                     self.gesture=CanvasGesture::EventPress{
@@ -1594,6 +1598,14 @@ impl MapStudioApp {
                     self.commit_edit();
                 }
                 CanvasGesture::EmptyPress{..}=>{
+                    if response.clicked() {
+                        self.selected_map=None;
+                        self.selected_cell=None;
+                        self.selected_event=None;
+                        self.event_editor_open=false;
+                        self.confirm_delete=None;
+                        self.message="Selection cleared".into();
+                    }
                     if response.double_clicked(){
                         if let Some(center)=pointer {
                             self.change_zoom(rect,center,1.7,Vec2::ZERO);
