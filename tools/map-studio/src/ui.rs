@@ -427,13 +427,22 @@ impl MapStudioApp {
             }
         }
         if let Some(key)=self.pending_tileset.as_ref(){keys.push(key.clone());}
+        if let Some(pack)=self.active_pack.and_then(|i|self.installed_packs.get(i)){
+            keys.push(format!("imported:{}",pack.filename));
+        }
         keys.sort();keys.dedup();
         self.atlas_cache.retain(|key,_|
             key==tiles::DEFAULT_PAIR || keys.contains(key));
         for key in keys {
             if self.atlas_cache.contains_key(&key){continue;}
-            let Some(pair)=tiles::pair(&key) else{continue;};
-            if let Ok(decoded)=image::load_from_memory(pair.atlas) {
+            let bytes=if let Some(file)=key.strip_prefix("imported:"){
+                self.installed_packs.iter().find(|p|p.filename==file)
+                    .map(|p|p.atlas.as_slice())
+            }else{
+                tiles::pair(&key).map(|p|p.atlas)
+            };
+            let Some(bytes)=bytes else{continue;};
+            if let Ok(decoded)=image::load_from_memory(bytes) {
                 let rgba=decoded.to_rgba8();
                 let dimensions=[rgba.width() as usize,rgba.height() as usize];
                 let handle=ctx.load_texture(format!("Emerald {key}"),
@@ -489,6 +498,7 @@ impl MapStudioApp {
         self.gesture=CanvasGesture::Idle;
         self.tile_preview=None;
         self.selected_stamp=None;
+        self.selected_prefab=None;
         self.sheet_anchor=None;
         self.sheet_hold=None;
         self.size_panel_open=false;
@@ -2012,8 +2022,10 @@ impl MapStudioApp {
                     if ((file.starts_with("MapStudio-project-")
                         || file.starts_with("MapStudio-recovery-"))
                         && file.ends_with(".json")
-                        || file.starts_with("MapStudio-maps-") && file.ends_with(".zip")
-                        || file.starts_with("MapStudio-editable-") && file.ends_with(".zip"))
+                        || (file.starts_with("MapStudio-maps-")
+                            || file.starts_with("MapStudio-editable-")
+                            || file.starts_with("MapStudio-artwork-"))
+                            && file.ends_with(".zip"))
                         && entry.path().is_file(){
                         items.push((format!("local:{file}"),format!("{file} (local recovery)")));
                     }
@@ -2034,7 +2046,9 @@ impl MapStudioApp {
     fn open_backup_list(&mut self) {
         match self.load_restore_choices() {
             Ok(items)=>{
-                self.available_backups=items;
+                self.available_backups=items.into_iter()
+                    .filter(|(_,name)|!name.contains("MapStudio-artwork-"))
+                    .collect();
                 self.selected_backup=None;
                 self.project_restore_open=true;
                 self.message="Choose an editable ZIP or JSON project. Existing work is backed up before import.".into();
@@ -2052,8 +2066,8 @@ impl MapStudioApp {
             }
             let path=self.output_dir()?.join(filename);
             let metadata=std::fs::metadata(&path).map_err(|e|e.to_string())?;
-            if metadata.len()>(storage::MAX_PROJECT_BYTES as u64) {
-                return Err("Project exceeds the 20 MiB import safety limit".into());
+            if metadata.len()>(artwork::MAX_PACKAGE_BYTES as u64) {
+                return Err("Import exceeds the 24 MiB safety limit".into());
             }
             return std::fs::read(path).map_err(|e|e.to_string());
         }
@@ -2104,6 +2118,107 @@ impl MapStudioApp {
             self.project_restore_open=false;
             self.selected_backup=None;
         }
+    }
+
+    fn open_artwork_import_list(&mut self){
+        match self.load_restore_choices(){
+            Ok(items)=>{
+                self.available_artwork_files=items.into_iter().filter(|(_,name)|
+                    name.ends_with(".zip")).collect();
+                self.selected_artwork_file=None;
+                self.import_artwork_open=true;
+                self.message="Import a versioned artwork ZIP from Downloads/MapStudio".into();
+            }
+            Err(err)=>self.message=format!("Browse artwork packages: {err}"),
+        }
+    }
+
+    fn import_selected_artwork(&mut self){
+        let result=(||->Result<(Vec<artwork::Package>,usize,String),String>{
+            let key=self.selected_artwork_file.as_deref()
+                .ok_or("Choose an artwork ZIP first")?;
+            let bytes=self.read_restore_entry(key)?;
+            let folder=artwork::default_dir(self.save_path.as_deref())
+                .ok_or("No private artwork library directory available")?;
+            let package=artwork::install(&folder,&bytes)?;
+            let packs=artwork::load_installed(&folder);
+            let index=packs.iter().position(|p|p.filename==package.filename)
+                .ok_or("Imported ZIP could not be reopened")?;
+            Ok((packs,index,package.manifest.collection))
+        })();
+        match result{
+            Ok((packs,index,name))=>{
+                self.installed_packs=packs;
+                self.active_pack=Some(index);
+                self.selected_prefab=None;
+                self.selected_stamp=None;
+                self.artwork_view=ArtworkView::Metatiles;
+                self.import_artwork_open=false;
+                self.message=format!("Imported {name} artwork. Preview only until native validation.");
+            }
+            Err(err)=>self.message=format!("Artwork import blocked: {err}"),
+        }
+    }
+
+    fn try_export_artwork(&mut self){
+        let result=(||->Result<String,String>{
+            let dir=self.output_dir()?;
+            std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+            if let Some(index)=self.active_pack{
+                let package=self.installed_packs.get(index)
+                    .ok_or("Selected artwork package is missing")?;
+                let folder=artwork::default_dir(self.save_path.as_deref())
+                    .ok_or("Artwork library is unavailable")?;
+                let source=folder.join(&package.filename);
+                let destination=dir.join(&package.filename);
+                if source!=destination{
+                    std::fs::copy(&source,&destination).map_err(|e|e.to_string())?;
+                }
+                self.publish_output(&destination,&package.filename)
+            }else{
+                let pair=self.browsing_pair();
+                let name=artwork::filename_for("Emerald",pair.key);
+                let output=dir.join(&name);
+                artwork::export_pair(pair,&output)?;
+                self.publish_output(&output,&name)
+            }
+        })();
+        self.message=match result{
+            Ok(place)=>format!("Artwork package exported: {place}"),
+            Err(err)=>format!("Artwork package export failed: {err}"),
+        };
+    }
+
+    fn artwork_import_dialog(&mut self,ctx:&egui::Context){
+        if !self.import_artwork_open{return;}
+        let mut open=self.import_artwork_open;
+        egui::Window::new("Import artwork collection")
+            .collapsible(false).resizable(true)
+            .default_width(320.0)
+            .anchor(Align2::CENTER_CENTER,[0.0,0.0])
+            .open(&mut open).show(ctx,|ui|{
+                ui.small("Choose an artwork ZIP in Downloads/MapStudio. Imported artwork is view-only until its native engine format is supported.");
+                if self.available_artwork_files.is_empty(){
+                    ui.label("No ZIPs found in this app's accessible Downloads/MapStudio.");
+                }else{
+                    egui::ScrollArea::vertical().max_height(205.0)
+                        .show(ui,|ui|{
+                            for (id,name) in &self.available_artwork_files{
+                                ui.selectable_value(&mut self.selected_artwork_file,
+                                    Some(id.clone()),name);
+                            }
+                        });
+                }
+                ui.horizontal(|ui|{
+                    if ui.add_enabled(self.selected_artwork_file.is_some(),
+                        egui::Button::new("Import ZIP")).clicked(){
+                        self.import_selected_artwork();
+                    }
+                    if ui.small_button("Close").clicked(){self.import_artwork_open=false;}
+                });
+                ui.small(&self.message);
+            });
+        self.import_artwork_open&=open;
     }
 
     fn start_new_project(&mut self){
@@ -3246,6 +3361,7 @@ impl eframe::App for MapStudioApp {
         }
         self.size_dialog(root.ctx());
         self.project_dialogs(root.ctx());
+        self.artwork_import_dialog(root.ctx());
         self.maybe_autosave(root.ctx());
     }
 }
