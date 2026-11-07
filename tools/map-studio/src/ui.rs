@@ -826,11 +826,7 @@ impl MapStudioApp {
                         egui::Grid::new("elevation_palette").num_columns(4).spacing([5.0,6.0])
                             .show(ui,|ui|{
                                 for level in 0..16u8 {
-                                    let label=match level {
-                                        0=>"0 · All".to_string(),1=>"1 · Water".into(),
-                                        3=>"3 · Land".into(),15=>"15 · High".into(),
-                                        _=>level.to_string()
-                                    };
+                                    let label=level.to_string();
                                     let selected=self.elevation_brush==level;
                                     let color=if selected{Color32::from_rgb(132,191,241)}
                                         else{Color32::from_rgb(231,236,245)};
@@ -1570,7 +1566,10 @@ impl MapStudioApp {
                     map.origin.x as f32+event.x as f32+0.5,
                     map.origin.y as f32+event.y as f32+0.5);
                 let bounds=if event.kind==EventKind::Npc {
-                    Rect::from_center_size(center+vec2(0.0,-13.0),vec2(26.0,42.0))
+                    Rect::from_center_size(
+                        center+vec2(0.0,-self.zoom*0.75),
+                        vec2((self.zoom*1.5).max(26.0),
+                             (self.zoom*2.5).max(42.0)))
                 }else{
                     Rect::from_center_size(center,Vec2::splat(28.0))
                 };
@@ -1898,11 +1897,14 @@ impl MapStudioApp {
                             m.cell(x,y)
                         }).is_some();
                         if painted {
-                            self.mode=Mode::Properties;
-                            self.selected_cell=Some(start);
-                            self.panel_height=self.panel_height.max(275.0);
-                            self.message="Tile properties: collision, elevation and terrain".into();
-                        }else{
+                            if self.mode==Mode::Properties {
+                                self.selected_cell=Some(start);
+                                self.panel_height=self.panel_height.max(275.0);
+                                self.message="Selected tile properties".into();
+                            } else if self.mode==Mode::Terrain {
+                                self.message="To edit collision or elevation, open Properties".into();
+                            }
+                        }else if self.mode!=Mode::Events {
                             self.configure_map_from_double_tap(id);
                         }
                     }else if self.mode==Mode::Events {
@@ -2455,5 +2457,18 @@ mod gesture_intent_tests {
         assert!(MapStudioApp::long_hold_complete(10.0,10.47,1.0));
         assert!(!MapStudioApp::long_hold_complete(10.0,10.60,10.0));
         assert!(!MapStudioApp::long_hold_complete(10.0,10.20,20.0));
+    }
+}
+
+#[cfg(test)]
+mod coordinate_guide_tests {
+    use super::MapStudioApp;
+    #[test]
+    fn labels_skip_by_a_1_2_5_interval_as_zoom_changes() {
+        assert_eq!(MapStudioApp::coordinate_step(54.0),1);
+        assert_eq!(MapStudioApp::coordinate_step(24.0),2);
+        assert_eq!(MapStudioApp::coordinate_step(14.0),5);
+        assert_eq!(MapStudioApp::coordinate_step(5.0),10);
+        assert_eq!(MapStudioApp::coordinate_step(2.0),50);
     }
 }
