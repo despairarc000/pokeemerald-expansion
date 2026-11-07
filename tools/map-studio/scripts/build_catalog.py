@@ -46,28 +46,44 @@ def colored(im,colors):
     return cp
 
 def generate(main,local,output):
-    palettes=[]
+    palettes={}
     for bank in range(16):
         base=main if bank<6 else local
         fn=base/"palettes"/f"{bank:02}.pal"
-        if not fn.is_file():
-            raise ValueError("Missing indexed palette "+str(fn))
-        palettes.append(read_palette(fn))
+        if fn.is_file():
+            palettes[bank]=read_palette(fn)
     images=[Image.open(d/"tiles.png") for d in (main,local)]
     for img in images:
         if img.mode not in ("P","L") or img.width%8 or img.height%8 or max(img.getdata())>15:
             raise ValueError("Invalid indexed 8x8 tiles "+str(img))
-    tile_banks=[[colored(img,pal).convert("RGBA") for pal in palettes]
-                for img in images]
+    tile_banks=[{bank:colored(img,pal).convert("RGBA")
+                  for bank,pal in palettes.items()} for img in images]
     raw=[(d/"metatiles.bin").read_bytes() for d in (main,local)]
     count1=min(len(raw[0])//16,512)
     count2=min(len(raw[1])//16,512)
     atlas=Image.new("RGBA",(16*16,64*16),(0,0,0,0))
     cache={}
+    valid=[]
     for mid in list(range(count1))+list(range(512,512+count2)):
         src=0 if mid<512 else 1
         sub=mid if src==0 else mid-512
         entries=struct.unpack_from("<8H",raw[src],sub*16)
+        # A metatile is only paintable if every referenced graphical
+        # subtile exists in its source image and all needed palettes exist.
+        source_ok=True
+        for entry in entries:
+            tile=entry&1023
+            bank=(entry>>12)&15
+            image_src=0 if tile<512 else 1
+            idx=tile if image_src==0 else tile-512
+            image=images[image_src]
+            if bank not in palettes or idx >= (image.width//8)*(image.height//8):
+                source_ok=False
+                break
+        if not source_ok or (sub+1)*2>len((main if src==0 else local)
+                                         .joinpath("metatile_attributes.bin").read_bytes()):
+            continue
+        valid.append(mid)
         x=(mid%16)*16;y=(mid//16)*16
         for n,entry in enumerate(entries):
             tile=entry&1023
@@ -77,9 +93,6 @@ def generate(main,local,output):
             image_src=0 if tile<512 else 1
             tile_index=tile if image_src==0 else tile-512
             image=tile_banks[image_src][bank]
-            max_tiles=(image.width//8)*(image.height//8)
-            if tile_index>=max_tiles:
-                raise ValueError(f"Metatile {mid} uses missing 8x8 tile {tile}")
             key=(tile,bank,flipx,flipy,n>=4)
             if key not in cache:
                 tile_x=(tile_index%(image.width//8))*8
@@ -103,7 +116,9 @@ def generate(main,local,output):
             else:
                 atlas.paste(picture,dest)
     atlas.save(output,optimize=True)
-    return count1,count2
+    mask=bytearray(128)
+    for mid in valid:mask[mid//8]|=1<<(mid%8)
+    return count1,count2,bytes(mask),len(valid)
 
 def group_for(primary_name,secondary_name):
     n=secondary_name.lower()
@@ -130,12 +145,14 @@ for main_sym,sec_sym in pairs:
     key=f"{main.name}/{local.name}"
     output=out/(main.name+"__"+local.name+".png")
     try:
-        first,second=generate(main,local,output)
+        first,second,mask,usable=generate(main,local,output)
+        if usable<40:
+            raise ValueError("Fewer than 40 valid metatiles in paired source data")
     except (OSError,ValueError,struct.error) as exc:
         omitted.append((main_sym,sec_sym,str(exc)))
         continue
     catalog.append((key,main,local,output,first,second,group_for(main.name,local.name),
-                    main_sym,sec_sym))
+                    main_sym,sec_sym,mask,usable))
 if not any(c[0]=="general/petalburg" for c in catalog):
     for p,s,reason in omitted:
         if p=="gTileset_General" and s=="gTileset_Petalburg":
@@ -148,7 +165,7 @@ def literal(s):
     return json.dumps(str(s),ensure_ascii=True)
 sourcefile=out.parent/"tileset_catalog.rs"
 rows=[]
-for key,main,local,img,first,second,category,main_sym,sec_sym in catalog:
+for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in catalog:
     label=local.name.replace("_"," ").title()
     rows.append(
         "TilePair {key:"+literal(key)+", label:"+literal(label)+
@@ -156,13 +173,15 @@ for key,main,local,img,first,second,category,main_sym,sec_sym in catalog:
         ",primary_symbol:"+literal(main_sym)+",secondary_symbol:"+literal(sec_sym)+
         ",primary:"+literal(main.name)+
         ",secondary:"+literal(local.name)+",primary_count:"+str(first)+
-        ",secondary_count:"+str(second)+", atlas:include_bytes!("+literal(img)+")"+
+        ",secondary_count:"+str(second)+
+        ",valid_mask:&["+(",".join(str(b) for b in mask))+"]"+
+        ",atlas:include_bytes!("+literal(img)+")"+
         ",attr_primary:include_bytes!("+literal(main/"metatile_attributes.bin")+")"+
         ",attr_secondary:include_bytes!("+literal(local/"metatile_attributes.bin")+")},")
 sourcefile.write_text("pub static TILESET_PAIRS:&[TilePair]=&[\n"+"\n".join(rows)+"\n];\n")
 manifest={"available":len(catalog),"omitted":[{"primary":p,"secondary":s,"reason":reason} for p,s,reason in omitted],
-    "pairs":[{"key":key,"category":category,"tiles":first+second}
-             for key,_,_,_,first,second,category,_,_ in catalog]}
+    "pairs":[{"key":key,"category":category,"tiles":first+second,"usable":usable}
+             for key,_,_,_,first,second,category,_,_,mask,usable in catalog]}
 (out/"catalog.json").write_text(json.dumps(manifest,indent=2))
 print(f"Generated {len(catalog)} real tile-pair atlases; omitted {len(omitted)} incomplete or unsupported pairs")
 for p,s,reason in omitted[:16]:print("SKIPPED",p,s,reason[:140])

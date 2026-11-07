@@ -21,6 +21,7 @@ pub struct TilePair {
     pub secondary:&'static str,
     pub primary_count:usize,
     pub secondary_count:usize,
+    pub valid_mask:&'static [u8;128],
     pub atlas:&'static [u8],
     pub attr_primary:&'static [u8],
     pub attr_secondary:&'static [u8],
@@ -35,11 +36,13 @@ pub fn pair_for(primary:&str,secondary:&str)->Option<&'static TilePair>{
     TILESET_PAIRS.iter().find(|p|p.primary==primary&&p.secondary==secondary)
 }
 pub fn valid_in(pair:&TilePair,id:u16)->bool{
-    if id<512{(id as usize)<pair.primary_count &&
-        (id as usize+1)*2<=pair.attr_primary.len()}
-    else {
-        ((id-512) as usize)<pair.secondary_count &&
-        ((id-512) as usize+1)*2<=pair.attr_secondary.len()
+    let num=id as usize;
+    if num>=1024 || pair.valid_mask[num/8]&(1<<(num%8))==0 {return false;}
+    if id<512{
+        num<pair.primary_count && (num+1)*2<=pair.attr_primary.len()
+    } else {
+        let local=num-512;
+        local<pair.secondary_count && (local+1)*2<=pair.attr_secondary.len()
     }
 }
 pub fn tile_ids(pair:&TilePair)->Vec<u16>{
