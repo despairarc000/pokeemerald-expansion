@@ -219,6 +219,11 @@ for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in cat
             labels.append((mid,label))
     labels.sort()
     label_literals=",".join("("+str(mid)+","+literal(label)+")" for mid,label in labels)
+    assets=[]
+    for kind,folder in (("primary",main),("secondary",local)):
+        for entry in sorted((folder/"palettes").glob("*.pal")):
+            assets.append("("+literal(f"{kind}/palettes/{entry.name}")+
+                ",include_bytes!("+literal(entry)+"))")
     rows.append(
         "TilePair {key:"+literal(key)+", label:"+literal(label)+
         ",category:"+literal(category)+
@@ -230,7 +235,12 @@ for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in cat
         ",atlas:include_bytes!("+literal(img)+")"+
         ",labels:&["+label_literals+"]"+
         ",attr_primary:include_bytes!("+literal(main/"metatile_attributes.bin")+")"+
-        ",attr_secondary:include_bytes!("+literal(local/"metatile_attributes.bin")+")},")
+        ",attr_secondary:include_bytes!("+literal(local/"metatile_attributes.bin")+")"+
+        ",raw_primary_tiles:include_bytes!("+literal(main/"tiles.png")+")"+
+        ",raw_secondary_tiles:include_bytes!("+literal(local/"tiles.png")+")"+
+        ",raw_primary_metatiles:include_bytes!("+literal(main/"metatiles.bin")+")"+
+        ",raw_secondary_metatiles:include_bytes!("+literal(local/"metatiles.bin")+")"+
+        ",raw_files:&["+(",".join(assets))+"]},")
 sourcefile.write_text("pub static TILESET_PAIRS:&[TilePair]=&[\n"+"\n".join(rows)+"\n];\n")
 manifest={"available":len(catalog),"omitted":[{"primary":p,"secondary":s,"reason":reason} for p,s,reason in omitted],
     "pairs":[{"key":key,"category":category,"tiles":first+second,"usable":usable}

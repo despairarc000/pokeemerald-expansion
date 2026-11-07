@@ -26,6 +26,13 @@ pub struct TilePair {
     pub labels:&'static [(u16,&'static str)],
     pub attr_primary:&'static [u8],
     pub attr_secondary:&'static [u8],
+    /// True source resources are included for portable export. Reuse of
+    /// primary/secondary data is preserved through compile-time references.
+    pub raw_primary_tiles:&'static [u8],
+    pub raw_secondary_tiles:&'static [u8],
+    pub raw_primary_metatiles:&'static [u8],
+    pub raw_secondary_metatiles:&'static [u8],
+    pub raw_files:&'static [(&'static str,&'static [u8])],
 }
 include!(concat!(env!("OUT_DIR"),"/tileset_catalog.rs"));
 pub const DEFAULT_PAIR:&str="general/petalburg";
