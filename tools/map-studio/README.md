@@ -246,3 +246,47 @@ temporary; this branch's APK is a test build, not a persistent update channel.
 **Validation:** CI checks Android packaging, Rust tests and desktop compiling.
 Device acceptance still requires Samsung split-screen/freeform testing, since
 a build cannot demonstrate live touch correctness in a resized NativeActivity.
+
+## Resize + Keypad Preview — collision-aware editing
+
+Branch: `feature/map-studio-resize-keypad-and-dock`. Android package
+`dev.despairarc.mapstudio.resizepreview` deliberately keeps a separate
+private project file from earlier test APKs. Export/backup a project before
+switching packages. The CI APK is signed with a temporary test key.
+
+- The **map size dialog uses in-app Width and Height buttons** and an
+  on-screen 0–9, Clear and Delete pad instead of the system keyboard for
+  those two numeric values. The map name remains a normal text field.
+- For each candidate width/height/direction, the UI uses the **same source
+  model `preview_resize` validation as Apply**, including map overlap,
+  coordinate limits, painted-cell preservation and event preservation.
+  Invalid sizes show the reason, a red geometric preview and a disabled
+  Apply button. The model computes a maximum valid width for the current
+  height and vice versa (up to the current UI limit of 100). Direction
+  choices that cannot accommodate the requested growth are disabled.
+- A **miniature live geometry preview** shows nearby maps, the original
+  map footprint, and the proposed ghost shape (green valid, red invalid).
+- On the canvas, **long-press near a map edge then drag** to resize one
+  dimension. Long-press inside the map continues to move it. Edge resize
+  remains a preview until finger release; rejected geometry never writes
+  to map cells/events. At very small on-screen map sizes, edge-resize
+  deliberately yields to the regular map gesture to avoid ambiguity.
+- The (0,0) indicator is now the outline of the **actual first grid cell**,
+  scaling with zoom, rather than a floating fixed-radius target.
+- Sign, warp, step-message and hidden-item icon decals now scale smaller
+  than the grid cell; NPC sprites retain natural source proportions.
+- The Properties tab no longer shows non-editable technical metatile
+  details. The actual numeric collision and elevation controls remain.
+- The terrain dock keeps its resize handle, tileset chooser, Brush/Bucket/
+  Eraser controls and Find navigation fixed. Only the source metatile
+  sheet scrolls; quick drag scrolling adds decaying momentum while a
+  held selection cancels that momentum.
+- Overlay visibility has a persistent small window: checking or
+  unchecking a box leaves it open. It closes through X, the Overlays
+  toggle, or an outside tap.
+
+Tests and boundaries: numerical geometry guidance has Rust regression
+tests and participates in the normal desktop/Android CI. Device gesture
+feel and Android multi-window behavior still require real-phone testing.
+No new gameplay mechanics or non-source Pokémon metatile properties
+are introduced.
