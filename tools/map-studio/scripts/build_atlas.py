@@ -53,7 +53,8 @@ def draw_subtile(subtile,piece,metax,metay,top):
     for sy in range(8):
         for sx in range(8):
             color_index=im.getpixel((tx+(7-sx if flipx else sx),ty+(7-sy if flipy else sy)))
-            if top and color_index==0:
+            # Index zero is transparent on all GBA background layers.
+            if color_index==0:
                 continue
             color=palettes[bank][color_index]
             pix[x0+sx,y0+sy]=(*color,255)
