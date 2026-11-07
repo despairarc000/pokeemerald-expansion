@@ -23,6 +23,7 @@ pub struct TilePair {
     pub secondary_count:usize,
     pub valid_mask:&'static [u8;128],
     pub atlas:&'static [u8],
+    pub labels:&'static [(u16,&'static str)],
     pub attr_primary:&'static [u8],
     pub attr_secondary:&'static [u8],
 }
@@ -54,6 +55,11 @@ pub fn behavior_name_in(pair:&TilePair,id:u16)->Option<&'static str>{
         else{(pair.attr_secondary,(id-512) as usize)};
     BEHAVIOR_NAMES.get(attrs[i*2] as usize).copied()
 }
+/// Metatile names from the matching primary/secondary source definitions.
+pub fn source_label_in(pair:&TilePair,id:u16)->Option<&'static str>{
+    pair.labels.iter().find(|(candidate,_)|*candidate==id)
+        .map(|(_,name)|*name)
+}
 pub fn is_warp_in(pair:&TilePair,id:u16)->bool {
     let Some(name)=behavior_name_in(pair,id) else{return true;};
     ["WARP","DOOR","LADDER","ESCALATOR","HOLE","STAIR","TELEPORT"]
@@ -61,25 +67,41 @@ pub fn is_warp_in(pair:&TilePair,id:u16)->bool {
 }
 /// Filters are backed by engine behavior names, never unverified image labels.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum TileFilter{All,Water,Ice,Doors,Grass,Paths}
+pub enum TileFilter{All,Water,Ice,Doors,Grass,Paths,Buildings,Trees,Cliffs}
 impl TileFilter{
-    pub const ALL:[Self;6]=[Self::All,Self::Water,Self::Ice,Self::Doors,Self::Grass,Self::Paths];
+    pub const ALL:[Self;9]=[Self::All,Self::Grass,Self::Water,Self::Paths,
+        Self::Buildings,Self::Trees,Self::Cliffs,Self::Doors,Self::Ice];
     pub fn label(self)->&'static str{
-        match self{Self::All=>"All tiles",Self::Water=>"Water",Self::Ice=>"Ice",
-            Self::Doors=>"Doors / stairs",Self::Grass=>"Grass",Self::Paths=>"Paths / roads"}
+        match self{
+            Self::All=>"All art",Self::Water=>"Water",Self::Ice=>"Ice",
+            Self::Doors=>"Doors / stairs",Self::Grass=>"Grass",
+            Self::Paths=>"Paths / roads",Self::Buildings=>"Buildings*",
+            Self::Trees=>"Trees / plants*",Self::Cliffs=>"Rocks / cliffs*"
+        }
     }
 }
+/// Filters highlight candidate cells in place, never remove or shift them.
+/// Asterisked object categories use *named* source metatiles, not invented
+/// computer-vision guesses about unlabelled roof/tree/rock artwork.
 pub fn matches_filter(pair:&TilePair,id:u16,filter:TileFilter)->bool{
     if filter==TileFilter::All{return true;}
-    let Some(name)=behavior_name_in(pair,id) else{return false;};
+    let behavior=behavior_name_in(pair,id).unwrap_or("");
+    let label=source_label_in(pair,id).unwrap_or("").to_ascii_uppercase();
+    let named=|words:&[&str]|words.iter().any(|word|label.contains(word));
     match filter{
         TileFilter::All=>true,
-        TileFilter::Water=>name.contains("WATER")||name.contains("PUDDLE"),
-        TileFilter::Ice=>name.contains("ICE"),
-        TileFilter::Doors=>is_warp_in(pair,id),
-        TileFilter::Grass=>name.contains("GRASS")||name.contains("TALL_GRASS"),
-        TileFilter::Paths=>name.contains("ROAD")||name.contains("SAND")||name.contains("ASH")
-            ||name.contains("BRIDGE")
+        TileFilter::Water=>behavior.contains("WATER")||behavior.contains("PUDDLE")
+            ||named(&["WATER","POND","OCEAN","SEA","SHORE"]),
+        TileFilter::Ice=>behavior.contains("ICE")||named(&["ICE","SNOW"]),
+        TileFilter::Doors=>is_warp_in(pair,id)||named(&["DOOR","STAIR","LADDER"]),
+        TileFilter::Grass=>behavior.contains("GRASS")||named(&["GRASS"]),
+        TileFilter::Paths=>behavior.contains("ROAD")||behavior.contains("SAND")
+            ||behavior.contains("ASH")||behavior.contains("BRIDGE")
+            ||named(&["PATH","ROAD","BRIDGE","SAND","STAIR"]),
+        TileFilter::Buildings=>named(&["ROOF","HOUSE","BUILDING","WALL",
+            "WINDOW","POKEMART","POKECENTER","GYM","SHOP"]),
+        TileFilter::Trees=>named(&["TREE","BUSH","FLOWER","SHRUB","LEAF","VINE"]),
+        TileFilter::Cliffs=>named(&["ROCK","CLIFF","CAVE","BOULDER","MOUNTAIN"]),
     }
 }
 
@@ -245,5 +267,19 @@ mod sheet_stamp_tests {
         assert!(stamp_from_sheet(p,0,511,512).is_none());
         assert!(stamp_from_sheet(p,512,512,512).is_some());
         assert!(stamp_from_sheet(p,0,0,511).is_none());
+    }
+}
+
+#[cfg(test)]
+mod source_filter_tests {
+    use super::*;
+    #[test]
+    fn native_names_are_scoped_to_selected_pair() {
+        let p=pair(DEFAULT_PAIR).unwrap();
+        assert!(source_label_in(p,1).is_some());
+        assert_eq!(source_label_in(p,1),Some("METATILE_General_Grass"));
+        assert!(matches_filter(p,1,TileFilter::Grass));
+        assert!(matches_filter(p,1,TileFilter::All));
+        assert!(!matches_filter(p,1,TileFilter::Buildings));
     }
 }
