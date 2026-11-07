@@ -31,12 +31,12 @@ winit = { version = "0.30", default-features = false, features = ["android-nativ
 
 [package.metadata.android]
 strip = "strip"
-package = "dev.despairarc.mapstudio.spacespreview"
-apk_name = "map-studio-spaces-preview"
+package = "dev.despairarc.mapstudio.sheetpreview"
+apk_name = "map-studio-sheet-preview"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.application]
-label = "Map Studio Spaces Preview"
+label = "Map Studio Sheet Preview"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
