@@ -740,6 +740,45 @@ impl World {
         changed
     }
 
+    /// Standard paint-bucket flood fill: replace only the connected source
+    /// metatile on the touched map, never unrelated or neighboring maps.
+    /// Existing collision/elevation metadata remains unchanged.
+    pub fn bucket_fill(&mut self, at:GridPoint, id:u16)->usize {
+        let Some(frame)=self.maps.iter_mut().find(|m|
+            m.space_id==self.active_space_id && m.contains(at)) else{return 0;};
+        let Some(pair)=crate::tiles::pair_for(&frame.primary_tileset,&frame.secondary_tileset)
+            else{return 0;};
+        if !crate::tiles::valid_in(pair,id){return 0;}
+        let start_x=(at.x-frame.origin.x) as usize;
+        let start_y=(at.y-frame.origin.y) as usize;
+        let width=frame.width as usize;
+        let height=frame.height as usize;
+        let source=frame.cells[start_y*width+start_x].map(|cell|cell.metatile_id);
+        if source==Some(id){return 0;}
+        let mut pending=std::collections::VecDeque::from([(start_x,start_y)]);
+        let mut seen=vec![false;frame.cells.len()];
+        let mut changed=0;
+        while let Some((x,y))=pending.pop_front(){
+            if x>=width||y>=height {continue;}
+            let index=y*width+x;
+            if seen[index]{continue;}
+            seen[index]=true;
+            if frame.cells[index].map(|cell|cell.metatile_id)!=source {continue;}
+            let new=match frame.cells[index] {
+                Some(mut cell)=>{cell.metatile_id=id;cell}
+                None=>Cell{terrain:TileKind::Grass,metatile_id:id,collision:0,
+                    elevation:if id==0x170 {1}else{3}}
+            };
+            frame.cells[index]=Some(new);
+            changed+=1;
+            if x>0{pending.push_back((x-1,y));}
+            if y>0{pending.push_back((x,y-1));}
+            if x+1<width{pending.push_back((x+1,y));}
+            if y+1<height{pending.push_back((x,y+1));}
+        }
+        changed
+    }
+
     pub fn erase(&mut self, p: GridPoint) -> bool {
         if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
@@ -1419,5 +1458,35 @@ mod metatile_stamp_tests{
         let right=world.maps.iter().find(|m|m.name=="Right").unwrap();
         assert!(right.cells.iter().all(Option::is_none));
         assert_eq!(world.paint_stamp(GridPoint::new(1,1),&group),4);
+    }
+}
+
+#[cfg(test)]
+mod bucket_fill_tests{
+    use super::*;
+    #[test]
+    fn fill_stops_at_metatile_boundary_and_other_map(){
+        let mut w=World::new();
+        w.add_map("A",GridPoint::new(0,0),8,8).unwrap();
+        w.add_map("B",GridPoint::new(8,0),8,8).unwrap();
+        assert!(w.paint_metatile(GridPoint::new(2,1),1));
+        for y in 0..8{assert!(w.paint_metatile(GridPoint::new(3,y),1));}
+        assert_eq!(w.bucket_fill(GridPoint::new(0,1),2),23);
+        let a=w.maps.iter().find(|m|m.name=="A").unwrap();
+        assert_eq!(a.cell(2,1).unwrap().metatile_id,1);
+        assert_eq!(a.cell(3,1).unwrap().metatile_id,1);
+        let b=w.maps.iter().find(|m|m.name=="B").unwrap();
+        assert!(b.cells.iter().all(Option::is_none));
+    }
+    #[test]
+    fn filled_region_preserves_game_collision_and_elevation(){
+        let mut w=World::new();
+        w.add_map("A",GridPoint::new(0,0),5,5).unwrap();
+        w.paint_metatile(GridPoint::new(2,2),1);
+        w.set_collision(GridPoint::new(2,2),3);
+        w.set_elevation(GridPoint::new(2,2),15);
+        assert_eq!(w.bucket_fill(GridPoint::new(2,2),2),1);
+        let c=w.maps[0].cell(2,2).unwrap();
+        assert_eq!((c.metatile_id,c.collision,c.elevation),(2,3,15));
     }
 }
