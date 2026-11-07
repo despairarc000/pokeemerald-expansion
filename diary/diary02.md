@@ -17,7 +17,10 @@ At a high level the AI wrote the region brief, then the seven areas, the four ma
 ## Log 15: Next regions stay shallow (2026-11-06)
 The owner decided that from here on each region is designed only as natural lands and waters, and only coarsely, so that a revision does not waste effort on intricate detail. No places, interiors or per-map terrain percentages for now. Mistvale was done this way: a region brief, six areas, and a coarse list of 17 natural maps (name, size, danger, one line) in `design/region-mistvale.md`. The depth of Meadowmere stays as the reference for how deep a region can later go.
 
-## State (as of log 15)
+## Log 16: Map Studio Rust APK design consolidated (2026-11-07)
+The owner asked for a final review before implementation of the Android map maker. We selected a native Rust approach (eframe/egui with wgpu), retaining the HTML v3 UI as visual reference, with one Rust model for editing, autosave, AI commands and real Emerald export. The implementation baseline is `design/map-studio-implementation.md`: first prove a minimal APK on the phone, then the canvas, actual tilesets, native export and transitions. GitHub snapshot collaboration precedes a possible hosted live service. Known uncertainties—device performance, untested native export, and the engine's unsafe small-map neighbor copying—remain tests, not completed features. **No APK code, service or ROM build was produced in this session.**
+
+## State (as of log 16)
 
 **Done**
 - Meadowmere natural environment design, down to 20 natural maps (`design/region-meadowmere.md`, `meadowmere-areas.md`, `meadowmere-places.md`, `meadowmere-interiors.md`, `meadowmere-maps-natural.md`).
@@ -32,6 +35,7 @@ The owner decided that from here on each region is designed only as natural land
 - Villages and other buildings are not designed in any region.
 - Species per zone not assigned. The species list has not been checked in the repo. Rarity tier numbers are AI estimates.
 - Real tile art and the tileset pipeline. The map maker's format is unknown to the AI.
+- Map Studio tooling: first build/install the native Rust eframe/wgpu Android proof; see `design/map-studio-implementation.md` for all implementation gates. Device and GBA export compatibility remain unverified.
 - Healing and rest rules, where the player begins, and which regions have gyms are undecided.
 - Owner to confirm the world layout sketch (diary log 10) and whether the "world feel rules" become a core design rule in `design/CORE.md`.
 - Ladder rows were drafted by the AI and need owner review.
