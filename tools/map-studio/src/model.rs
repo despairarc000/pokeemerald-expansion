@@ -470,7 +470,8 @@ impl World {
     }
 
     pub fn add_event(&mut self, p: GridPoint, kind: EventKind) -> Option<(u32,usize)> {
-        if let Some(map)=self.maps.iter_mut().find(|m|m.contains(p)) {
+        if let Some(map)=self.maps.iter_mut().find(|m|
+            m.space_id==self.active_space_id && m.contains(p)) {
             let x=(p.x-map.origin.x) as u32;
             let y=(p.y-map.origin.y) as u32;
             if let Some(index)=map.events.iter().position(|e|e.x==x&&e.y==y) {
@@ -1351,6 +1352,29 @@ mod space_tileset_tests {
         assert_eq!(w.maps[1].secondary_tileset,"generic_building");
         w.check_integrity().unwrap();
         assert!(w.set_map_tileset(inside,"building/pokemon_center").is_ok());
+        w.check_integrity().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod cross_space_event_tests {
+    use super::*;
+    #[test]
+    fn events_are_placed_only_in_the_active_space_even_at_same_coordinates(){
+        let mut w=World::new();
+        let surface=w.add_map("Outside",GridPoint::new(0,0),6,6).unwrap();
+        let inside_space=w.create_space(SpaceKind::Interior,Some(surface),GridPoint::new(3,3)).unwrap();
+        let inside=w.add_map("Inside",GridPoint::new(0,0),6,6).unwrap();
+        let (new_id,index)=w.add_event(GridPoint::new(2,2),EventKind::Npc).unwrap();
+        assert_eq!(new_id,inside);
+        assert_eq!(index,0);
+        assert_eq!(w.maps.iter().find(|m|m.id==surface).unwrap().events.len(),0);
+        w.set_active_space(0).unwrap();
+        let (id,_)=w.add_event(GridPoint::new(2,2),EventKind::Sign).unwrap();
+        assert_eq!(id,surface);
+        assert_eq!(w.maps.iter().find(|m|m.id==inside).unwrap().events.len(),1);
+        w.set_active_space(inside_space).unwrap();
+        assert_eq!(w.event_at(GridPoint::new(2,2)),Some((inside,0)));
         w.check_integrity().unwrap();
     }
 }
