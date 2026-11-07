@@ -1014,7 +1014,7 @@ impl MapStudioApp {
             if let Some(id)=hovered {self.choose_sheet_stamp(pair,base,id,id);}
         }
         let visible=rect.intersect(ui.clip_rect());
-        if visible.is_negative(){return;}
+        if visible.width()<=0.0 || visible.height()<=0.0{return;}
         let start_row=((visible.top()-rect.top())/side).floor().max(0.0) as usize;
         let end_row=(((visible.bottom()-rect.top())/side).ceil() as usize)
             .min(rows);
