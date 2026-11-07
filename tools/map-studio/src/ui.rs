@@ -846,7 +846,7 @@ impl MapStudioApp {
             .is_some_and(|m|m.cells.iter().any(Option::is_some));
         if painted{
             self.pending_tileset=Some(key.into());
-            self.message="Confirm the new tileset before changing painted art".into();
+            self.message="Previewing tileset only. Selected map is unchanged.".into();
         }else{
             self.apply_pair(key);
         }
@@ -863,24 +863,6 @@ impl MapStudioApp {
 
     fn artwork_selectors(&mut self,ui:&mut egui::Ui){
 
-        // A roomy but compact grab handle; tool choices remain pinned.
-        let (handle,response)=ui.allocate_exact_size(
-            vec2(ui.available_width(),33.0),Sense::click_and_drag());
-        let center=handle.center();
-        ui.painter().rect_filled(handle,0.0,Color32::from_gray(243));
-        ui.painter().rect_filled(Rect::from_min_size(
-            pos2(center.x-24.0,handle.top()+4.0),vec2(48.0,4.0)),
-            3.0,Color32::from_gray(144));
-        ui.painter().text(pos2(center.x,handle.bottom()-3.0),Align2::CENTER_BOTTOM,
-            "Drag to resize",FontId::proportional(11.0),Color32::from_gray(110));
-        if response.dragged() {
-            let max=(ui.ctx().content_rect().height()*0.72).max(44.0);
-            self.panel_height=(self.panel_height-response.drag_delta().y).clamp(44.0,max);
-            ui.ctx().request_repaint();
-        }
-        if response.double_clicked() {
-            self.panel_height=if self.panel_height<230.0 {370.0}else{165.0};
-        }
             // Independent, touch-sized selection boxes. The first filters the
             // second; selecting a family immediately previews its first REAL
             // repository-defined tileset (no nested collapsing menu).
@@ -2994,6 +2976,27 @@ fn property_visual(cell: Cell,elevation_mode:bool)->(Color32,&'static str){
             _=>Color32::from_rgba_unmultiplied(242,162,61,106),
         };
         (tint,VALUES[cell.collision.min(3) as usize])
+    }
+}
+
+#[cfg(test)]
+mod dock_sizing_tests {
+    use super::MapStudioApp;
+    #[test]
+    fn dock_always_fits_inside_short_or_fullscreen_windows(){
+        for height in [12.0,30.0,45.0,90.0,150.0,250.0,420.0,820.0] {
+            let (minimum,maximum)=MapStudioApp::dock_height_bounds(height);
+            assert!(minimum>=0.0);
+            assert!(minimum<=maximum);
+            assert!(maximum<=height, "Dock overflow at height {height}");
+        }
+    }
+    #[test]
+    fn dock_retains_at_least_a_visible_grip_at_useful_window_heights(){
+        for height in [100.0,160.0,300.0] {
+            let (minimum,_)=MapStudioApp::dock_height_bounds(height);
+            assert!(minimum>=26.0);
+        }
     }
 }
 
