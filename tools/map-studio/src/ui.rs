@@ -280,9 +280,9 @@ impl MapStudioApp {
                 if ui.selectable_label(self.mode==mode,label).clicked(){
                     if self.mode==mode {
                         match mode {
-                            Mode::Terrain=>self.tool_active=false,
-                            Mode::Properties=>self.properties_active=false,
-                            Mode::Events=>self.events_active=false,
+                            Mode::Terrain=>self.tool_active=!self.tool_active,
+                            Mode::Properties=>self.properties_active=!self.properties_active,
+                            Mode::Events=>self.events_active=!self.events_active,
                         }
                     }else{
                         self.mode=mode;
