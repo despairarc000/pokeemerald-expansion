@@ -1462,13 +1462,14 @@ impl MapStudioApp {
             let at = GridPoint::new(x, y);
             match self.mode {
                 Mode::Terrain => {
-                    if self.bucket_tool { continue; }
-                    if self.erase_tool {
-                        self.world.erase(at);
-                    } else if let Some(stamp)=self.selected_stamp.as_ref() {
-                        self.world.paint_stamp(at,stamp);
-                    } else {
-                        self.world.paint_metatile(at,self.brush_id);
+                    if !self.bucket_tool {
+                        if self.erase_tool {
+                            self.world.erase(at);
+                        } else if let Some(stamp)=self.selected_stamp.as_ref() {
+                            self.world.paint_stamp(at,stamp);
+                        } else {
+                            self.world.paint_metatile(at,self.brush_id);
+                        }
                     }
                 }
                 Mode::Properties => { if self.elevation_tool {
