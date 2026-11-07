@@ -793,12 +793,22 @@ impl MapStudioApp {
                             }else if ev.warp_mode==WarpMode::Direct {
                                 ui.small("Direct travel has no numbered source warp");
                             }
+                            if let Some((destination_id,destination_space))=
+                                self.world.maps.iter().find(|m|m.id==ev.dest_map_id)
+                                    .map(|m|(m.id,m.space_id)) {
+                                if ui.small_button("Open destination map").clicked(){
+                                    self.switch_space(destination_space);
+                                    self.selected_map=Some(destination_id);
+                                    self.fit_world();
+                                }
+                            }
                         }
                     }
                     let before=self.world.clone();
                     let mut changed=false;
                     let mut remove=false;
                     let mut select_pick=None;
+                    let mut create_space_from_warp=None;
                     let mut found=false;
                     if let Some(ev)=self.world.event_mut(map_id,index) {
                         found=true;
@@ -879,6 +889,14 @@ impl MapStudioApp {
                                     ui.checkbox(&mut self.warp_return_link,"Also link a return warp");
                                     ui.small("For direct arrivals, create a separate return warp if needed.");
                                     ui.horizontal_wrapped(|ui|{
+                                        if ui.small_button("New interior here").clicked(){
+                                            create_space_from_warp=Some(SpaceKind::Interior);
+                                        }
+                                        if ui.small_button("New cave floor here").clicked(){
+                                            create_space_from_warp=Some(SpaceKind::Cave);
+                                        }
+                                    });
+                                    ui.horizontal_wrapped(|ui|{
                                         if ui.button("Link existing warp").clicked(){
                                             select_pick=Some(WarpPickMethod::Existing);
                                         }
@@ -914,6 +932,9 @@ impl MapStudioApp {
                     if changed {
                         self.before_gesture=Some(before);
                         self.commit_edit();
+                    }
+                    if let Some(kind)=create_space_from_warp {
+                        self.create_editor_space(kind);
                     }
                     if let Some(method)=select_pick {
                         self.warp_pick=Some(WarpPick{
