@@ -124,6 +124,12 @@ pub struct MapEvent {
     pub hidden_flag: String,
     #[serde(default)]
     pub script: String,
+    #[serde(default = "default_movement_type")]
+    pub movement_type:String,
+    #[serde(default)]
+    pub movement_range_x:u8,
+    #[serde(default)]
+    pub movement_range_y:u8,
     #[serde(default = "default_graphics_id")]
     pub graphics_id: String,
     #[serde(default = "default_trigger_var")]
@@ -132,6 +138,7 @@ pub struct MapEvent {
     pub var_value: u16,
 }
 
+fn default_movement_type() -> String { "MOVEMENT_TYPE_FACE_DOWN".into() }
 fn default_graphics_id() -> String { "OBJ_EVENT_GFX_YOUNGSTER".into() }
 fn default_trigger_var() -> String { "VAR_TEMP_0".into() }
 
@@ -151,6 +158,9 @@ impl MapEvent {
             hidden_item: String::new(),
             hidden_flag: String::new(),
             script: String::new(),
+            movement_type:default_movement_type(),
+            movement_range_x:0,
+            movement_range_y:0,
             graphics_id: default_graphics_id(),
             var: default_trigger_var(),
             var_value: 0,
@@ -1547,5 +1557,21 @@ mod editor_resize_guidance_tests {
         assert!(world.paint_metatile(GridPoint::new(6,6),1));
         assert!(world.preview_resize(id,6,7,ExpandDirection::LowerRight).is_err());
         assert_eq!(world.resize_axis_limit(id,7,ExpandDirection::LowerRight,true),100);
+    }
+}
+
+#[cfg(test)]
+mod movement_compatibility_tests {
+    use super::*;
+    #[test]
+    fn old_event_projects_default_to_source_face_down(){
+        let mut value=serde_json::to_value(MapEvent::new(EventKind::Npc,1,2)).unwrap();
+        let object=value.as_object_mut().unwrap();
+        object.remove("movement_type");
+        object.remove("movement_range_x");
+        object.remove("movement_range_y");
+        let event:MapEvent=serde_json::from_value(value).unwrap();
+        assert_eq!(event.movement_type,"MOVEMENT_TYPE_FACE_DOWN");
+        assert_eq!((event.movement_range_x,event.movement_range_y),(0,0));
     }
 }

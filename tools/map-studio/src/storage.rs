@@ -55,6 +55,40 @@ pub fn decode_package(bytes:&[u8])->Result<World,String> {
     decode(&payload)
 }
 
+/// Export a portable, editable project even when maps have unpainted cells
+/// or unfinished events. A source/ROM export has stricter validation.
+pub fn export_project_zip(path:&Path,world:&World)->Result<(),String>{
+    world.check_integrity()?;
+    if let Some(parent)=path.parent(){
+        fs::create_dir_all(parent).map_err(|e|format!("Create backup directory: {e}"))?;
+    }
+    let project=serde_json::to_vec_pretty(&Project::new(world.clone()))
+        .map_err(|e|format!("Encode project: {e}"))?;
+    if project.len()>MAX_PROJECT_BYTES {
+        return Err("Project exceeds the 20 MiB export safety limit".into());
+    }
+    let temp=PathBuf::from(format!("{}.tmp",path.display()));
+    let result=(||->Result<(),String>{
+        let file=fs::File::create(&temp).map_err(|e|format!("Create temporary ZIP: {e}"))?;
+        let mut zip=zip::ZipWriter::new(file);
+        let options=zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        use io::Write;
+        zip.start_file("mapstudio-project.json",options)
+            .map_err(|e|format!("Create project ZIP entry: {e}"))?;
+        zip.write_all(&project).map_err(|e|format!("Write project ZIP: {e}"))?;
+        let output=zip.finish().map_err(|e|format!("Complete project ZIP: {e}"))?;
+        output.sync_all().map_err(|e|format!("Sync project ZIP: {e}"))?;
+        Ok(())
+    })();
+    if let Err(err)=result{
+        let _=fs::remove_file(&temp);
+        return Err(err);
+    }
+    fs::rename(temp,path).map_err(|e|format!("Commit project ZIP: {e}"))?;
+    Ok(())
+}
+
 pub fn load(path:&Path)->Result<World,String> {
     let metadata=fs::metadata(path).map_err(|e|format!("Read project metadata: {e}"))?;
     if metadata.len()>(MAX_PROJECT_BYTES as u64) {
@@ -170,5 +204,22 @@ mod package_import_tests {
     fn malformed_or_unrelated_zips_are_not_projects() {
         assert!(decode_package(b"PK\x03\x04bad").is_err());
         assert!(decode_package(b"[]").is_err());
+    }
+}
+
+#[cfg(test)]
+mod editable_project_package_tests {
+    use super::*;
+    #[test]
+    fn unfinished_world_can_roundtrip_as_portable_package(){
+        let mut world=World::new();
+        let id=world.add_map("Unfinished",crate::model::GridPoint::new(0,0),7,7).unwrap();
+        let p=std::env::temp_dir().join(format!(
+            "mapstudio-editable-project-{}-{}.zip",std::process::id(),id));
+        export_project_zip(&p,&world).unwrap();
+        let bytes=fs::read(&p).unwrap();
+        assert_eq!(decode_package(&bytes).unwrap(),world);
+        assert!(crate::export::validate(&world).is_err());
+        let _=fs::remove_file(p);
     }
 }

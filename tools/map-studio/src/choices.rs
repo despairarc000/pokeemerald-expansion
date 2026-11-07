@@ -134,3 +134,34 @@ mod npc_preview_tests {
         assert!(super::NPC_ATLAS_PNG.starts_with(&[137,80,78,71]));
     }
 }
+
+/// A deliberately limited set of real constants from
+/// include/constants/event_object_movement.h. No script or trainer
+/// movements are fabricated by the editor.
+pub const NPC_MOVEMENTS:&[(&str,&str)]=&[
+    ("Face down","MOVEMENT_TYPE_FACE_DOWN"),
+    ("Face up","MOVEMENT_TYPE_FACE_UP"),
+    ("Face left","MOVEMENT_TYPE_FACE_LEFT"),
+    ("Face right","MOVEMENT_TYPE_FACE_RIGHT"),
+    ("Look around","MOVEMENT_TYPE_LOOK_AROUND"),
+    ("Wander around","MOVEMENT_TYPE_WANDER_AROUND"),
+    ("Wander up/down","MOVEMENT_TYPE_WANDER_UP_AND_DOWN"),
+    ("Wander left/right","MOVEMENT_TYPE_WANDER_LEFT_AND_RIGHT"),
+    ("Walk up/down","MOVEMENT_TYPE_WALK_UP_AND_DOWN"),
+    ("Walk left/right","MOVEMENT_TYPE_WALK_LEFT_AND_RIGHT"),
+    ("Rotate clockwise","MOVEMENT_TYPE_ROTATE_CLOCKWISE"),
+    ("Rotate counterclockwise","MOVEMENT_TYPE_ROTATE_COUNTERCLOCKWISE"),
+];
+pub fn valid_npc_movement(value:&str)->bool {
+    NPC_MOVEMENTS.iter().any(|(_,id)|*id==value)
+}
+#[cfg(test)]
+mod movement_choice_tests {
+    use super::*;
+    #[test]
+    fn options_are_engine_constants_and_include_backward_compatible_default(){
+        assert!(valid_npc_movement("MOVEMENT_TYPE_FACE_DOWN"));
+        assert!(valid_npc_movement("MOVEMENT_TYPE_WANDER_AROUND"));
+        assert!(!valid_npc_movement("MOVEMENT_TYPE_MAGIC_TRAINER"));
+    }
+}

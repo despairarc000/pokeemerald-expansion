@@ -51,8 +51,14 @@ pub fn validate(world:&World) -> Result<(), String> {
                        || chars.clone().any(|ch| ch=='"' || ch as u32==36 || ch as u32==92) {
                         return Err(format!("{} has invalid dialogue",m.name));
                     }
-                    if e.kind==EventKind::Npc && !crate::choices::is_verified_sprite_id(&e.graphics_id) {
-                        return Err(format!("{} has an invalid graphics ID",m.name));
+                    if e.kind==EventKind::Npc {
+                        if !crate::choices::is_verified_sprite_id(&e.graphics_id) {
+                            return Err(format!("{} has an invalid graphics ID",m.name));
+                        }
+                        if !crate::choices::valid_npc_movement(&e.movement_type)
+                            || e.movement_range_x>15 || e.movement_range_y>15 {
+                            return Err(format!("{} has unsupported NPC movement settings",m.name));
+                        }
                     }
                 }
                 EventKind::Warp => {
@@ -166,8 +172,9 @@ pub fn map_json(map:&MapFrame, world:&World) -> Value {
             EventKind::Npc => objects.push(json!({
                 "graphics_id":e.graphics_id,
                 "x":e.x,"y":e.y,"elevation":e.elevation,
-                "movement_type":"MOVEMENT_TYPE_FACE_DOWN",
-                "movement_range_x":0,"movement_range_y":0,
+                "movement_type":e.movement_type,
+                "movement_range_x":e.movement_range_x,
+                "movement_range_y":e.movement_range_y,
                 "trainer_type":"TRAINER_TYPE_NONE",
                 "trainer_sight_or_berry_tree_id":"0",
                 "script":format!("{}_EventScript_Npc{}",map_name(map),number),
@@ -434,5 +441,28 @@ mod genuine_border_tests {
         let json=layout_json(m);
         assert_eq!(json["border"],serde_json::json!([0x170,0x170,0x170,0x170]));
         assert_eq!(json["cells"][0][0],serde_json::json!(0x3170));
+    }
+}
+
+#[cfg(test)]
+mod movement_export_tests{
+    use super::*;
+    use crate::model::{GridPoint,EventKind};
+    #[test]
+    fn source_movement_ranges_are_exported_not_hardcoded(){
+        let mut world=World::new();
+        let id=world.add_map("Walk",GridPoint::new(0,0),7,7).unwrap();
+        let idx=world.add_event(GridPoint::new(2,3),EventKind::Npc).unwrap();
+        let e=world.event_mut(idx.0,idx.1).unwrap();
+        e.movement_type="MOVEMENT_TYPE_WANDER_AROUND".into();
+        e.movement_range_x=2;
+        e.movement_range_y=3;
+        e.dialogue="Hello".into();
+        let map=world.maps.iter().find(|m|m.id==id).unwrap();
+        let out=map_json(map,&world);
+        assert_eq!(out["object_events"][0]["movement_type"],
+            "MOVEMENT_TYPE_WANDER_AROUND");
+        assert_eq!(out["object_events"][0]["movement_range_x"],2);
+        assert_eq!(out["object_events"][0]["movement_range_y"],3);
     }
 }
