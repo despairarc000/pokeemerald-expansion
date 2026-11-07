@@ -138,6 +138,49 @@ pub fn friendly_behavior(id:u16)->Option<&'static str> {
     }
 }
 
+
+/// Keep metatiles in native ID order, eight columns per source sheet. A
+/// rectangle represents a real multi-metatile paint stamp, not a new tileset.
+pub const SHEET_COLUMNS:usize=8;
+pub const MAX_STAMP_SIDE:usize=12;
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct MetatileStamp {
+    pub pair_key:String,
+    pub width:usize,
+    pub height:usize,
+    pub cells:Vec<Option<u16>>,
+}
+impl MetatileStamp {
+    pub fn is_single(&self)->bool {self.width==1 && self.height==1}
+}
+
+/// Source sheets keep vacant metatile slots in place. Selecting across a gap
+/// skips that cell when painting rather than closing the gap or inventing art.
+/// Reject cross-primary/secondary selections and unusually large gestures.
+pub fn stamp_from_sheet(pair:&TilePair,base:u16,from:u16,to:u16)->Option<MetatileStamp>{
+    if base!=0 && base!=512 {return None;}
+    let last=base+512;
+    if from<base || to<base || from>=last || to>=last {return None;}
+    let a=(from-base) as usize;
+    let b=(to-base) as usize;
+    let (left,right)=((a%SHEET_COLUMNS).min(b%SHEET_COLUMNS),
+                      (a%SHEET_COLUMNS).max(b%SHEET_COLUMNS));
+    let (top,bottom)=((a/SHEET_COLUMNS).min(b/SHEET_COLUMNS),
+                      (a/SHEET_COLUMNS).max(b/SHEET_COLUMNS));
+    let width=right-left+1;
+    let height=bottom-top+1;
+    if width>MAX_STAMP_SIDE || height>MAX_STAMP_SIDE {return None;}
+    let mut cells=Vec::with_capacity(width*height);
+    for y in top..=bottom {
+        for x in left..=right {
+            let tile=base+(y*SHEET_COLUMNS+x) as u16;
+            cells.push(valid_in(pair,tile).then_some(tile));
+        }
+    }
+    if cells.iter().all(Option::is_none){return None;}
+    Some(MetatileStamp{pair_key:pair.key.to_string(),width,height,cells})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +222,28 @@ mod all_tileset_catalog_tests {
                 assert!(behavior_name_in(chosen,id).is_some());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sheet_stamp_tests {
+    use super::*;
+    #[test]
+    fn source_grid_selection_keeps_native_adjacency() {
+        let p=pair(DEFAULT_PAIR).unwrap();
+        let stamp=stamp_from_sheet(p,0,16,25).unwrap();
+        assert_eq!((stamp.width,stamp.height),(2,2));
+        assert_eq!(stamp.cells.len(),4);
+        assert_eq!(stamp.cells[0],Some(16));
+        assert_eq!(stamp.cells[1],Some(17));
+        assert_eq!(stamp.cells[2],Some(24));
+        assert_eq!(stamp.cells[3],Some(25));
+    }
+    #[test]
+    fn selection_never_spills_between_source_sheets() {
+        let p=pair(DEFAULT_PAIR).unwrap();
+        assert!(stamp_from_sheet(p,0,511,512).is_none());
+        assert!(stamp_from_sheet(p,512,512,512).is_some());
+        assert!(stamp_from_sheet(p,0,0,511).is_none());
     }
 }
