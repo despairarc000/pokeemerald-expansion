@@ -114,3 +114,32 @@ Direct arrivals use Emerald's `warp MAP, x, y` script macro through an immediate
 **Map visuals** now use an asset catalog generated directly from the checked-in `data/layouts/layouts.json` primary/secondary pairings, source tileset `metatiles.bin`, actual indexed `tiles.png`, `metatile_attributes.bin`, and JASC color palettes. Each pair gets an atlas; invalid/incomplete source metatile subtiles are excluded via a verified per-pair mask rather than rendered as fake tiles. A palette browse panel groups **Towns, Houses, Interiors, Caves, Outdoor & Special**, with filters for game-defined water/ice/doors/grass/paths. It shows image thumbnails rather than an ID search box and adapts its tile grid to available phone width. A source-backed tileset can be chosen per map; changing a painted map requires confirming re-interpretation of existing tile indices. Export writes the *actual* tileset symbols from the layout pair and raw border metatile IDs; collision/elevation bits remain in the map cells. The initial supported NPC choices also have first-frame previews constructed from actual source graphics and NPC palettes.
 
 **Limitations:** This provides all complete pairs currently resolved from the repository's source layout declarations, not every unrelated artwork file or advanced engine asset. A detailed audit manifest records incomplete/omitted pairs. Some tilesets lack source graphics or palettes and are intentionally excluded. Character previews currently cover the curated NPC choices, not the whole Pokémon sprite library. Composite metatile priority layers remain an editor approximation rather than guaranteed hardware-accurate. Real-device GPU performance, touch behavior, gameplay warps, full GBA ROM build, live GitHub sync, and user-driven imports still require validation or implementation.
+
+## Metatile Sheet Preview (experimental branch)
+
+The terrain palette is now a **continuous native-order metatile sheet** with eight
+columns, just as the source editor displays it: primary source art and secondary
+source art have their own sections, and invalid IDs remain in their original
+positions instead of shifting nearby artwork into a compact sorted gallery.
+There is no artificial 32-tiles-per-page limit.
+
+- Tap a single metatile to paint it.
+- Use **Select group** and drag across a rectangle of the source sheet to
+  paint a multi-metatile block, such as a roof or tree, with original adjacency.
+  Group mode is deliberate so a normal phone swipe can still scroll the sheet.
+- Choose **Both**, **Primary**, or **Secondary** to browse the matching source.
+  The active map's primary/secondary pair is always authoritative.
+- Behavior and source-label filters now **dim non-matching cells in place**,
+  rather than regrouping the sheet or breaking up buildings.
+  Buildings*, Trees*, and Rocks* use only metatiles with matching names
+  declared in `include/constants/metatile_labels.h`; unnamed artwork remains
+  browseable and is **not** claimed to have been recognized automatically.
+- Selected multi-cell stamps are clipped to the map under the initial
+  touch, without leaking into a different neighboring map or tileset.
+- Atlas building now respects indexed palette-zero transparency on **both**
+  metatile layers. The flattened preview still does not simulate all GBA
+  BG1/BG2/BG3 sprite priority or animated tiles; emulator parity is pending.
+
+**Sheet Preview** uses `dev.despairarc.mapstudio.sheetpreview`, separate
+from the existing Spaces Preview package and local autosaves. It is a
+development test build, not a verified user-device release.
