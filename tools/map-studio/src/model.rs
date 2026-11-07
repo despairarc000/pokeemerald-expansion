@@ -158,8 +158,41 @@ impl MapEvent {
     }
 }
 
+/// Editor-only grouping; Emerald map coordinates always remain map-local.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpaceKind { Surface, Interior, Cave, Other }
+impl SpaceKind {
+    pub const ALL:[Self;4]=[Self::Surface,Self::Interior,Self::Cave,Self::Other];
+    pub fn label(self)->&'static str {
+        match self {Self::Surface=>"Surface",Self::Interior=>"Interior",
+            Self::Cave=>"Cave floor",Self::Other=>"Other"}
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorSpace {
+    pub id:u32,
+    pub name:String,
+    pub kind:SpaceKind,
+    /// A visual association, not an Emerald game connection.
+    pub parent_map_id:Option<u32>,
+    pub anchor:GridPoint,
+}
+fn default_spaces()->Vec<EditorSpace>{
+    vec![EditorSpace{id:0,name:"Surface".into(),kind:SpaceKind::Surface,
+        parent_map_id:None,anchor:GridPoint::new(0,0)}]
+}
+fn default_next_space_id()->u32{1}
+fn default_tileset_primary()->String{"general".into()}
+fn default_tileset_secondary()->String{"petalburg".into()}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapFrame {
+    #[serde(default)]
+    pub space_id:u32,
+    #[serde(default="default_tileset_primary")]
+    pub primary_tileset:String,
+    #[serde(default="default_tileset_secondary")]
+    pub secondary_tileset:String,
     pub id: u32,
     pub name: String,
     pub origin: GridPoint,
@@ -209,6 +242,12 @@ pub struct Connection {
 pub struct World {
     pub maps: Vec<MapFrame>,
     next_id: u32,
+    #[serde(default="default_spaces")]
+    pub spaces:Vec<EditorSpace>,
+    #[serde(default)]
+    pub active_space_id:u32,
+    #[serde(default="default_next_space_id")]
+    next_space_id:u32,
 }
 
 impl World {
@@ -216,6 +255,25 @@ impl World {
     /// Editor projects permit empty cells; game export applies stricter checks.
     pub fn check_integrity(&self) -> Result<(),String> {
         if self.maps.len()>256 {return Err("Project has too many map frames".into());}
+        if self.spaces.is_empty() || self.spaces[0].id!=0 {
+            return Err("Project is missing the Surface editing space".into());
+        }
+        let mut space_ids=std::collections::HashSet::new();
+        let mut largest_space_id=0;
+        for sp in &self.spaces {
+            if !space_ids.insert(sp.id) || sp.name.trim().is_empty() || sp.name.len()>90 {
+                return Err("Invalid or duplicate editing space".into());
+            }
+            largest_space_id=largest_space_id.max(sp.id);
+            if let Some(parent)=sp.parent_map_id {
+                let map=self.maps.iter().find(|m|m.id==parent)
+                    .ok_or("A Space refers to a missing parent map")?;
+                if map.space_id==sp.id {return Err("A Space cannot parent itself".into());}
+            }
+        }
+        if self.next_space_id<=largest_space_id || !space_ids.contains(&self.active_space_id) {
+            return Err("Editing Space selector is inconsistent".into());
+        }
         let mut ids=std::collections::HashSet::new();
         let mut max_id=0;
         for map in &self.maps {
@@ -223,6 +281,9 @@ impl World {
                 return Err("Project contains duplicate or zero map IDs".into());
             }
             max_id=max_id.max(map.id);
+            if !space_ids.contains(&map.space_id) {
+                return Err(format!("Map {} belongs to a missing Space",map.name));
+            }
             let count=(map.width as u64)*(map.height as u64);
             if map.width==0 || map.height==0 || count>100_000
                 || count!=(map.cells.len() as u64) {
@@ -251,6 +312,7 @@ impl World {
             let ar=al+i64::from(a.width);
             let ab=at+i64::from(a.height);
             for b in self.maps.iter().skip(i+1) {
+                if a.space_id!=b.space_id {continue;}
                 let bl=i64::from(b.origin.x);
                 let bt=i64::from(b.origin.y);
                 let br=bl+i64::from(b.width);
@@ -263,7 +325,48 @@ impl World {
         Ok(())
     }
 
-    pub fn new() -> Self { Self { maps: Vec::new(), next_id: 1 } }
+    pub fn new() -> Self {
+        Self { maps:Vec::new(),next_id:1,spaces:default_spaces(),
+            active_space_id:0,next_space_id:1 }
+    }
+
+    pub fn active_space(&self)->&EditorSpace{
+        self.spaces.iter().find(|s|s.id==self.active_space_id)
+            .expect("validated active Space")
+    }
+    pub fn set_active_space(&mut self,id:u32)->Result<(),String>{
+        if !self.spaces.iter().any(|s|s.id==id){
+            return Err("Editing Space not found".into());
+        }
+        self.active_space_id=id;
+        Ok(())
+    }
+    pub fn create_space(&mut self,kind:SpaceKind,
+        parent_map_id:Option<u32>,anchor:GridPoint)->Result<u32,String>{
+        if self.spaces.len()>=128{return Err("Too many editing Spaces".into());}
+        if let Some(id)=parent_map_id {
+            if !self.maps.iter().any(|m|m.id==id) {
+                return Err("Parent map no longer exists".into());
+            }
+        }
+        let id=self.next_space_id;
+        self.next_space_id=self.next_space_id.checked_add(1)
+            .ok_or("Too many editing spaces")?;
+        self.spaces.push(EditorSpace{
+            id,
+            name:format!("{} {id}",kind.label()),
+            kind,parent_map_id,anchor,
+        });
+        self.active_space_id=id;
+        Ok(id)
+    }
+    pub fn active_maps(&self)->impl Iterator<Item=&MapFrame> {
+        self.maps.iter().filter(|m|m.space_id==self.active_space_id)
+    }
+    pub fn space_for_map(&self,id:u32)->Option<u32>{
+        self.maps.iter().find(|m|m.id==id).map(|m|m.space_id)
+    }
+
 
     pub fn sample() -> Self {
         let mut w = Self::new();
@@ -289,8 +392,14 @@ impl World {
         }
         let id = self.next_id;
         self.next_id = self.next_id.checked_add(1).ok_or("Too many maps")?;
+        let (primary_tileset,secondary_tileset)=match self.active_space().kind {
+            SpaceKind::Interior=>("building".into(),"generic_building".into()),
+            SpaceKind::Cave=>("general".into(),"cave".into()),
+            _=>("general".into(),"petalburg".into()),
+        };
         self.maps.push(MapFrame {
             id, name: name.into(), origin, width, height,
+            space_id:self.active_space_id,primary_tileset,secondary_tileset,
             cells: vec![None; (width as usize) * (height as usize)],
             markers: Vec::new(),
             events: Vec::new(),
@@ -299,11 +408,11 @@ impl World {
     }
 
     pub fn map_at(&self, p: GridPoint) -> Option<&MapFrame> {
-        self.maps.iter().find(|m| m.contains(p))
+        self.maps.iter().find(|m| m.space_id==self.active_space_id && m.contains(p))
     }
 
     pub fn paint(&mut self, p: GridPoint, terrain: TileKind) -> bool {
-        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if let Some(i) = map.index(x, y) {
@@ -316,7 +425,7 @@ impl World {
 
     pub fn set_collision(&mut self, p: GridPoint, value: u8) -> bool {
         if value > 3 { return false; }
-        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if let Some(i) = map.index(x, y) {
@@ -549,7 +658,7 @@ impl World {
     }
 
     pub fn add_marker(&mut self, p: GridPoint) -> bool {
-        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if !map.markers.iter().any(|e| e.x == x && e.y == y) {
@@ -563,7 +672,7 @@ impl World {
 
     pub fn paint_metatile(&mut self, p: GridPoint, id: u16) -> bool {
         if id >= 1024 { return false; }
-        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if let Some(i) = map.index(x, y) {
@@ -583,7 +692,7 @@ impl World {
     }
 
     pub fn erase(&mut self, p: GridPoint) -> bool {
-        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if let Some(i) = map.index(x, y) {
@@ -595,7 +704,7 @@ impl World {
 
     pub fn set_elevation(&mut self, p: GridPoint, value: u8) -> bool {
         if value > 15 { return false; }
-        if let Some(map) = self.maps.iter_mut().find(|m| m.contains(p)) {
+        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
             let x = (p.x - map.origin.x) as u32;
             let y = (p.y - map.origin.y) as u32;
             if let Some(i) = map.index(x, y) {
@@ -620,6 +729,9 @@ impl World {
         )) {
             return Err("Map is a warp destination; remove incoming warps first".into());
         }
+        if self.spaces.iter().any(|s|s.parent_map_id==Some(id)){
+            return Err("A nested editing Space is attached to this map".into());
+        }
         self.maps.retain(|m|m.id!=id);
         Ok(())
     }
@@ -634,6 +746,7 @@ impl World {
         let (x,y)=(i64::from(origin.x),i64::from(origin.y));
         let (right,bottom)=(x+i64::from(width),y+i64::from(height));
         if self.maps.iter().any(|other| {
+            other.space_id==self.active_space_id &&
             x<other.right() && right>i64::from(other.origin.x) &&
             y<other.bottom() && bottom>i64::from(other.origin.y)
         }) {return Err("This map would overlap another map".into());}
@@ -681,7 +794,18 @@ impl World {
         let Some(index) = self.maps.iter().position(|m| m.id == id) else { return false; };
         let (width, height) = (self.maps[index].width, self.maps[index].height);
         if !self.fits_rect(id, origin, width, height) { return false; }
+        let old=self.maps[index].origin;
         self.maps[index].origin = origin;
+        let dx=i64::from(origin.x)-i64::from(old.x);
+        let dy=i64::from(origin.y)-i64::from(old.y);
+        for space in &mut self.spaces {
+            if space.parent_map_id==Some(id){
+                if let (Ok(x),Ok(y))=(i32::try_from(i64::from(space.anchor.x)+dx),
+                    i32::try_from(i64::from(space.anchor.y)+dy)){
+                    space.anchor=GridPoint::new(x,y);
+                }
+            }
+        }
         true
     }
 
@@ -753,7 +877,10 @@ impl World {
         if width == 0 || height == 0 || (width as u64) * (height as u64) > 100_000 { return false; }
         let (l, t) = (i64::from(origin.x), i64::from(origin.y));
         let (r, b) = (l + i64::from(width), t + i64::from(height));
-        self.maps.iter().filter(|m| m.id != id).all(|m|
+        let space_id=match self.maps.iter().find(|m|m.id==id){
+            Some(m)=>m.space_id,None=>return false
+        };
+        self.maps.iter().filter(|m| m.id != id && m.space_id==space_id).all(|m|
             l >= m.right() || r <= i64::from(m.origin.x)
                 || t >= m.bottom() || b <= i64::from(m.origin.y))
     }
@@ -762,7 +889,7 @@ impl World {
         let mut edges = Vec::new();
         for a in &self.maps {
             for b in &self.maps {
-                if a.id == b.id { continue; }
+                if a.id == b.id || a.space_id!=b.space_id { continue; }
                 let vspan = (a.bottom().min(b.bottom())
                     - i64::from(a.origin.y).max(i64::from(b.origin.y))).max(0) as u32;
                 let hspan = (a.right().min(b.right())
@@ -1140,5 +1267,50 @@ mod warp_conversion_tests {
         assert!(!w.remove_event(target.0,target.1));
         assert!(w.remove_event(source.0,source.1));
         assert!(w.remove_event(target.0,target.1));
+    }
+}
+
+#[cfg(test)]
+mod editing_space_tests {
+    use super::*;
+    #[test]
+    fn maps_in_independent_spaces_overlap_without_game_connections(){
+        let mut world=World::new();
+        let outdoors=world.add_map("Town",GridPoint::new(0,0),10,10).unwrap();
+        let interior=world.create_space(SpaceKind::Interior,Some(outdoors),
+            GridPoint::new(4,5)).unwrap();
+        let inside=world.add_map("House",GridPoint::new(0,0),10,10).unwrap();
+        assert_ne!(interior,0);
+        assert!(world.connections().is_empty());
+        world.check_integrity().unwrap();
+        assert_eq!(world.map_at(GridPoint::new(1,1)).unwrap().id,inside);
+        world.set_active_space(0).unwrap();
+        assert_eq!(world.map_at(GridPoint::new(1,1)).unwrap().id,outdoors);
+        assert_eq!(world.space_for_map(inside),Some(interior));
+    }
+    #[test]
+    fn moving_parent_preserves_nested_space_anchor(){
+        let mut world=World::new();
+        let parent=world.add_map("A",GridPoint::new(0,0),5,5).unwrap();
+        world.create_space(SpaceKind::Cave,Some(parent),GridPoint::new(2,3)).unwrap();
+        world.set_active_space(0).unwrap();
+        assert!(world.move_frame(parent,GridPoint::new(10,20)));
+        assert_eq!(world.spaces[1].anchor,GridPoint::new(12,23));
+        assert!(world.remove_frame(parent).is_err());
+    }
+    #[test]
+    fn old_world_json_migrates_to_single_surface_space(){
+        let mut w=World::sample();
+        let mut j=serde_json::to_value(&w).unwrap();
+        let obj=j.as_object_mut().unwrap();
+        obj.remove("spaces");obj.remove("active_space_id");obj.remove("next_space_id");
+        for map in obj.get_mut("maps").unwrap().as_array_mut().unwrap(){
+            let data=map.as_object_mut().unwrap();
+            data.remove("space_id");data.remove("primary_tileset");data.remove("secondary_tileset");
+        }
+        let restored:World=serde_json::from_value(j).unwrap();
+        restored.check_integrity().unwrap();
+        assert_eq!(restored.spaces.len(),1);
+        assert!(restored.maps.iter().all(|map|map.space_id==0));
     }
 }
