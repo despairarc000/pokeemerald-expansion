@@ -34,6 +34,22 @@ def lookup(symbol,files):
     return options[0] if len(options)==1 else None
 pairs=sorted({(e["primary_tileset"],e["secondary_tileset"])
              for e in source["layouts"]})
+# Only labels actually declared by the source count as named object hints.
+# A name may describe one metatile, never a complete building or prefab.
+labels_by_source={}
+active_symbol=None
+for line in (root/"include/constants/metatile_labels.h").read_text().splitlines():
+    section=re.match(r"\s*//\s*(gTileset_[A-Za-z0-9_]+)",line)
+    if section:
+        active_symbol=section.group(1)
+        labels_by_source.setdefault(active_symbol,{})
+        continue
+    define=re.match(r"\s*#define\s+(METATILE_[A-Za-z0-9_]+)\s+(0x[0-9A-Fa-f]+|[0-9]+)\b",line)
+    if define and active_symbol:
+        name,value=define.groups()
+        if name.startswith("METATILE_"+active_symbol.removeprefix("gTileset_")+"_"):
+            labels_by_source[active_symbol][int(value,0)]=name
+
 def read_palette(path):
     rows=path.read_text("ascii").splitlines()
     if rows[:3]!=["JASC-PAL","0100","16"]:
@@ -169,6 +185,15 @@ sourcefile=out.parent/"tileset_catalog.rs"
 rows=[]
 for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in catalog:
     label=local.name.replace("_"," ").title()
+    labels=[]
+    for mid,label in labels_by_source.get(main_sym,{}).items():
+        if 0<=mid<512 and mask[mid//8]&(1<<(mid%8)):
+            labels.append((mid,label))
+    for mid,label in labels_by_source.get(sec_sym,{}).items():
+        if 512<=mid<1024 and mask[mid//8]&(1<<(mid%8)):
+            labels.append((mid,label))
+    labels.sort()
+    label_literals=",".join("("+str(mid)+","+literal(label)+")" for mid,label in labels)
     rows.append(
         "TilePair {key:"+literal(key)+", label:"+literal(label)+
         ",category:"+literal(category)+
@@ -178,6 +203,7 @@ for key,main,local,img,first,second,category,main_sym,sec_sym,mask,usable in cat
         ",secondary_count:"+str(second)+
         ",valid_mask:&["+(",".join(str(b) for b in mask))+"]"+
         ",atlas:include_bytes!("+literal(img)+")"+
+        ",labels:&["+label_literals+"]"+
         ",attr_primary:include_bytes!("+literal(main/"metatile_attributes.bin")+")"+
         ",attr_secondary:include_bytes!("+literal(local/"metatile_attributes.bin")+")},")
 sourcefile.write_text("pub static TILESET_PAIRS:&[TilePair]=&[\n"+"\n".join(rows)+"\n];\n")
