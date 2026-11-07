@@ -57,8 +57,20 @@ impl MapStudioApp {
         let dimensions = [image.width() as usize, image.height() as usize];
         let texture = ctx.load_texture("Emerald metatiles",egui::ColorImage::from_rgba_unmultiplied(
             dimensions,image.as_raw()),egui::TextureOptions::NEAREST);
-        let world = save_path.as_deref().and_then(|p|storage::load(p).ok())
-            .unwrap_or_else(World::sample);
+        // Never silently overwrite an incompatible/corrupt project with demo maps.
+        let (world, load_error)=match save_path.as_deref() {
+            Some(path) if path.exists() => match storage::load(path) {
+                Ok(world)=>(world,None),
+                Err(err)=>(World::sample(),Some(err)),
+            },
+            _=>(World::sample(),None),
+        };
+        let message=if let Some(err)=&load_error {
+            format!("Saved project cannot be loaded; autosave disabled: {err}")
+        } else {
+            "Paint real Emerald tiles. Edits autosave locally.".to_string()
+        };
+        let save_path=if load_error.is_some(){None}else{save_path};
         Self {
             world,
             mode: Mode::Terrain,
@@ -90,7 +102,7 @@ impl MapStudioApp {
             last_painted: None,
             multitouch_in_progress: false,
             selected_map: None,
-            message: "Paint real Emerald tiles. Edits autosave locally.".into(),
+            message,
         }
     }
 
