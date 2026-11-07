@@ -39,8 +39,6 @@ pub struct MapStudioApp {
     size_panel_open: bool,
     zoom: f32,
     offset: Vec2,
-    creating: Option<(GridPoint, GridPoint)>,
-    hold_to_create: Option<(f64, GridPoint, Pos2)>,
     last_painted: Option<GridPoint>,
     multitouch_in_progress: bool,
     selected_map: Option<u32>,
@@ -110,8 +108,6 @@ impl MapStudioApp {
             size_panel_open: false,
             zoom: 14.0,
             offset: vec2(28.0, 52.0),
-            creating: None,
-            hold_to_create: None,
             last_painted: None,
             multitouch_in_progress: false,
             selected_map: None,
@@ -607,128 +603,145 @@ impl MapStudioApp {
     }
 
     fn handle_canvas_input(&mut self, ui: &egui::Ui, rect: Rect, response: &egui::Response) {
-        let (multi, pressed, down, released, pointer, time) = ui.input(|i| (
-            i.multi_touch(),
-            i.pointer.button_pressed(egui::PointerButton::Primary),
-            i.pointer.button_down(egui::PointerButton::Primary),
-            i.pointer.button_released(egui::PointerButton::Primary),
-            i.pointer.interact_pos(),
-            i.time,
+        let (multi,pressed,down,released,pointer)=ui.input(|input|(
+            input.multi_touch(),
+            input.pointer.button_pressed(egui::PointerButton::Primary),
+            input.pointer.button_down(egui::PointerButton::Primary),
+            input.pointer.button_released(egui::PointerButton::Primary),
+            input.pointer.interact_pos(),
         ));
 
-        if let Some(touch) = multi.filter(|t| rect.contains(t.center_pos)) {
-            self.multitouch_in_progress = true;
-            self.hold_to_create = None;
-            self.creating = None;
-            self.last_painted = None;
+        if let Some(touch)=multi.filter(|touch|rect.contains(touch.center_pos)){
+            self.multitouch_in_progress=true;
+            self.blank_pan=false;
+            self.last_painted=None;
             self.commit_edit();
-            self.change_zoom(rect, touch.center_pos, touch.zoom_delta, touch.translation_delta);
+            self.change_zoom(rect,touch.center_pos,touch.zoom_delta,touch.translation_delta);
             ui.ctx().request_repaint();
             return;
         }
-
-        // A gesture that had 2 fingers must not accidentally paint with the last lifted finger.
+        // Never paint on the way out of a two-finger gesture.
         if self.multitouch_in_progress {
-            if !down { self.multitouch_in_progress = false; }
+            if !down {self.multitouch_in_progress=false;}
             return;
         }
-
         if self.pan_tool {
             if response.dragged() {
-                self.offset += response.drag_delta();
+                self.offset+=response.drag_delta();
                 ui.ctx().request_repaint();
             }
+            if released {self.last_painted=None;self.blank_pan=false;self.commit_edit();}
             return;
         }
 
-        if let Some(screen) = pointer {
-            let p = self.grid_at(rect, screen);
+        if let Some(screen)=pointer {
+            let p=self.grid_at(rect,screen);
             if pressed && rect.contains(screen) {
+                self.last_painted=None;
+                self.blank_pan=false;
+
+                if self.frame_tool {
+                    let origin=self.expand_direction.origin_at(p,self.map_width,self.map_height);
+                    match origin.and_then(|origin|{
+                        let next=self.world.maps.iter().map(|m|m.id).max().unwrap_or(0)+1;
+                        self.begin_edit();
+                        self.world.add_map(format!("Map {next}"),origin,self.map_width,self.map_height)
+                            .map_err(|e|e.to_owned())
+                    }) {
+                        Ok(id)=>{
+                            self.selected_map=Some(id);
+                            self.frame_tool=false;
+                            self.size_panel_open=false;
+                            self.message=format!("Created {}×{} map toward {}",
+                                self.map_width,self.map_height,self.expand_direction.label());
+                        }
+                        Err(err)=>self.message=err,
+                    }
+                    self.commit_edit();
+                    return;
+                }
+
                 if let Some(map)=self.world.map_at(p) {
                     self.selected_map=Some(map.id);
-                }
-                self.last_painted = None;
-                self.begin_edit();
-                if self.move_tool {
-                    if let Some(m)=self.world.map_at(p) {
-                        let id=m.id;
-                        let origin=m.origin;
-                        let w=m.width;
-                        let h=m.height;
-                        self.selected_map=Some(id);
-                        let near_corner=p.x>=origin.x+(w as i32)-2 && p.y>=origin.y+(h as i32)-2;
-                        if near_corner { self.resizing=Some((id,p,w,h)); }
-                        else { self.moving=Some((id,p,origin)); }
+                    self.begin_edit();
+                    if self.move_tool {
+                        let id=map.id;
+                        let origin=map.origin;
+                        let (width,height)=(map.width,map.height);
+                        if p.x>=origin.x+(width as i32)-2 && p.y>=origin.y+(height as i32)-2 {
+                            self.resizing=Some((id,p,width,height));
+                        } else {
+                            self.moving=Some((id,p,origin));
+                        }
                     }
-                } else if self.frame_tool {
-                    self.creating = Some((p, p));
-                } else if self.mode == Mode::Terrain && self.world.map_at(p).is_none() {
-                    self.hold_to_create = Some((time, p, screen));
+                } else {
+                    // Drag on any empty canvas = pan, regardless of selected mode.
+                    // New frames require explicit + Map, so gestures never fight.
+                    self.blank_pan=true;
+                    self.event_editor_open=false;
                 }
             }
 
-            if down {
-                if let Some((id,start,origin))=self.moving {
-                    self.world.move_frame(id,GridPoint::new(origin.x+p.x-start.x,origin.y+p.y-start.y));
-                } else if let Some((id,start,w,h))=self.resizing {
-                    let nw=(i64::from(w)+i64::from(p.x)-i64::from(start.x)).clamp(1,1000) as u32;
-                    let nh=(i64::from(h)+i64::from(p.y)-i64::from(start.y)).clamp(1,1000) as u32;
-                    self.world.resize_frame(id,nw,nh);
-                }
-                if let Some((start_time, start, start_screen)) = self.hold_to_create {
-                    if (screen - start_screen).length() > 10.0 && self.creating.is_none() {
-                        self.hold_to_create = None;
-                    } else if time - start_time >= 0.48 {
-                        self.creating = Some((start, p));
-                        self.hold_to_create = None;
-                    } else {
-                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(30));
-                    }
-                }
-
-                if let Some((start, _)) = self.creating {
-                    self.creating = Some((start, p));
+            if self.blank_pan {
+                if down && response.dragged() {
+                    self.offset+=response.drag_delta();
                     ui.ctx().request_repaint();
-                } else if !self.move_tool && rect.contains(screen) && response.is_pointer_button_down_on()
-                    && self.hold_to_create.is_none()
-                    && !self.frame_tool
-                {
-                    if self.mode == Mode::Events {
-                        if pressed {
-                            self.selected_event=self.world.add_event(p,self.event_brush);
-                            if self.selected_event.is_some() {
-                                self.message="Event selected. Edit its properties below.".into();
+                }
+            } else if down && rect.contains(screen) {
+                if let Some((id,start,origin))=self.moving {
+                    if self.world.move_frame(id,GridPoint::new(
+                        origin.x+p.x-start.x,origin.y+p.y-start.y
+                    )) {
+                        ui.ctx().request_repaint();
+                    }
+                } else if let Some((id,start,width,height))=self.resizing {
+                    let nw=(i64::from(width)+i64::from(p.x)-i64::from(start.x))
+                        .clamp(1,1000) as u32;
+                    let nh=(i64::from(height)+i64::from(p.y)-i64::from(start.y))
+                        .clamp(1,1000) as u32;
+                    self.world.resize_frame(id,nw,nh);
+                    ui.ctx().request_repaint();
+                } else if response.is_pointer_button_down_on() {
+                    match self.mode {
+                        Mode::Events => {
+                            if pressed {
+                                self.selected_event=self.world.add_event(p,self.event_brush);
+                                self.event_editor_open=response.double_clicked();
+                                if let Some((map_id,_))=self.selected_event{
+                                    self.selected_map=Some(map_id);
+                                    self.message="Event selected · choose type or double-tap to edit".into();
+                                }
                             }
                         }
-                    } else {
-                        self.paint_line(self.last_painted.unwrap_or(p), p);
-                        self.last_painted = Some(p);
-                        ui.ctx().request_repaint();
+                        Mode::Properties => {
+                            if self.world.map_at(p).and_then(|map|{
+                                let x=(p.x-map.origin.x) as u32;
+                                let y=(p.y-map.origin.y) as u32;
+                                map.cell(x,y)
+                            }).is_none(){
+                                if pressed {
+                                    self.message="Paint a metatile before editing collision or elevation".into();
+                                }
+                            } else {
+                                self.paint_line(self.last_painted.unwrap_or(p),p);
+                                self.last_painted=Some(p);
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                        Mode::Terrain => {
+                            self.paint_line(self.last_painted.unwrap_or(p),p);
+                            self.last_painted=Some(p);
+                            ui.ctx().request_repaint();
+                        }
                     }
                 }
             }
         }
-
-        if released || (!down && self.creating.is_some()) {
-            if let Some((a, b)) = self.creating.take() {
-                let min_x = a.x.min(b.x);
-                let min_y = a.y.min(b.y);
-                let width = (i64::from(a.x.max(b.x)) - i64::from(min_x) + 1) as u32;
-                let height = (i64::from(a.y.max(b.y)) - i64::from(min_y) + 1) as u32;
-                let name = format!("Map {}", self.world.maps.len() + 1);
-                match self.world.add_map(name, GridPoint::new(min_x,min_y), width, height) {
-                    Ok(id) => {
-                        self.selected_map = Some(id);
-                        self.message = format!("Created {width}×{height} map.");
-                    }
-                    Err(reason) => self.message = reason.into(),
-                }
-                self.frame_tool = false;
-            }
-            self.hold_to_create = None;
-            self.last_painted = None;
+        if released || !down {
+            self.blank_pan=false;
             self.moving=None;
             self.resizing=None;
+            self.last_painted=None;
             self.commit_edit();
         }
     }
@@ -831,23 +844,13 @@ impl MapStudioApp {
                 painter.rect_stroke(frame_rect,0.0,stroke,StrokeKind::Inside);
             }
         }
-        if let Some((a,b)) = self.creating {
-            let x=a.x.min(b.x) as f32;
-            let y=a.y.min(b.y) as f32;
-            let w=(i64::from(a.x.max(b.x))-i64::from(a.x.min(b.x))+1) as f32;
-            let h=(i64::from(a.y.max(b.y))-i64::from(a.y.min(b.y))+1) as f32;
-            let preview=Rect::from_min_size(self.screen_at(rect,x,y),vec2(w*s,h*s));
-            painter.rect_filled(preview,0.0,Color32::from_rgba_unmultiplied(124,107,188,25));
-            painter.rect_stroke(preview,0.0,
-                Stroke::new(2.5,Color32::from_rgb(112,85,190)),StrokeKind::Inside);
-        }
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let size = ui.available_size();
         let (rect,response) = ui.allocate_exact_size(size,Sense::click_and_drag());
         self.handle_canvas_input(ui,rect,&response);
-        let editing = response.is_pointer_button_down_on() || self.creating.is_some();
+        let editing = response.is_pointer_button_down_on();
         self.draw_canvas(ui,rect,editing);
     }
 }
