@@ -1075,17 +1075,20 @@ impl MapStudioApp {
                         if self.mode == Mode::Properties {
                             let (tint,symbol) = property_visual(cell,self.elevation_tool);
                             painter.rect_filled(tile_rect,0.0,tint);
-                            if s >= 10.0 {
-                                painter.text(tile_rect.center(),Align2::CENTER_CENTER,symbol,
-                                    FontId::proportional((s*0.53).clamp(8.0,16.0)),
-                                    Color32::from_black_alpha(220));
-                            }
-                            if !self.elevation_tool && s>=17.0 {
-                                if let Some(mark)=tiles::behavior_overlay(cell.metatile_id){
-                                    painter.text(tile_rect.right_top()+vec2(-2.0,2.0),
-                                        Align2::RIGHT_TOP,mark,
-                                        FontId::proportional((s*0.42).clamp(9.0,15.0)),
-                                        Color32::from_rgb(11,57,125));
+                            // Water, ice and ledges are prominent at the *default* zoom;
+                            // collision bits remain visible in the corner of those tiles.
+                            let behavior=if self.elevation_tool{None}
+                                else {tiles::behavior_overlay(cell.metatile_id)};
+                            if s>=10.0 {
+                                painter.text(tile_rect.center(),Align2::CENTER_CENTER,
+                                    behavior.unwrap_or(symbol),
+                                    FontId::proportional((s*0.58).clamp(8.0,17.0)),
+                                    Color32::from_black_alpha(230));
+                                if behavior.is_some() && s>=13.0 {
+                                    painter.text(tile_rect.right_bottom()+vec2(-1.5,-1.5),
+                                        Align2::RIGHT_BOTTOM,symbol,
+                                        FontId::proportional((s*0.35).clamp(7.0,11.0)),
+                                        Color32::from_rgb(19,49,91));
                                 }
                             }
                         }
