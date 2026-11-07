@@ -1002,66 +1002,15 @@ impl MapStudioApp {
         match self.mode {
             Mode::Terrain => {}
             Mode::Properties => {
-                ui.heading("Tile properties");
+                ui.strong("Paint map properties");
                 ui.horizontal_wrapped(|ui|{
                     ui.label("Paint layer");
                     ui.selectable_value(&mut self.elevation_tool,false,"Collision");
                     ui.selectable_value(&mut self.elevation_tool,true,"Elevation");
                 });
-                // The map cell owns collision/elevation; source metatile attributes
-                // are shared by every instance of that graphics tile.
-                let selected=self.selected_cell.and_then(|point|{
-                    let map=self.world.map_at(point)?;
-                    let x=(point.x-map.origin.x) as u32;
-                    let y=(point.y-map.origin.y) as u32;
-                    map.cell(x,y).map(|cell|(
-                        map.name.clone(),x,y,cell,
-                        tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)))
-                });
-                if let Some((name,x,y,cell,pair))=selected {
-                    ui.group(|ui|{
-                        ui.horizontal(|ui|{
-                            if let Some(pair)=pair {
-                                let (box_rect,_) = ui.allocate_exact_size(
-                                    Vec2::splat(58.0),Sense::hover());
-                                let texture=self.atlas_cache.get(pair.key).unwrap_or(&self.atlas).id();
-                                ui.painter().rect_filled(box_rect,4.0,Color32::from_gray(230));
-                                ui.painter().image(texture,box_rect.shrink(4.0),
-                                    Self::tile_uv(cell.metatile_id),Color32::WHITE);
-                            }
-                            ui.vertical(|ui|{
-                                ui.strong(format!("{name} · ({x}, {y})"));
-                                ui.small(format!("Collision: {}   Elevation: {}",
-                                    cell.collision,cell.elevation));
-                                if let Some(pair)=pair {
-                                    ui.small(format!("Tileset: {}",pair.label));
-                                }
-                            });
-                        });
-                        if let Some(pair)=pair {
-                            if let Some(attrs)=tiles::attributes_in(pair,cell.metatile_id) {
-                                ui.separator();
-                                ui.label(format!("Behavior: {}",
-                                    attrs.behavior.strip_prefix("MB_").unwrap_or(attrs.behavior)
-                                        .replace('_'," ").to_lowercase()));
-                                ui.label(format!("Drawing layers: {}",attrs.layer_type));
-                                if let Some(label)=tiles::source_label_in(pair,cell.metatile_id){
-                                    ui.small(format!("Source label: {}",
-                                        label.strip_prefix("METATILE_").unwrap_or(label)
-                                            .replace('_'," ")));
-                                }
-                                ui.collapsing("Technical source details",|ui|{
-                                    ui.monospace(format!("Metatile {} · attribute 0x{:04X}",
-                                        attrs.metatile_id,attrs.raw));
-                                    ui.small("Behavior and layering are source-tileset data, not per-cell overrides.");
-                                });
-                            }
-                        }
-                    });
-                }else{
-                    ui.small("Tap a painted map tile to inspect its real Emerald attributes.");
-                }
-
+                // Focus on the editable map-block properties only.
+                // Detailed source metatile metadata was reference information,
+                // not a control, and does not belong in this painting toolbar.
                 ui.group(|ui|{
                     if self.elevation_tool {
                         ui.strong("Elevation · game layer");
@@ -1081,7 +1030,7 @@ impl MapStudioApp {
                             });
                         ui.small("Select an elevation, then touch or drag over painted tiles.");
                     }else{
-                        ui.strong("Collision · walkability");
+                        ui.strong("Collision values");
                         ui.horizontal_wrapped(|ui|{
                             for (value,label,color) in [
                                 (0u8,"0 · Walk",Color32::from_rgb(180,234,193)),
