@@ -63,8 +63,6 @@ pub struct MapStudioApp {
     tile_filter: tiles::TileFilter,
     tileset_group:String,
     pending_tileset:Option<String>,
-    palette_page: usize,
-    palette_hold: Option<(u16,f64)>,
     tile_preview: Option<u16>,
     save_path: Option<PathBuf>,
     export_dir: Option<PathBuf>,
@@ -155,8 +153,6 @@ impl MapStudioApp {
             tile_filter:tiles::TileFilter::All,
             tileset_group:"Towns".into(),
             pending_tileset:None,
-            palette_page: 0,
-            palette_hold: None,
             tile_preview: None,
             save_path,
             export_dir,
@@ -299,7 +295,6 @@ impl MapStudioApp {
         self.selected_stamp=None;
         self.sheet_anchor=None;
         self.sheet_scope=SheetScope::Both;
-        self.palette_page=0;
     }
 
     fn ensure_atlas_cache(&mut self,ctx:&egui::Context) {
@@ -352,7 +347,6 @@ impl MapStudioApp {
                     self.message="Map now uses the selected source tileset".into();
                     self.preferred_pair=key.into();
                     self.pending_tileset=None;
-                    self.palette_page=0;
                     self.brush_id=1;
                     self.selected_stamp=None;
                     self.commit_edit();
@@ -362,7 +356,6 @@ impl MapStudioApp {
         }else{
             self.preferred_pair=key.into();
             self.pending_tileset=None;
-            self.palette_page=0;
             self.brush_id=1;
             self.selected_stamp=None;
         }
@@ -381,7 +374,6 @@ impl MapStudioApp {
         self.selected_cell=None;
         if self.warp_pick.is_none(){self.selected_event=None;}
         self.gesture=CanvasGesture::Idle;
-        self.palette_page=0;
         self.tile_preview=None;
         self.selected_stamp=None;
         self.sheet_anchor=None;
@@ -605,7 +597,6 @@ impl MapStudioApp {
                             for group in ["Towns","Houses","Interiors","Caves","Outdoor & Special"]{
                                 if ui.selectable_value(&mut self.tileset_group,
                                     group.to_string(),group).clicked(){
-                                    self.palette_page=0;
                                 }
                             }
                         });
@@ -643,14 +634,17 @@ impl MapStudioApp {
                         });
                     }
                 }
-                ui.horizontal_wrapped(|ui|{
-                    ui.strong("Highlight");
-                    for mode in tiles::TileFilter::ALL {
-                        if ui.selectable_label(self.tile_filter==mode,mode.label()).clicked(){
-                            self.tile_filter=mode;
-                            self.palette_page=0;
-                        }
-                    }
+                ui.horizontal(|ui|{
+                    ui.label("Highlight");
+                    egui::ComboBox::from_id_salt("metatile-highlight")
+                        .selected_text(self.tile_filter.label())
+                        .width(150.0)
+                        .show_ui(ui,|ui|{
+                            for filter in tiles::TileFilter::ALL {
+                                ui.selectable_value(&mut self.tile_filter,filter,
+                                    filter.label());
+                            }
+                        });
                 });
                 let chosen=self.current_pair();
                 ui.horizontal_wrapped(|ui|{
