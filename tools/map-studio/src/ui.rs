@@ -58,6 +58,7 @@ pub struct MapStudioApp {
     elevation_tool: bool,
     atlas: egui::TextureHandle,
     npc_atlas:egui::TextureHandle,
+    item_atlas:egui::TextureHandle,
     atlas_cache: HashMap<String,egui::TextureHandle>,
     preferred_pair: String,
     tile_filter: tiles::TileFilter,
@@ -116,6 +117,13 @@ impl MapStudioApp {
             egui::ColorImage::from_rgba_unmultiplied(npc_dimensions,npc_image.as_raw()),
             egui::TextureOptions::NEAREST);
 
+        let item_image=image::load_from_memory(choices::HIDDEN_ITEM_ATLAS)
+            .expect("verified source item icon atlas").to_rgba8();
+        let item_size=[item_image.width() as usize,item_image.height() as usize];
+        let item_atlas=ctx.load_texture("Emerald item icons",
+            egui::ColorImage::from_rgba_unmultiplied(item_size,item_image.as_raw()),
+            egui::TextureOptions::NEAREST);
+
         // Never silently overwrite an incompatible/corrupt project with demo maps.
         let (world, load_error)=match save_path.as_deref() {
             Some(path) if path.exists() => match storage::load(path) {
@@ -148,6 +156,7 @@ impl MapStudioApp {
             elevation_tool: false,
             atlas: texture.clone(),
             npc_atlas,
+            item_atlas,
             atlas_cache: HashMap::from([(tiles::DEFAULT_PAIR.to_string(),texture)]),
             preferred_pair:tiles::DEFAULT_PAIR.into(),
             tile_filter:tiles::TileFilter::All,
@@ -1800,66 +1809,119 @@ impl MapStudioApp {
                     }
                 }
             }
-            if s >= 9.0 {
-                for (event_index,event) in map.events.iter().enumerate() {
-                    let center=self.screen_at(rect,
-                        map.origin.x as f32+event.x as f32+0.5,
-                        map.origin.y as f32+event.y as f32+0.5);
-                    if event.kind==EventKind::Npc {
-                        if let Some(idx)=choices::npc_preview_index(&event.graphics_id){
-                            let rows=(choices::NPC_PREVIEW_COUNT+7)/8;
-                            let col=(idx%8) as f32;
-                            let row=(idx/8) as f32;
-                            let uv=Rect::from_min_max(
-                                pos2(col/8.0,row/(rows as f32)),
-                                pos2((col+1.0)/8.0,(row+1.0)/(rows as f32)));
-                            let sprite_height=(s*2.25).clamp(20.0,55.0);
-                            let sprite_width=sprite_height*24.0/40.0;
-                            let bottom=center.y+s*0.50;
-                            let bounds=Rect::from_min_max(
-                                pos2(center.x-sprite_width*0.5,bottom-sprite_height),
-                                pos2(center.x+sprite_width*0.5,bottom));
-                            painter.image(self.npc_atlas.id(),bounds,uv,Color32::WHITE);
-                            if self.selected_event==Some((map.id,event_index)){
-                                painter.rect_stroke(bounds,3.0,Stroke::new(1.8,
-                                    Color32::from_rgb(14,39,84)),StrokeKind::Inside);
-                            }
-                            continue;
+            // Events keep touch-sized *screen* icons even at low world zoom.
+            // Only Events mode hit-tests or edits them: Terrain/Properties
+            // brushes can pass straight through their tile positions.
+            for (event_index,event) in map.events.iter().enumerate() {
+                let center=self.screen_at(rect,
+                    map.origin.x as f32+event.x as f32+0.5,
+                    map.origin.y as f32+event.y as f32+0.5);
+                if !rect.expand(28.0).contains(center) {continue;}
+                let selected=self.mode==Mode::Events
+                    && self.selected_event==Some((map.id,event_index));
+                let subdued=self.mode!=Mode::Events;
+                let alpha=if subdued{160}else{255};
+                if event.kind==EventKind::Npc {
+                    if let Some(idx)=choices::npc_preview_index(&event.graphics_id){
+                        let rows=(choices::NPC_PREVIEW_COUNT+7)/8;
+                        let col=(idx%8) as f32;
+                        let row=(idx/8) as f32;
+                        let uv=Rect::from_min_max(
+                            pos2(col/8.0,row/(rows as f32)),
+                            pos2((col+1.0)/8.0,(row+1.0)/(rows as f32)));
+                        // Fixed portrait on screen, regardless of canvas zoom:
+                        // no oversized selection frame around a tall sprite.
+                        let height=37.0;
+                        let width=height*24.0/40.0;
+                        let bounds=Rect::from_min_max(
+                            pos2(center.x-width*0.5,center.y+5.0-height),
+                            pos2(center.x+width*0.5,center.y+5.0));
+                        painter.image(self.npc_atlas.id(),bounds,uv,
+                            Color32::from_white_alpha(alpha));
+                        if selected {
+                            painter.rect_stroke(bounds.expand(1.0),2.0,
+                                Stroke::new(1.25,Color32::from_rgb(25,108,190)),
+                                StrokeKind::Outside);
+                        }
+                        continue;
+                    }
+                }
+                let size=20.0;
+                let icon=Rect::from_center_size(center,Vec2::splat(size));
+                match event.kind {
+                    EventKind::HiddenItem=>{
+                        if let Some(index)=choices::hidden_item_preview(&event.hidden_item){
+                            let col=(index%8) as f32;
+                            let row=(index/8) as f32;
+                            let uv=Rect::from_min_max(pos2(col/8.0,row/2.0),
+                                pos2((col+1.0)/8.0,(row+1.0)/2.0));
+                            painter.image(self.item_atlas.id(),icon,uv,
+                                Color32::from_white_alpha(alpha));
+                        }else{
+                            // Before a source item is chosen, show a parcel
+                            // outline, never the old generic question circle.
+                            painter.rect_filled(icon.shrink(3.0),2.0,
+                                Color32::from_rgb(205,163,80));
+                            painter.line_segment([center+vec2(-5.0,0.0),
+                                center+vec2(5.0,0.0)],
+                                Stroke::new(1.4,Color32::from_rgb(112,72,27)));
+                            painter.line_segment([center+vec2(0.0,-6.0),
+                                center+vec2(0.0,6.0)],
+                                Stroke::new(1.4,Color32::from_rgb(112,72,27)));
                         }
                     }
-                    let (symbol,color):(String,Color32)=match event.kind {
-                        EventKind::Npc=>("N".into(),Color32::from_rgb(121,82,193)),
-                        EventKind::Sign=>("S".into(),Color32::from_rgb(179,124,48)),
-                        EventKind::Trigger=>("!".into(),Color32::from_rgb(187,65,103)),
-                        EventKind::HiddenItem=>("?".into(),Color32::from_rgb(132,101,52)),
-                        EventKind::Warp=>{
-                            let label=if event.arrival_only {
-                                format!("A{}",self.world.warp_id(map.id,event_index)
-                                    .map(|id|id.to_string()).unwrap_or_else(||"?".into()))
-                            }else if event.warp_mode==WarpMode::Direct {
-                                "↗".into()
-                            }else if event.dest_map_id==0 {
-                                "?".into()
-                            }else{format!("→{}",event.dest_warp_id)};
-                            (label,Color32::from_rgb(55,128,203))
-                        }
-                    };
-                    let radius=(s*0.44).clamp(5.0,13.0);
-                    painter.circle_filled(center,radius,color);
-                    if self.selected_event==Some((map.id,event_index)) {
-                        painter.circle_stroke(center,radius+1.0,
-                            Stroke::new(2.1,Color32::from_rgb(14,39,84)));
+                    EventKind::Sign=>{
+                        let brown=Color32::from_rgb(127,82,41);
+                        painter.rect_filled(Rect::from_center_size(
+                            center+vec2(0.0,5.0),vec2(3.5,13.0)),1.0,brown);
+                        painter.rect_filled(Rect::from_center_size(
+                            center+vec2(0.0,-3.5),vec2(18.0,11.0)),2.0,brown);
+                        painter.rect_filled(Rect::from_center_size(
+                            center+vec2(0.0,-3.5),vec2(15.0,8.0)),1.0,
+                            Color32::from_rgb(241,208,142));
+                        painter.line_segment([center+vec2(-4.0,-5.0),
+                            center+vec2(4.0,-5.0)],
+                            Stroke::new(1.2,Color32::from_rgb(128,83,44)));
                     }
-                    painter.text(center,Align2::CENTER_CENTER,symbol,
-                        FontId::proportional((s*0.50).clamp(8.0,13.0)),Color32::WHITE);
+                    EventKind::Warp=>{
+                        let blue=Color32::from_rgb(45,119,194);
+                        let door=Rect::from_center_size(center,vec2(16.0,19.0));
+                        painter.rect_filled(door,2.0,Color32::from_rgb(36,69,110));
+                        painter.rect_filled(door.shrink(2.5),1.0,
+                            Color32::from_rgb(158,214,250));
+                        painter.text(center,Align2::CENTER_CENTER,
+                            if event.arrival_only{"↓"}else if event.warp_mode==WarpMode::Direct{"↗"}else{"→"},
+                            FontId::proportional(13.0),blue);
+                    }
+                    EventKind::Trigger=>{
+                        let points=vec![center+vec2(0.0,-11.0),
+                            center+vec2(11.0,0.0),center+vec2(0.0,11.0),
+                            center+vec2(-11.0,0.0)];
+                        painter.add(egui::Shape::convex_polygon(points,
+                            Color32::from_rgb(195,69,106),Stroke::NONE));
+                        painter.text(center,Align2::CENTER_CENTER,"!",
+                            FontId::proportional(14.0),Color32::WHITE);
+                    }
+                    EventKind::Npc=>{
+                        painter.circle_filled(center,8.0,Color32::from_rgb(122,88,168));
+                        painter.text(center,Align2::CENTER_CENTER,"N",
+                            FontId::proportional(12.0),Color32::WHITE);
+                    }
                 }
-                for marker in &map.markers {
-                    let center = self.screen_at(rect,
-                        (map.origin.x as f32 + marker.x as f32 + 0.5),
-                        (map.origin.y as f32 + marker.y as f32 + 0.5));
-                    painter.circle_filled(center,(s*0.36).clamp(4.0,10.0),Color32::from_rgb(117,66,179));
-                    painter.text(center,Align2::CENTER_CENTER,"!",FontId::proportional(10.0),Color32::WHITE);
+                if selected{
+                    painter.rect_stroke(icon.expand(2.0),3.0,
+                        Stroke::new(1.3,Color32::from_rgb(20,100,193)),
+                        StrokeKind::Outside);
                 }
+            }
+            for marker in &map.markers {
+                let center=self.screen_at(rect,
+                    map.origin.x as f32+marker.x as f32+0.5,
+                    map.origin.y as f32+marker.y as f32+0.5);
+                if !rect.contains(center){continue;}
+                painter.circle_filled(center,6.0,Color32::from_rgb(117,66,179));
+                painter.text(center,Align2::CENTER_CENTER,"!",
+                    FontId::proportional(9.0),Color32::WHITE);
             }
             painter.text(top_left + vec2(5.0,5.0),Align2::LEFT_TOP,&map.name,
                 FontId::proportional(11.0),Color32::from_black_alpha(if is_editing {48} else {160}));
