@@ -1,6 +1,6 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
-use crate::model::{Cell, GridPoint, World};
+use crate::model::{Cell, EventKind, GridPoint, World};
 use crate::{storage, export};
 use std::{path::PathBuf, time::{Duration, Instant}};
 
@@ -10,6 +10,8 @@ enum Mode { Terrain, Properties, Events }
 pub struct MapStudioApp {
     world: World,
     mode: Mode,
+    event_brush: EventKind,
+    selected_event: Option<(u32,usize)>,
     brush_id: u16,
     erase_tool: bool,
     elevation_brush: u8,
@@ -60,6 +62,8 @@ impl MapStudioApp {
         Self {
             world,
             mode: Mode::Terrain,
+            event_brush: EventKind::Npc,
+            selected_event: None,
             brush_id: 1,
             erase_tool: false,
             elevation_brush: 3,
@@ -206,8 +210,96 @@ impl MapStudioApp {
                 }
             }
             Mode::Events => {
-                ui.strong("Event markers");
-                ui.label(egui::RichText::new("Tap to toggle markers. Unscripted markers block game export.").small());
+                ui.horizontal(|ui| {
+                    ui.strong("Place");
+                    for (kind,label) in [
+                        (EventKind::Npc,"NPC"),(EventKind::Sign,"Sign"),
+                        (EventKind::Warp,"Warp"),(EventKind::Trigger,"Trigger")
+                    ] {
+                        ui.selectable_value(&mut self.event_brush,kind,label);
+                    }
+                });
+                if let Some((map_id,index))=self.selected_event {
+                    let destinations:Vec<(u32,String)>=self.world.maps.iter()
+                        .map(|m|(m.id,m.name.clone())).collect();
+                    let before=self.world.clone();
+                    let mut changed=false;
+                    let mut remove=false;
+                    if let Some(event)=self.world.maps.iter_mut()
+                        .find(|m|m.id==map_id).and_then(|m|m.events.get_mut(index)) {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{:?} ({},{})",event.kind,event.x,event.y));
+                            if ui.small_button("Remove").clicked(){remove=true;}
+                        });
+                        egui::ScrollArea::vertical().id_salt("event-editor").max_height(110.0)
+                            .show(ui,|ui| {
+                                match event.kind {
+                                    EventKind::Npc => {
+                                        ui.horizontal(|ui|{
+                                            ui.label("Dialogue");
+                                            changed|=ui.text_edit_singleline(&mut event.dialogue).changed();
+                                        });
+                                        ui.horizontal(|ui|{
+                                            ui.label("Graphics");
+                                            changed|=ui.text_edit_singleline(&mut event.graphics_id).changed();
+                                        });
+                                    }
+                                    EventKind::Sign => {
+                                        ui.horizontal(|ui|{
+                                            ui.label("Sign text");
+                                            changed|=ui.text_edit_singleline(&mut event.dialogue).changed();
+                                        });
+                                    }
+                                    EventKind::Warp => {
+                                        ui.horizontal(|ui|{
+                                            ui.label("To");
+                                            egui::ComboBox::from_id_salt("warp-destination")
+                                                .selected_text(destinations.iter().find(|(id,_)|*id==event.dest_map_id)
+                                                    .map(|(_,name)|name.as_str()).unwrap_or("Choose map"))
+                                                .show_ui(ui,|ui|{
+                                                    for (id,name) in &destinations {
+                                                        changed|=ui.selectable_value(&mut event.dest_map_id,*id,name).changed();
+                                                    }
+                                                });
+                                            ui.label("Warp ID");
+                                            changed|=ui.add(egui::DragValue::new(&mut event.dest_warp_id)
+                                                .range(0..=30)).changed();
+                                        });
+                                        ui.small("A destination warp must exist in the target map.");
+                                    }
+                                    EventKind::Trigger => {
+                                        ui.horizontal(|ui|{
+                                            ui.label("Var");
+                                            changed|=ui.text_edit_singleline(&mut event.var).changed();
+                                            ui.label("Value");
+                                            changed|=ui.add(egui::DragValue::new(&mut event.var_value)).changed();
+                                        });
+                                        ui.horizontal(|ui|{
+                                            ui.label("Existing script");
+                                            changed|=ui.text_edit_singleline(&mut event.script).changed();
+                                        });
+                                    }
+                                }
+                                ui.horizontal(|ui|{
+                                    ui.label("Elevation");
+                                    changed|=ui.add(egui::DragValue::new(&mut event.elevation)
+                                        .range(0..=15)).changed();
+                                });
+                            });
+                    }
+                    if changed {
+                        self.before_gesture=Some(before);
+                        self.commit_edit();
+                    }
+                    if remove {
+                        self.begin_edit();
+                        self.world.remove_event(map_id,index);
+                        self.commit_edit();
+                        self.selected_event=None;
+                    }
+                } else {
+                    ui.label(egui::RichText::new("Tap a map cell to place an event; tap an event to edit.").small());
+                }
             }
         }
         ui.label(egui::RichText::new(&self.message).small().color(Color32::DARK_GRAY));
@@ -430,16 +522,10 @@ impl MapStudioApp {
                 {
                     if self.mode == Mode::Events {
                         if pressed {
-                            let mut removed=false;
-                            if let Some(map)=self.world.maps.iter_mut().find(|m|m.contains(p)) {
-                                let x=(p.x-map.origin.x) as u32;
-                                let y=(p.y-map.origin.y) as u32;
-                                if let Some(index)=map.markers.iter().position(|e|e.x==x&&e.y==y) {
-                                    map.markers.remove(index); removed=true;
-                                }
+                            self.selected_event=self.world.add_event(p,self.event_brush);
+                            if self.selected_event.is_some() {
+                                self.message="Event selected. Edit its properties below.".into();
                             }
-                            if !removed {self.world.add_marker(p);}
-                            self.message = "Event marker toggled (not yet scripted)".into();
                         }
                     } else {
                         self.paint_line(self.last_painted.unwrap_or(p), p);
@@ -530,6 +616,20 @@ impl MapStudioApp {
                 }
             }
             if s >= 9.0 {
+                for event in &map.events {
+                    let center=self.screen_at(rect,
+                        map.origin.x as f32+event.x as f32+0.5,
+                        map.origin.y as f32+event.y as f32+0.5);
+                    let (symbol,color)=match event.kind {
+                        EventKind::Npc=>("N",Color32::from_rgb(121,82,193)),
+                        EventKind::Sign=>("S",Color32::from_rgb(179,124,48)),
+                        EventKind::Warp=>("W",Color32::from_rgb(55,128,203)),
+                        EventKind::Trigger=>("T",Color32::from_rgb(187,65,103)),
+                    };
+                    painter.circle_filled(center,(s*0.39).clamp(4.0,10.0),color);
+                    painter.text(center,Align2::CENTER_CENTER,symbol,
+                        FontId::proportional(10.0),Color32::WHITE);
+                }
                 for marker in &map.markers {
                     let center = self.screen_at(rect,
                         (map.origin.x as f32 + marker.x as f32 + 0.5),
