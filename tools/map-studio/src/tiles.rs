@@ -168,6 +168,8 @@ pub const MAX_STAMP_SIDE:usize=12;
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub struct MetatileStamp {
     pub pair_key:String,
+    pub base:u16,
+    pub origin:u16,
     pub width:usize,
     pub height:usize,
     pub cells:Vec<Option<u16>>,
@@ -200,7 +202,8 @@ pub fn stamp_from_sheet(pair:&TilePair,base:u16,from:u16,to:u16)->Option<Metatil
         }
     }
     if cells.iter().all(Option::is_none){return None;}
-    Some(MetatileStamp{pair_key:pair.key.to_string(),width,height,cells})
+    Some(MetatileStamp{pair_key:pair.key.to_string(),base,
+        origin:base+(top*SHEET_COLUMNS+left) as u16,width,height,cells})
 }
 
 #[cfg(test)]
