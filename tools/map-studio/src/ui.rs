@@ -796,6 +796,10 @@ impl MapStudioApp {
         )
     }
 
+    fn long_hold_complete(since:f64,now:f64,travel:f32)->bool{
+        now-since>=0.46 && travel<=9.0
+    }
+
     fn change_zoom(&mut self, rect: Rect, focus: Pos2, factor: f32, translation: Vec2) {
         let old_zoom = self.zoom;
         let new_zoom = (old_zoom * factor).clamp(5.0, 54.0);
@@ -838,7 +842,6 @@ impl MapStudioApp {
     }
 
     fn handle_canvas_input(&mut self, ui:&egui::Ui,rect:Rect,response:&egui::Response) {
-        const HOLD_SECS:f64=0.46;
         const DRAG_PX:f32=9.0;
         let (multi,pressed,down,released,pointer,now)=ui.input(|input|(
             input.multi_touch(),
@@ -890,7 +893,7 @@ impl MapStudioApp {
                     CanvasGesture::Idle => {}
                     CanvasGesture::EmptyPress{at:start,screen:origin,since}=>{
                         let delta=(screen-origin).length();
-                        if now-since>=HOLD_SECS && delta<=DRAG_PX {
+                        if Self::long_hold_complete(since,now,delta) {
                             self.gesture=CanvasGesture::DrawFrame{from:start,to:at};
                             self.message="Drag to draw map boundary".into();
                             ui.ctx().request_repaint();
@@ -916,7 +919,7 @@ impl MapStudioApp {
                     }
                     CanvasGesture::MapPress{id,at:start,screen:origin,since,origin:map_origin}=>{
                         let delta=(screen-origin).length();
-                        if now-since>=HOLD_SECS && delta<=DRAG_PX {
+                        if Self::long_hold_complete(since,now,delta) {
                             self.gesture=CanvasGesture::MoveFrame{id,from:start,origin:map_origin};
                             self.begin_edit();
                             self.message="Slide the map to move it".into();
@@ -1242,5 +1245,17 @@ mod properties_visual_tests {
             let (_,label)=property_visual(cell,true);
             assert_eq!(label,height.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod gesture_intent_tests {
+    use super::MapStudioApp;
+    #[test]
+    fn hold_vs_drag_is_unambiguous() {
+        assert!(!MapStudioApp::long_hold_complete(10.0,10.25,0.0));
+        assert!(MapStudioApp::long_hold_complete(10.0,10.47,1.0));
+        assert!(!MapStudioApp::long_hold_complete(10.0,10.60,10.0));
+        assert!(!MapStudioApp::long_hold_complete(10.0,10.20,20.0));
     }
 }

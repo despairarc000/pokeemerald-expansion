@@ -80,3 +80,15 @@ Keep this tool isolated from the Emerald ROM runtime.
 - Android MediaStore only lists files owned/readable by the installed Preview package. It is **not** a general Android Storage Access Framework file picker and may not show backups from the older Map Studio package. Full system document picker and stable signing are still needed.
 - The CLI supports `import <new-project.json> <backup.json|source.zip>` and `restore <project.json> <backup.json|source.zip>`. CLI restores also save recovery copies before overwriting.
 - **Uninstalling Preview removes private autosaves and local recovery files.** Export important backups to Downloads, confirm they are accessible from a file manager, and keep a copy elsewhere before uninstalling. CI Preview test signing keys still change between builds.
+
+## v0.6 gesture-first UX preview
+
+- This build uses a separate **Map Studio UX Preview** package (`dev.despairarc.mapstudio.uxpreview`) so it does **not** overwrite older Preview installations or delete older projects. Its storage is independent.
+- **Hold on empty canvas (about half a second), then drag** to draw a map rectangle. A red preview warns about overlap before release; invalid shapes cannot be committed. Drag immediately on empty space to pan.
+- **Hold on an existing map, then move your finger** to drag the frame. Moving into another map is rejected while the warning appears. Quick drags across a map continue to paint.
+- Select any map, then press **Size** to choose width, height and expansion direction. Potential overlaps or discarded content are warned about *while adjusting the values*, before Apply.
+- Drag the wide **handle at the top of the lower panel** to set the palette height. Tapping the handle toggles expanded/collapsed heights.
+- Collision uses the original numeric values **0, 1, 2, 3** (0 walkable, 1 blocking). Read-only ~, ice and ledge icons derive from the actual General/Petalburg metatile behavior attributes, not fabricated editable values. Elevation is a grid of choices 0–15, without a slider.
+- NPCs use verified selectable characters with friendly names. Arbitrary character IDs are not editable. Default dialogue is empty; users write actual NPC/sign text. Warps and triggers are intentionally deferred.
+
+**Still requires a physical phone test for gestures and panel sizing.** Emulator correctness and actual full ROM runtime behavior remain separate gates.

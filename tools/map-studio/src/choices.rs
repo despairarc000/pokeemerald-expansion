@@ -34,3 +34,24 @@ mod tests {
         }
     }
 }
+
+/// Check the real source enum rather than trusting arbitrary JSON string input.
+pub fn is_verified_sprite_id(name:&str)->bool {
+    if !name.starts_with("OBJ_EVENT_GFX_") {return false;}
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+        "/../../include/constants/event_objects.h"))
+        .lines()
+        .map(str::trim)
+        .any(|line|line.split(',').next().unwrap_or("").trim()==name)
+}
+#[cfg(test)]
+mod sprite_validation_tests {
+    #[test]
+    fn arbitrary_code_is_not_a_valid_sprite() {
+        assert!(!super::is_verified_sprite_id("OBJ_EVENT_GFX_FAKE"));
+        assert!(!super::is_verified_sprite_id("SCRIPT_SUPERUSER"));
+        for (_,id) in super::NPC_SPRITES {
+            assert!(super::is_verified_sprite_id(id));
+        }
+    }
+}

@@ -50,7 +50,7 @@ pub fn validate(world:&World) -> Result<(), String> {
                        || chars.clone().any(|ch| ch=='"' || ch as u32==36 || ch as u32==92) {
                         return Err(format!("{} has invalid dialogue",m.name));
                     }
-                    if e.kind==EventKind::Npc && !valid_symbol(&e.graphics_id) {
+                    if e.kind==EventKind::Npc && !crate::choices::is_verified_sprite_id(&e.graphics_id) {
                         return Err(format!("{} has an invalid graphics ID",m.name));
                     }
                 }
