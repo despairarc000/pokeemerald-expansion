@@ -8,6 +8,7 @@ on:
       - feature/map-studio-ux-visibility-events-properties
       - feature/map-studio-responsive-visibility-coordinate-ux
       - feature/map-studio-resize-keypad-and-dock
+      - feature/map-studio-touch-paint-overlays-warp-ux
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'
