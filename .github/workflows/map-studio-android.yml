@@ -5,6 +5,7 @@ on:
     branches:
       - feature/map-studio-native-android
       - feature/map-studio-metatile-sheet-browser
+      - feature/map-studio-ux-visibility-events-properties
     paths:
       - 'tools/map-studio/**'
       - '.github/workflows/map-studio-android.yml'
