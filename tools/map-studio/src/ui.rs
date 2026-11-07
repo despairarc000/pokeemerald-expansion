@@ -270,11 +270,9 @@ impl MapStudioApp {
                 self.show_events=true;
             }
             ui.separator();
-            ui.menu_button("Overlays",|ui|{
-                ui.checkbox(&mut self.show_events,"Show events");
-                ui.checkbox(&mut self.show_properties,"Show properties");
-                ui.small("Visibility only; editing follows the active tab.");
-            });
+            let overlays=ui.button("Overlays");
+            self.overlays_button=Some(overlays.rect);
+            if overlays.clicked(){self.overlays_open=!self.overlays_open;}
         });
         if compact{
             ui.horizontal_wrapped(|ui|{
@@ -2592,6 +2590,29 @@ impl eframe::App for MapStudioApp {
             .resizable(false).exact_size(self.panel_height)
             .show(root,|ui|self.palette(ui));
         egui::CentralPanel::default().show(root,|ui|self.canvas(ui));
+        // A small independent panel: checkbox clicks do NOT dismiss it.
+        // Close using X, the Overlays button, or a tap outside its bounds.
+        if self.overlays_open {
+            let mut open=true;
+            let popup=egui::Window::new("Overlay visibility")
+                .id(egui::Id::new("overlay_visibility"))
+                .open(&mut open).collapsible(false).resizable(false)
+                .anchor(Align2::RIGHT_TOP,[-10.0,92.0])
+                .show(root.ctx(),|ui|{
+                    ui.checkbox(&mut self.show_events,"Show events");
+                    ui.checkbox(&mut self.show_properties,"Show properties");
+                    ui.small("The active tab controls editing.");
+                });
+            if !open {self.overlays_open=false;}
+            if let Some(popup)=popup{
+                let outside=root.ctx().input(|input|
+                    input.pointer.any_pressed()
+                        && input.pointer.interact_pos().is_some_and(|point|
+                            !popup.response.rect.contains(point)
+                            && !self.overlays_button.is_some_and(|r|r.contains(point))));
+                if outside {self.overlays_open=false;}
+            }
+        }
         self.size_dialog(root.ctx());
         self.project_dialogs(root.ctx());
         self.maybe_autosave(root.ctx());
