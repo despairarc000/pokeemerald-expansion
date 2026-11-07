@@ -29,9 +29,7 @@ pub fn load(path: &Path) -> Result<World, String> {
     }
     let project:Project=serde_json::from_value(envelope)
         .map_err(|e|format!("Parse project: {e}"))?;
-    if project.world.maps.iter().any(|m| m.cells.len() != (m.width as usize)*(m.height as usize)) {
-        return Err("Invalid project: map cell lengths do not match dimensions".into());
-    }
+    project.world.check_integrity()?;
     Ok(project.world)
 }
 

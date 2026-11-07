@@ -189,6 +189,57 @@ pub struct World {
 }
 
 impl World {
+    /// Validate all invariants after deserializing an untrusted project.
+    /// Editor projects permit empty cells; game export applies stricter checks.
+    pub fn check_integrity(&self) -> Result<(),String> {
+        if self.maps.len()>256 {return Err("Project has too many map frames".into());}
+        let mut ids=std::collections::HashSet::new();
+        let mut max_id=0;
+        for map in &self.maps {
+            if map.id==0 || !ids.insert(map.id) {
+                return Err("Project contains duplicate or zero map IDs".into());
+            }
+            max_id=max_id.max(map.id);
+            let count=(map.width as u64)*(map.height as u64);
+            if map.width==0 || map.height==0 || count>100_000
+                || count!=(map.cells.len() as u64) {
+                return Err(format!("Invalid dimensions for {}",map.name));
+            }
+            if map.name.len()>128 {
+                return Err("Map name is too long".into());
+            }
+            for cell in map.cells.iter().flatten() {
+                if cell.metatile_id>=1024 || cell.collision>3 || cell.elevation>15 {
+                    return Err(format!("Invalid native cell value in {}",map.name));
+                }
+            }
+            if map.markers.iter().any(|e|e.x>=map.width || e.y>=map.height)
+                || map.events.iter().any(|e|e.x>=map.width || e.y>=map.height ||
+                    e.elevation>15) {
+                return Err(format!("Invalid event position in {}",map.name));
+            }
+        }
+        if self.next_id <= max_id {
+            return Err("Project map ID counter is inconsistent".into());
+        }
+        for (i,a) in self.maps.iter().enumerate() {
+            let al=i64::from(a.origin.x);
+            let at=i64::from(a.origin.y);
+            let ar=al+i64::from(a.width);
+            let ab=at+i64::from(a.height);
+            for b in self.maps.iter().skip(i+1) {
+                let bl=i64::from(b.origin.x);
+                let bt=i64::from(b.origin.y);
+                let br=bl+i64::from(b.width);
+                let bb=bt+i64::from(b.height);
+                if al<br && ar>bl && at<bb && ab>bt {
+                    return Err(format!("Map frames overlap: {} and {}",a.name,b.name));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self { Self { maps: Vec::new(), next_id: 1 } }
 
     pub fn sample() -> Self {
@@ -508,5 +559,29 @@ mod event_tests {
         let restored:World=serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
         assert_eq!(restored.maps[0].events[0].x,1);
         assert_eq!(restored.maps[0].events[0].dialogue,"Hello, traveler!");
+    }
+}
+
+#[cfg(test)]
+mod integrity_tests {
+    use super::*;
+    #[test]
+    fn detects_corrupt_map_lengths() {
+        let mut w=World::sample();
+        w.maps[0].cells.pop();
+        assert!(w.check_integrity().unwrap_err().contains("dimensions"));
+    }
+    #[test]
+    fn detects_overlaps_and_duplicate_ids() {
+        let mut w=World::sample();
+        w.maps[1].origin=GridPoint::new(1,1);
+        assert!(w.check_integrity().unwrap_err().contains("overlap"));
+        w=World::sample();
+        w.maps[1].id=w.maps[0].id;
+        assert!(w.check_integrity().unwrap_err().contains("duplicate"));
+    }
+    #[test]
+    fn normal_editable_sample_is_valid() {
+        World::sample().check_integrity().unwrap();
     }
 }
