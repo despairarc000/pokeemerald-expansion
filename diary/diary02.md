@@ -1,4 +1,4 @@
-# Diary 02 (logs 11 to 23)
+# Diary 02 (logs 11 to 24)
 
 The story of the project in order. Short on purpose. Dates are by session. For the routine, see `ONBOARDING.md`. Earlier history is in `diary01.md`.
 
@@ -51,7 +51,16 @@ Warp destinations have three supported editor choices: link an **existing native
 
 GitHub Actions run `42337055762` succeeded both desktop Rust checks (unit tests, headless export smoke test, Python map converter) and optimized ARM64 Android APK packaging. The verified APK is 3,666,282 bytes (3.50 MiB), SHA-256 `d000574b10b421c3e991aa284936abc77d1cfb983d9b655039be726649d1bcdb`, with app ID `dev.despairarc.mapstudio.eventspreview` and label **Map Studio Events Preview** to keep older apps' saved projects intact. **Gesture behavior, actual Android Downloads backup/restore and exported map travel have not yet been verified on the owner's device or an actual built GBA ROM.** The new CI build tests packaging and data conversion, not end-to-end player warp transitions. Work remains isolated from main engine logic and unmerged.
 
-## State (as of log 23)
+## Log 24: Map Studio v0.8 editor-only Spaces, real tileset galleries and NPC sprites (2026-11-07)
+The owner realized that Emerald maps already have their own local coordinate systems; the previous shared canvas was strictly a Map Studio editing convenience. The owner requested properly organized indoor/cave planes, full practical visual tilesets, no numeric tile-ID search, categorized filters (including houses), and a responsive palette.
+
+On `feature/map-studio-native-android`, the native Rust editor now supports **independent editor Spaces**: Surface, Interior, Cave, Other. Each Space starts at its own (0,0); map overlap checks and automatic walking connections operate only within the same Space. Cross-Space warps continue to work by persistent map IDs. A user can create a Space from a selected warp or map, navigate via the Space selector/Parent button, follow a warp into its destination map, and show a faded **non-interactive** parent-underlay near the entrance without modifying Emerald's native world. Existing JSON projects missing Space fields migrate into Surface while preserving all map IDs, cells, warps and events. A regression test explicitly verifies that two overlapping editor-space maps receive events only in the active Space.
+
+The source imagery generator now consumes checked-in `data/layouts/layouts.json` pairs and primary/secondary metatile binary, palette and tileset graphics, producing **129 of 137** source-declared real tileset pair atlases; eight pairs lack complete usable source assets or cannot be resolved. The paintable metatile mask excludes entries with missing 8x8 graphics instead of inventing placeholders. The audited category breakdown is **Towns 23, Houses 10, Interiors 61, Caves 15, Outdoor & Special 20**. The smartphone tile palette is now an adaptive image grid organized by these named collections plus verified behavior filters; the numeric search field is gone. Per-map graphics use that map's selected tileset pair, with exact layout `gTileset_*` symbols exported and native *raw* border IDs (not collision/elevation-packed border cells). A curated list of supported NPCs now shows their real indexed first-frame sprites and source palettes rather than a generic N marker. Texture uploading and faded parent rendering are clipped to currently visible maps for mobile memory/performance.
+
+**Validation:** GitHub Actions `42341487370` passed both jobs (Rust unit and CLI tests, image asset audit, numeric map generator conversion, desktop UI compile, optimized Android ARM64 APK package). The signed archive was ZIP CRC checked and Jar signature verified (ephemeral self-signed CI certificate); `MapStudio-v0.8-Spaces-Preview.apk` is **5,669,226 bytes**, SHA256 `e7bed2d53df5daf74de2f7b234ab0134fdb85605672eeb6339feaae1ae78a305`. Android package is `dev.despairarc.mapstudio.spacespreview`, standalone beside older builds with completely independent private autosave storage. Build artifacts also include an actual asset audit manifest and source rendered Town/Cave/Interior/NPC preview PNGs. **Still not tested physically on the owner's phone; full GBA ROM game-play, renderer priority parity, generic Android system file import and live GitHub synchronization remain unfinished.** Eight missing/incompatible source pairs and specialist assets are not falsely advertised as implemented. No native game-engine changes and no feature-branch merge occurred.
+
+## State (as of log 24)
 
 **Done**
 - Meadowmere natural environment design, down to 20 natural maps (`design/region-meadowmere.md`, `meadowmere-areas.md`, `meadowmere-places.md`, `meadowmere-interiors.md`, `meadowmere-maps-natural.md`).
@@ -66,7 +75,7 @@ GitHub Actions run `42337055762` succeeded both desktop Rust checks (unit tests,
 - Villages and other buildings are not designed in any region.
 - Species per zone not assigned. The species list has not been checked in the repo. Rarity tier numbers are AI estimates.
 - Map Studio now has a Rust numeric map format and verified atlas generator; real-device export, broader tilesets and ROM/emulator parity still need proof.
-- Map Studio: v0.7 Events Preview built in Actions run `42337055762` (3.50 MiB) implementing the approved gesture table, an event-first input priority, and linked/arrival-marker/direct travel modes. Physical-phone warp UI and actual GBA ROM gameplay are still unverified. Secure GitHub synchronization and live collaboration remain future work. See `tools/map-studio/README.md` on the feature branch.
+- Map Studio: v0.8 Spaces Preview compiled successfully in GitHub Actions `42341487370`, with active/parent editing Spaces, independent collision/connection groups, actual tileset galleries (129/137 source combinations), source NPC previews, responsive category palette and no tile-ID search. Physical-device interactions and full GBA ROM playtest remain pending. See `tools/map-studio/README.md` on the development branch. GitHub collaboration not yet integrated.
 - Healing and rest rules, where the player begins, and which regions have gyms are undecided.
 - Owner to confirm the world layout sketch (diary log 10) and whether the "world feel rules" become a core design rule in `design/CORE.md`.
 - Ladder rows were drafted by the AI and need owner review.
