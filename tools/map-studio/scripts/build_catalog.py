@@ -40,7 +40,7 @@ def read_palette(path):
         raise ValueError("Unrecognized palette "+str(path))
     return [tuple(map(int,row.split())) for row in rows[3:19]]
 def colored(im,colors):
-    cp=im.convert("P") if im.mode=="L" else im.copy()
+    cp=Image.frombytes("P",im.size,im.tobytes()) if im.mode=="L" else im.copy()
     colors=colors+[(0,0,0)]*(256-len(colors))
     cp.putpalette([channel for rgb in colors for channel in rgb])
     return cp
@@ -59,6 +59,7 @@ def generate(main,local,output):
     tile_banks=[{bank:colored(img,pal).convert("RGBA")
                   for bank,pal in palettes.items()} for img in images]
     raw=[(d/"metatiles.bin").read_bytes() for d in (main,local)]
+    attrs=[(d/"metatile_attributes.bin").read_bytes() for d in (main,local)]
     count1=min(len(raw[0])//16,512)
     count2=min(len(raw[1])//16,512)
     atlas=Image.new("RGBA",(16*16,64*16),(0,0,0,0))
@@ -80,8 +81,7 @@ def generate(main,local,output):
             if bank not in palettes or idx >= (image.width//8)*(image.height//8):
                 source_ok=False
                 break
-        if not source_ok or (sub+1)*2>len((main if src==0 else local)
-                                         .joinpath("metatile_attributes.bin").read_bytes()):
+        if not source_ok or (sub+1)*2>len(attrs[src]):
             continue
         valid.append(mid)
         x=(mid%16)*16;y=(mid//16)*16
