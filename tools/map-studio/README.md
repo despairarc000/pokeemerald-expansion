@@ -70,3 +70,13 @@ Keep this tool isolated from the Emerald ROM runtime.
 - **Events**: tap a cell to select/place; tap a type to change it; double-tap or use Edit details for the extended form.
 - New installs start with an empty canvas; existing autosaves still load.
 - The CLI supports `place-map` and directional `resize` using the same Rust geometry rules.
+
+## Project recovery / import (v0.5 preview)
+
+- Open **Project → Backup to Downloads** to save a versioned JSON snapshot, including unfinished maps.
+- Open **Project → Restore backup** to browse backups in this app's Downloads/MapStudio and local recovery files. Game-source ZIPs containing `mapstudio-project.json` can also be restored.
+- Open **Project → New blank project** to replace the canvas only after a local recovery snapshot is saved.
+- All imports are validated *before* replacing the current project (20 MiB input cap, schema, map geometry, cells and event positions). The app saves the previous canvas to `MapStudio-recovery-*.json` before replacement; import failure leaves it unchanged.
+- Android MediaStore only lists files owned/readable by the installed Preview package. It is **not** a general Android Storage Access Framework file picker and may not show backups from the older Map Studio package. Full system document picker and stable signing are still needed.
+- The CLI supports `import <new-project.json> <backup.json|source.zip>` and `restore <project.json> <backup.json|source.zip>`. CLI restores also save recovery copies before overwriting.
+- **Uninstalling Preview removes private autosaves and local recovery files.** Export important backups to Downloads, confirm they are accessible from a file manager, and keep a copy elsewhere before uninstalling. CI Preview test signing keys still change between builds.
