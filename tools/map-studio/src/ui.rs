@@ -571,67 +571,235 @@ impl MapStudioApp {
         }
     }
 
+    fn resize_thumbnail(&self,ui:&mut egui::Ui,id:u32){
+        let Some(m)=self.world.maps.iter().find(|m|m.id==id) else{return;};
+        let Some((origin,w,h))=self.world.resize_ghost(id,self.map_width,
+            self.map_height,self.expand_direction) else{return;};
+        let (area,_) = ui.allocate_exact_size(
+            vec2(ui.available_width().min(320.0),116.0),Sense::hover());
+        let painter=ui.painter_at(area);
+        painter.rect_filled(area,5.0,Color32::from_gray(245));
+        // Preview shows existing footprint, candidate and nearby neighbors.
+        let l=i64::from(m.origin.x).min(i64::from(origin.x));
+        let t=i64::from(m.origin.y).min(i64::from(origin.y));
+        let r=m.right().max(i64::from(origin.x)+i64::from(w));
+        let b=m.bottom().max(i64::from(origin.y)+i64::from(h));
+        let mut min_x=l-1;let mut min_y=t-1;
+        let mut max_x=r+1;let mut max_y=b+1;
+        let close=self.world.maps.iter().filter(|other|{
+            other.id!=id && other.space_id==m.space_id
+                && i64::from(other.origin.x)<r+8 && other.right()>l-8
+                && i64::from(other.origin.y)<b+8 && other.bottom()>t-8
+        }).collect::<Vec<_>>();
+        for other in &close {
+            min_x=min_x.min(i64::from(other.origin.x));
+            min_y=min_y.min(i64::from(other.origin.y));
+            max_x=max_x.max(other.right());
+            max_y=max_y.max(other.bottom());
+        }
+        let factor=((area.width()-16.0)/(max_x-min_x).max(1) as f32)
+            .min((area.height()-16.0)/(max_y-min_y).max(1) as f32);
+        let at=|x:i64,y:i64| pos2(
+            area.left()+8.0+(x-min_x) as f32*factor,
+            area.top()+8.0+(y-min_y) as f32*factor);
+        let bounds=|x:i64,y:i64,w:u32,h:u32|
+            Rect::from_min_size(at(x,y),vec2(w as f32*factor,h as f32*factor));
+        for other in close {
+            let box_rect=bounds(i64::from(other.origin.x),
+                i64::from(other.origin.y),other.width,other.height);
+            painter.rect_filled(box_rect,2.0,Color32::from_gray(202));
+            painter.rect_stroke(box_rect,2.0,
+                Stroke::new(1.3,Color32::from_gray(105)),StrokeKind::Inside);
+        }
+        let original=bounds(i64::from(m.origin.x),i64::from(m.origin.y),
+            m.width,m.height);
+        painter.rect_filled(original,2.0,Color32::from_rgba_unmultiplied(85,130,202,75));
+        painter.rect_stroke(original,2.0,
+            Stroke::new(1.4,Color32::from_rgb(64,107,182)),StrokeKind::Inside);
+        let next=bounds(i64::from(origin.x),i64::from(origin.y),w,h);
+        let valid=w<=100 && h<=100
+            && self.world.preview_resize(id,w,h,self.expand_direction).is_ok();
+        let color=if valid{Color32::from_rgb(36,147,104)}
+            else{Color32::from_rgb(195,65,65)};
+        painter.rect_filled(next,2.0,
+            if valid{Color32::from_rgba_unmultiplied(46,171,103,65)}
+            else{Color32::from_rgba_unmultiplied(213,76,76,85)});
+        painter.rect_stroke(next,2.0,Stroke::new(2.0,color),StrokeKind::Inside);
+        painter.text(next.center(),Align2::CENTER_CENTER,
+            format!("{} x {}",w,h),
+            FontId::proportional(11.0),color);
+    }
+
     fn size_dialog(&mut self,ctx:&egui::Context) {
-        if !self.size_panel_open {return;}
+        if !self.size_panel_open{return;}
         let mut open=self.size_panel_open;
         egui::Window::new("Map settings")
             .id(egui::Id::new("map_size_dialog"))
             .open(&mut open)
             .resizable(false).collapsible(false)
-            .anchor(Align2::CENTER_TOP,[0.0,145.0])
+            .anchor(Align2::CENTER_TOP,[0.0,52.0])
             .show(ctx,|ui|{
-                if let Some(id)=self.selected_map {
-                    let mut changed=false;
-                    let before=self.world.clone();
-                    if let Some(map)=self.world.maps.iter_mut().find(|m|m.id==id){
-                        ui.horizontal(|ui|{
-                            ui.label("Map name");
-                            changed=ui.add(egui::TextEdit::singleline(&mut map.name)
-                                .desired_width(170.0)).changed();
-                        });
-                    }
-                    if changed {
-                        self.before_gesture=Some(before);
-                        self.commit_edit();
-                    }
+                egui::ScrollArea::vertical()
+                    .id_salt("size_editor_scroll")
+                    .max_height((ctx.content_rect().height()-104.0).max(175.0))
+                    .show(ui,|ui|{
+                let Some(id)=self.selected_map else{
+                    ui.small("Select a map to resize.");return;
+                };
+                let original=self.world.maps.iter().find(|m|m.id==id)
+                    .map(|m|(m.width,m.height));
+                let Some((old_width,old_height))=original else{
+                    ui.small("Map no longer available.");return;
+                };
+                let mut changed=false;
+                let before=self.world.clone();
+                if let Some(map)=self.world.maps.iter_mut().find(|m|m.id==id){
+                    ui.horizontal(|ui|{
+                        ui.label("Map name");
+                        changed=ui.add(egui::TextEdit::singleline(&mut map.name)
+                            .desired_width(160.0)).changed();
+                    });
+                }
+                if changed{
+                    self.before_gesture=Some(before);
+                    self.commit_edit();
                 }
                 ui.horizontal(|ui|{
-                    ui.label("Wide");
-                    ui.add(egui::DragValue::new(&mut self.map_width).range(1..=100).speed(1));
-                    ui.label("Tall");
-                    ui.add(egui::DragValue::new(&mut self.map_height).range(1..=100).speed(1));
+                    let width=ui.add(egui::Button::new(
+                        format!("Width: {}",self.map_width))
+                        .fill(if self.number_axis==Some(SizeAxis::Width){
+                            Color32::from_rgb(176,217,248)
+                        }else{Color32::from_gray(234)}));
+                    if width.clicked(){
+                        self.number_axis=Some(SizeAxis::Width);
+                        self.replace_number=true;
+                    }
+                    let height=ui.add(egui::Button::new(
+                        format!("Height: {}",self.map_height))
+                        .fill(if self.number_axis==Some(SizeAxis::Height){
+                            Color32::from_rgb(176,217,248)
+                        }else{Color32::from_gray(234)}));
+                    if height.clicked(){
+                        self.number_axis=Some(SizeAxis::Height);
+                        self.replace_number=true;
+                    }
                 });
-                ui.label("Grow toward");
-                egui::Grid::new("expansion_directions").num_columns(2).spacing([8.0,8.0])
-                    .show(ui,|ui|{
-                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::UpperLeft,"↖ Upper left");
-                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::UpperRight,"↗ Upper right");
-                        ui.end_row();
-                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::LowerLeft,"↙ Lower left");
-                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::LowerRight,"↘ Lower right");
-                        ui.end_row();
-                    });
-                if let Some(id)=self.selected_map {
-                    // Recalculate for every keystroke: warn *before* Apply is pressed.
-                    let test=self.world.preview_resize(id,self.map_width,self.map_height,self.expand_direction);
-                    match &test {
-                        Ok(_)=>{ui.small("Preview valid — existing painted tiles will stay in place.");}
-                        Err(err)=>{ui.colored_label(Color32::from_rgb(195,52,52),format!("⚠ {err}"));}
-                    }
-                    if ui.add_enabled(test.is_ok(),egui::Button::new("Apply size")).clicked(){
-                        self.begin_edit();
-                        match self.world.resize_frame_towards(id,self.map_width,self.map_height,self.expand_direction) {
-                            Ok(())=>{
-                                self.message="Map resized.".into();
-                                self.size_panel_open=false;
+                if let Some(axis)=self.number_axis{
+                    ui.small("Tap digits to replace the selected number. Delete removes one digit.");
+                    egui::Grid::new("size_numeric_pad")
+                        .num_columns(3).spacing([5.0,4.0]).show(ui,|ui|{
+                        for row in [
+                            ["1","2","3"],["4","5","6"],
+                            ["7","8","9"],["Clear","0","Delete"]
+                        ]{
+                            for label in row{
+                                if ui.add_sized(vec2(64.0,33.0),
+                                    egui::Button::new(label)).clicked(){
+                                    let value=match axis{
+                                        SizeAxis::Width=>&mut self.map_width,
+                                        SizeAxis::Height=>&mut self.map_height,
+                                    };
+                                    match label{
+                                        "Clear"=>{*value=0;self.replace_number=false;}
+                                        "Delete"=>{*value/=10;self.replace_number=false;}
+                                        digit=>{
+                                            let d=digit.parse::<u32>().unwrap_or(0);
+                                            *value=if self.replace_number {d}
+                                                else{value.saturating_mul(10).saturating_add(d)
+                                                    .min(999)};
+                                            self.replace_number=false;
+                                        }
+                                    }
+                                    self.resize_guidance=None;
+                                }
                             }
-                            Err(err)=>self.message=err,
+                            ui.end_row();
                         }
-                        self.commit_edit();
-                    }
+                    });
                 }
+                ui.label("Grow toward");
+                let dirs=[
+                    (ExpandDirection::UpperLeft,"Upper left"),
+                    (ExpandDirection::UpperRight,"Upper right"),
+                    (ExpandDirection::LowerLeft,"Lower left"),
+                    (ExpandDirection::LowerRight,"Lower right"),
+                ];
+                egui::Grid::new("expansion_directions")
+                    .num_columns(2).spacing([8.0,8.0])
+                    .show(ui,|ui|{
+                        for (index,(dir,label)) in dirs.iter().enumerate(){
+                            let requested_grow=self.map_width>old_width
+                                ||self.map_height>old_height;
+                            let requested_shrink=self.map_width<old_width
+                                ||self.map_height<old_height;
+                            let enabled=if requested_grow || requested_shrink {
+                                self.map_width<=100 && self.map_height<=100
+                                    && self.world.preview_resize(id,self.map_width,
+                                        self.map_height,*dir).is_ok()
+                            }else{
+                                self.world.preview_resize(id,old_width+1,
+                                    old_height,*dir).is_ok()
+                                    ||self.world.preview_resize(id,old_width,
+                                        old_height+1,*dir).is_ok()
+                            };
+                            let chosen=*dir==self.expand_direction;
+                            let button=egui::Button::new(*label)
+                                .fill(if chosen {Color32::from_rgb(177,217,246)}
+                                      else{Color32::from_gray(238)});
+                            if ui.add_enabled(enabled,button).clicked(){
+                                self.expand_direction=*dir;
+                                self.resize_guidance=None;
+                            }
+                            if index%2==1 {ui.end_row();}
+                        }
+                    });
+                let key=(id,self.map_width,self.map_height,self.expand_direction);
+                let refresh=self.resize_guidance.as_ref().is_none_or(|cache|
+                    (cache.map_id,cache.width,cache.height,cache.direction)!=key);
+                if refresh{
+                    self.resize_guidance=Some(ResizeGuidance{
+                        map_id:id,width:self.map_width,height:self.map_height,
+                        direction:self.expand_direction,
+                        max_width:self.world.resize_axis_limit(id,self.map_height,
+                            self.expand_direction,true),
+                        max_height:self.world.resize_axis_limit(id,self.map_width,
+                            self.expand_direction,false),
+                    });
+                }
+                if let Some(limits)=self.resize_guidance{
+                    ui.small(format!(
+                        "Max without overlap or lost content: width {} at height {}; height {} at width {}",
+                        limits.max_width,self.map_height,limits.max_height,self.map_width));
+                }
+                self.resize_thumbnail(ui,id);
+                let valid=self.map_width>0 && self.map_height>0
+                    && self.map_width<=100 && self.map_height<=100;
+                let result=if valid{
+                    self.world.preview_resize(id,self.map_width,self.map_height,
+                        self.expand_direction)
+                }else{Err("Width and height must be between 1 and 100".into())};
+                match &result{
+                    Ok(_)=>{ui.small("Green preview: painted cells and events are preserved.");}
+                    Err(err)=>{ui.colored_label(Color32::from_rgb(185,54,54),
+                        format!("Cannot apply: {err}"));}
+                }
+                if ui.add_enabled(result.is_ok(),
+                    egui::Button::new("Apply size")).clicked(){
+                    self.begin_edit();
+                    match self.world.resize_frame_towards(id,self.map_width,
+                        self.map_height,self.expand_direction){
+                        Ok(())=>{
+                            self.message="Map resized".into();
+                            self.size_panel_open=false;
+                            self.resize_guidance=None;
+                        }
+                        Err(err)=>self.message=err,
+                    }
+                    self.commit_edit();
+                }
+                });
             });
-        self.size_panel_open &= open;
+        self.size_panel_open&=open;
     }
 
     fn request_tileset(&mut self,key:&str) {
