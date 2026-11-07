@@ -38,7 +38,8 @@ fn write_download(env: &mut JNIEnv<'_>, activity: &JObject<'_>, contents: &[u8],
         "()Landroid/content/ContentResolver;", &[])?.l()?;
     let values=env.new_object("android/content/ContentValues", "()V", &[])?;
     put_string(env, &values, "_display_name", name)?;
-    put_string(env, &values, "mime_type", "application/zip")?;
+    put_string(env, &values, "mime_type",
+        if name.ends_with(".json") { "application/json" } else { "application/zip" })?;
     put_string(env, &values, "relative_path", "Download/MapStudio")?;
     put_int(env, &values, "is_pending", 1)?;
     let collection=env.get_static_field("android/provider/MediaStore$Downloads",
@@ -80,6 +81,7 @@ fn write_download(env: &mut JNIEnv<'_>, activity: &JObject<'_>, contents: &[u8],
         Ok(())
     })();
     if result.is_err() {
+        let _=env.exception_clear();
         let null=JObject::null();
         let _=env.call_method(&resolver, "delete",
             "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I",
