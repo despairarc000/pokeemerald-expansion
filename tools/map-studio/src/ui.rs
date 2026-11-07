@@ -6,6 +6,14 @@ use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode { Terrain, Properties, Events }
+#[derive(Clone,Copy,PartialEq,Eq)]
+enum SheetScope { Both, Primary, Secondary }
+impl SheetScope {
+    const ALL:[Self;3]=[Self::Both,Self::Primary,Self::Secondary];
+    fn label(self)->&'static str {
+        match self {Self::Both=>"Both",Self::Primary=>"Primary",Self::Secondary=>"Secondary"}
+    }
+}
 
 /// Only a long hold creates/moves a frame. Immediate dragging still paints/pans.
 #[derive(Clone,Copy,Debug)]
@@ -41,6 +49,10 @@ pub struct MapStudioApp {
     warp_pick: Option<WarpPick>,
     warp_return_link: bool,
     brush_id: u16,
+    selected_stamp:Option<tiles::MetatileStamp>,
+    sheet_anchor:Option<(u16,u16)>,
+    sheet_scope:SheetScope,
+    group_select:bool,
     erase_tool: bool,
     elevation_brush: u8,
     elevation_tool: bool,
@@ -129,6 +141,10 @@ impl MapStudioApp {
             warp_pick: None,
             warp_return_link: false,
             brush_id: 1,
+            selected_stamp:None,
+            sheet_anchor:None,
+            sheet_scope:SheetScope::Both,
+            group_select:false,
             erase_tool: false,
             elevation_brush: 3,
             elevation_tool: false,
@@ -280,6 +296,9 @@ impl MapStudioApp {
         }
         self.pending_tileset=None;
         self.tile_filter=tiles::TileFilter::All;
+        self.selected_stamp=None;
+        self.sheet_anchor=None;
+        self.sheet_scope=SheetScope::Both;
         self.palette_page=0;
     }
 
@@ -335,6 +354,7 @@ impl MapStudioApp {
                     self.pending_tileset=None;
                     self.palette_page=0;
                     self.brush_id=1;
+                    self.selected_stamp=None;
                     self.commit_edit();
                 }
                 Err(err)=>{self.message=err;self.commit_edit();}
@@ -344,6 +364,7 @@ impl MapStudioApp {
             self.pending_tileset=None;
             self.palette_page=0;
             self.brush_id=1;
+            self.selected_stamp=None;
         }
     }
 
@@ -362,6 +383,8 @@ impl MapStudioApp {
         self.gesture=CanvasGesture::Idle;
         self.palette_page=0;
         self.tile_preview=None;
+        self.selected_stamp=None;
+        self.sheet_anchor=None;
         self.size_panel_open=false;
         self.switch_preferred_to_space();
         self.fit_world();
@@ -574,7 +597,7 @@ impl MapStudioApp {
                     if ui.small_button("Fill empty").clicked(){self.fill_selected();}
                 });
                 ui.horizontal_wrapped(|ui|{
-                    ui.label("Collection");
+                    ui.label("Tileset family");
                     egui::ComboBox::from_id_salt("tileset-group")
                         .selected_text(&self.tileset_group)
                         .width(135.0)
@@ -621,6 +644,7 @@ impl MapStudioApp {
                     }
                 }
                 ui.horizontal_wrapped(|ui|{
+                    ui.strong("Highlight");
                     for mode in tiles::TileFilter::ALL {
                         if ui.selectable_label(self.tile_filter==mode,mode.label()).clicked(){
                             self.tile_filter=mode;
@@ -629,63 +653,29 @@ impl MapStudioApp {
                     }
                 });
                 let chosen=self.current_pair();
-                let available=tiles::tile_ids(chosen).into_iter().filter(|id|
-                    tiles::matches_filter(chosen,*id,self.tile_filter)).collect::<Vec<_>>();
-                let total_pages=(available.len()+31)/32;
-                ui.horizontal(|ui|{
-                    if ui.add_enabled(self.palette_page>0,egui::Button::new("◀")).clicked(){
-                        self.palette_page=self.palette_page.saturating_sub(1);
+                ui.horizontal_wrapped(|ui|{
+                    ui.strong("Source sheet");
+                    for scope in SheetScope::ALL {
+                        ui.selectable_value(&mut self.sheet_scope,scope,scope.label());
                     }
-                    ui.label(format!("{} tiles · page {}/{}",
-                        available.len(),self.palette_page.min(total_pages.saturating_sub(1))+1,
-                        total_pages.max(1)));
-                    if ui.add_enabled(self.palette_page+1<total_pages,
-                        egui::Button::new("▶")).clicked(){
-                        self.palette_page+=1;
-                    }
+                    ui.toggle_value(&mut self.group_select,"Select group");
                 });
-                if !ui.input(|i|i.pointer.any_down()){self.palette_hold=None;}
-                let keys=available.into_iter().skip(self.palette_page*32).take(32)
-                    .collect::<Vec<_>>();
-                let cols=((ui.available_width()/60.0).floor() as usize).clamp(3,8);
-                let image_handle=self.atlas_cache.get(chosen.key).unwrap_or(&self.atlas).id();
-                egui::Grid::new("real_tile_gallery").num_columns(cols).spacing([6.0,6.0])
-                    .show(ui,|ui|{
-                        for (index,id) in keys.iter().enumerate(){
-                            let (tile,response)=ui.allocate_exact_size(vec2(53.0,53.0),Sense::click());
-                            ui.painter().rect_filled(tile,5.0,if *id==self.brush_id && !self.erase_tool{
-                                Color32::from_rgb(153,208,241)
-                            }else{Color32::from_gray(230)});
-                            ui.painter().image(image_handle,tile.shrink(4.0),
-                                Self::tile_uv(*id),Color32::WHITE);
-                            if response.clicked() {
-                                self.brush_id=*id;
-                                self.erase_tool=false;
-                                self.tile_preview=Some(*id);
-                            }
-                            if response.is_pointer_button_down_on(){
-                                let now=ui.input(|i|i.time);
-                                match self.palette_hold {
-                                    Some((held,since)) if held==*id => {
-                                        if now-since>=0.46{
-                                            self.tile_preview=Some(*id);
-                                        }else{ui.ctx().request_repaint_after(Duration::from_millis(25));}
-                                    }
-                                    _=>self.palette_hold=Some((*id,now))
-                                }
-                            }
-                            if (index+1)%cols==0{ui.end_row();}
-                        }
-                    });
-                if let Some(tile)=self.tile_preview {
-                    let behavior=tiles::behavior_name_in(chosen,tile)
-                        .unwrap_or("No known tile behavior");
-                    let friendly=behavior.strip_prefix("MB_").unwrap_or(behavior)
-                        .replace('_'," ").to_ascii_lowercase();
-                    ui.label(egui::RichText::new(format!("Selected tile · {friendly}"))
-                        .small().color(Color32::DARK_GRAY));
-                }else{
-                    ui.small("Select an image to paint. Hold to preview its behavior.");
+                ui.small("Scroll a continuous 8-column sheet. Tap one tile; use Select group then drag a rectangle to paint a whole structure.");
+                if self.tile_filter!=tiles::TileFilter::All {
+                    ui.small("Filter highlights matches in place; no tiles move. * = only named source tiles.");
+                }
+                if matches!(self.sheet_scope,SheetScope::Both|SheetScope::Primary) {
+                    self.metatile_sheet(ui,chosen,0,chosen.primary_count,"Primary · shared terrain");
+                }
+                if matches!(self.sheet_scope,SheetScope::Both|SheetScope::Secondary) {
+                    self.metatile_sheet(ui,chosen,512,chosen.secondary_count,"Secondary · local art");
+                }
+                if let Some(stamp)=self.selected_stamp.as_ref() {
+                    ui.label(format!("Selected {} × {} metatiles · source {}",
+                        stamp.width,stamp.height,chosen.label));
+                }else if let Some(tile)=self.tile_preview {
+                    ui.label(format!("Selected · {}",tiles::source_label_in(chosen,tile)
+                        .unwrap_or("unnamed source metatile")));
                 }
             }
             Mode::Properties => {
@@ -976,6 +966,93 @@ impl MapStudioApp {
         ui.label(egui::RichText::new(&self.message).small().color(Color32::DARK_GRAY));
     }
 
+    /// Choose one tile or a native-order rectangle from a single source
+    /// tileset. Group selection is explicit so an ordinary phone swipe scrolls.
+    fn choose_sheet_stamp(&mut self,pair:&tiles::TilePair,base:u16,from:u16,to:u16) {
+        if let Some(stamp)=tiles::stamp_from_sheet(pair,base,from,to){
+            if let Some(first)=stamp.cells.iter().find_map(|tile|*tile){
+                self.brush_id=first;
+                self.tile_preview=Some(first);
+                self.erase_tool=false;
+                self.selected_stamp=Some(stamp);
+            }
+        }
+    }
+
+    fn metatile_sheet(&mut self,ui:&mut egui::Ui,pair:&tiles::TilePair,
+                       base:u16,count:usize,label:&str) {
+        if count==0{return;}
+        ui.label(egui::RichText::new(format!("{label} · {count} source slots"))
+            .strong().small());
+        let side=(ui.available_width()/tiles::SHEET_COLUMNS as f32)
+            .floor().clamp(16.0,52.0);
+        let rows=(count+tiles::SHEET_COLUMNS-1)/tiles::SHEET_COLUMNS;
+        let (rect,response)=ui.allocate_exact_size(
+            vec2(side*tiles::SHEET_COLUMNS as f32,side*rows as f32),
+            if self.group_select {Sense::click_and_drag()} else {Sense::click()});
+        let locate=|point:Pos2| -> Option<u16> {
+            if !rect.contains(point){return None;}
+            let x=((point.x-rect.left())/side).floor() as usize;
+            let y=((point.y-rect.top())/side).floor() as usize;
+            let offset=y*tiles::SHEET_COLUMNS+x;
+            (x<tiles::SHEET_COLUMNS && offset<count)
+                .then_some(base+offset as u16)
+        };
+        let hovered=response.interact_pointer_pos().and_then(locate);
+        if self.group_select && response.drag_started(){
+            let press=ui.input(|i|i.pointer.press_origin())
+                .and_then(locate).or(hovered);
+            self.sheet_anchor=press.map(|first|(base,first));
+        }
+        if self.group_select && response.dragged(){
+            if let (Some((sheet,from)),Some(to))=(self.sheet_anchor,hovered){
+                if sheet==base {self.choose_sheet_stamp(pair,base,from,to);}
+            }
+        }
+        if response.drag_stopped(){self.sheet_anchor=None;}
+        if response.clicked(){
+            if let Some(id)=hovered {self.choose_sheet_stamp(pair,base,id,id);}
+        }
+        let visible=rect.intersect(ui.clip_rect());
+        if visible.is_negative(){return;}
+        let start_row=((visible.top()-rect.top())/side).floor().max(0.0) as usize;
+        let end_row=(((visible.bottom()-rect.top())/side).ceil() as usize)
+            .min(rows);
+        let texture=self.atlas_cache.get(pair.key).unwrap_or(&self.atlas).id();
+        for row in start_row..end_row {
+            for col in 0..tiles::SHEET_COLUMNS {
+                let index=row*tiles::SHEET_COLUMNS+col;
+                if index>=count{break;}
+                let id=base+index as u16;
+                let cell=Rect::from_min_size(pos2(rect.left()+col as f32*side,
+                    rect.top()+row as f32*side),Vec2::splat(side));
+                ui.painter().rect_filled(cell,0.0,Color32::from_gray(225));
+                if tiles::valid_in(pair,id) {
+                    ui.painter().image(texture,cell,Self::tile_uv(id),Color32::WHITE);
+                    if self.tile_filter!=tiles::TileFilter::All
+                        && !tiles::matches_filter(pair,id,self.tile_filter) {
+                        ui.painter().rect_filled(cell,0.0,Color32::from_black_alpha(120));
+                    }
+                } else {
+                    ui.painter().line_segment([cell.left_top(),cell.right_bottom()],
+                        Stroke::new(0.6,Color32::from_gray(205)));
+                }
+                let selected=self.selected_stamp.as_ref().is_some_and(|stamp|{
+                    if stamp.pair_key!=pair.key || stamp.base!=base {return false;}
+                    let origin=(stamp.origin-base) as usize;
+                    let left=origin%tiles::SHEET_COLUMNS;
+                    let top=origin/tiles::SHEET_COLUMNS;
+                    row>=top && row<top+stamp.height && col>=left && col<left+stamp.width
+                });
+                if selected {
+                    ui.painter().rect_stroke(cell.shrink(0.5),0.0,
+                        Stroke::new(2.0,Color32::from_rgb(16,120,213)),
+                        StrokeKind::Inside);
+                }
+            }
+        }
+    }
+
     fn tile_uv(id:u16) -> Rect {
         let col=(id%16) as f32/16.0;
         let row=(id/16) as f32/64.0;
@@ -1016,6 +1093,10 @@ impl MapStudioApp {
     }
 
     fn fill_selected(&mut self) {
+        if self.selected_stamp.as_ref().is_some_and(|stamp|!stamp.is_single()){
+            self.message="Fill empty uses one tile. Tap one sheet cell first.".into();
+            return;
+        }
         if self.world.maps.iter().any(|m|Some(m.id)==self.selected_map) {
             let new=Cell {terrain:crate::model::TileKind::Grass,metatile_id:self.brush_id,
                 collision:0,elevation:3};
@@ -1292,8 +1373,15 @@ impl MapStudioApp {
         loop {
             let at = GridPoint::new(x, y);
             match self.mode {
-                Mode::Terrain => { if self.erase_tool { self.world.erase(at); } else {
-                    self.world.paint_metatile(at, self.brush_id); } }
+                Mode::Terrain => {
+                    if self.erase_tool {
+                        self.world.erase(at);
+                    } else if let Some(stamp)=self.selected_stamp.as_ref() {
+                        self.world.paint_stamp(at,stamp);
+                    } else {
+                        self.world.paint_metatile(at,self.brush_id);
+                    }
+                }
                 Mode::Properties => { if self.elevation_tool {
                     self.world.set_elevation(at, self.elevation_brush);
                 } else { self.world.set_collision(at, self.collision_brush); } }
