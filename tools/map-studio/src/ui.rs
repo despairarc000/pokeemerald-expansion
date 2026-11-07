@@ -565,11 +565,12 @@ impl MapStudioApp {
                             }
                         });
                     let current=self.current_pair();
+                    let category=self.tileset_group.clone();
                     egui::ComboBox::from_id_salt("tileset-collection")
                         .selected_text(current.label)
                         .width(155.0)
                         .show_ui(ui,|ui|{
-                            for pair in tiles::pairs().iter().filter(|p|p.category==self.tileset_group){
+                            for pair in tiles::pairs().iter().filter(|p|p.category==category.as_str()){
                                 if ui.selectable_label(current.key==pair.key,
                                     pair.label).clicked(){
                                     let map=self.selected_map.and_then(|id|
