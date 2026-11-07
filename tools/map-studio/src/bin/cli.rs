@@ -1,22 +1,24 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
 use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World}, storage, export};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export};
 
 const HELP:&str = "Map Studio CLI
   new <project.json>
   inspect <project.json>
   add-map <project.json> <name> <x> <y> <width> <height>
+  place-map <project.json> <name> <fixed-x> <fixed-y> <width> <height> <direction>
   paint <project.json> <x> <y> <metatile-id>
   erase <project.json> <x> <y>
   fill <project.json> <map-id> <metatile-id>
   move <project.json> <map-id> <x> <y>
-  resize <project.json> <map-id> <width> <height>
+  resize <project.json> <map-id> <width> <height> [direction]
   event <project.json> <npc|sign|warp|trigger> <x> <y>
   validate <project.json>
   export <project.json> <output.zip>
 Notes: metatile IDs are decimal or 0xHEX, game export requires all cells
-painted and valid scripted events. GitHub sync is not part of this CLI yet.";
+painted and valid scripted events. Directions: upper-left, upper-right,
+lower-left, lower-right. GitHub sync is not part of this CLI yet.";
 
 fn field<'a>(args:&'a [String],index:usize,label:&str)->Result<&'a str,String> {
     args.get(index).map(|s|s.as_str()).ok_or(format!("Missing {label}\n{HELP}"))
@@ -32,6 +34,16 @@ where T:TryFrom<u64> {
 }
 fn coord(args:&[String],index:usize,label:&str)->Result<i32,String> {
     field(args,index,label)?.parse::<i32>().map_err(|_|format!("{label} must be a signed integer"))
+}
+
+fn direction(raw:&str)->Result<ExpandDirection,String> {
+    match raw.to_ascii_lowercase().replace('_',"-").as_str(){
+        "upper-left"|"ul" => Ok(ExpandDirection::UpperLeft),
+        "upper-right"|"ur" => Ok(ExpandDirection::UpperRight),
+        "lower-left"|"ll" => Ok(ExpandDirection::LowerLeft),
+        "lower-right"|"lr" => Ok(ExpandDirection::LowerRight),
+        _ => Err("Direction must be upper-left, upper-right, lower-left or lower-right".into()),
+    }
 }
 
 fn run(args:&[String])->Result<(),String> {
@@ -64,6 +76,17 @@ fn run(args:&[String])->Result<(),String> {
             changed=true;
             println!("Created map ID {id}");
         }
+        "place-map" => {
+            let name=field(args,3,"name")?;
+            let p=GridPoint::new(coord(args,4,"fixed-x")?,coord(args,5,"fixed-y")?);
+            let width=int(args,6,"width")?;
+            let height=int(args,7,"height")?;
+            let dir=direction(field(args,8,"direction")?)?;
+            let origin=dir.origin_at(p,width,height)?;
+            let id=world.add_map(name,origin,width,height).map_err(|e|e.to_owned())?;
+            changed=true;
+            println!("Created map ID {id}, growing {} from fixed point",dir.label());
+        }
         "paint" => {
             let p=GridPoint::new(coord(args,3,"x")?,coord(args,4,"y")?);
             let tile=int(args,5,"metatile-id")?;
@@ -94,7 +117,11 @@ fn run(args:&[String])->Result<(),String> {
             let id=int(args,3,"map-id")?;
             let width=int(args,4,"width")?;
             let height=int(args,5,"height")?;
-            if !world.resize_frame(id,width,height){return Err("Frame resize rejected (overlap or invalid size)".into());}
+            let dir=match args.get(6) {
+                Some(s)=>direction(s)?,
+                None=>ExpandDirection::LowerRight,
+            };
+            world.resize_frame_towards(id,width,height,dir)?;
             changed=true;
         }
         "event" => {
@@ -150,6 +177,38 @@ mod tests {
         let args=vec!["bin".into(),"new".into(),path.to_string_lossy().into_owned()];
         run(&args).unwrap();
         assert!(run(&args).unwrap_err().contains("already exists"));
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod direction_cli_tests {
+    use super::*;
+    #[test]
+    fn parser_accepts_four_directions_and_rejects_unknown() {
+        for name in ["ul","ur","ll","lr","upper-left","upper-right","lower-left","lower-right"] {
+            assert!(direction(name).is_ok(), "{name}");
+        }
+        assert!(direction("downward").is_err());
+    }
+    #[test]
+    fn create_and_resize_anchored_frames_uses_same_engine_as_apk() {
+        let path=std::env::temp_dir()
+            .join(format!("mapstudio-cli-corners-{}.json",std::process::id()));
+        let _=std::fs::remove_file(&path);
+        let p=path.to_string_lossy().to_string();
+        for cmd in [
+            vec!["bin","new",p.as_str()],
+            vec!["bin","place-map",p.as_str(),"A","20","30","3","4","upper-left"],
+            vec!["bin","resize",p.as_str(),"1","5","6","upper-right"],
+        ] {
+            let args:Vec<String>=cmd.iter().map(|s|s.to_string()).collect();
+            run(&args).unwrap();
+        }
+        let world=storage::load(&path).unwrap();
+        assert_eq!(world.maps[0].origin,GridPoint::new(18,25));
+        assert_eq!(world.maps[0].width,5);
+        assert_eq!(world.maps[0].height,6);
         std::fs::remove_file(path).unwrap();
     }
 }

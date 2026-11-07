@@ -55,3 +55,12 @@ Run `cargo run --bin map-studio-cli -- help` for other commands.
 - Implement **GitHub Pull/Publish** with secure user authorization, then a separate live collaboration service and API. **No automatic AI-to-phone sync exists yet.**
 
 Keep this tool isolated from the Emerald ROM runtime.
+## Phone editor UX (next build)
+
+- Drag empty white canvas to pan in any mode; choose **Pan** only to move the view while touching a painted map.
+- **+ Map** opens a compact Size panel. Set exact width/height and the direction to grow, then tap empty canvas to place the frame. The tapped point is the fixed opposite corner.
+- Select a frame and choose **Size** to resize it in any of four directions; existing occupied cells/events stay at their world coordinates. **Fit** centers all map frames.
+- **Properties** shows C0–C3 collision overlays or E0–E15 elevation overlays, with the selected cell's exact values. Properties require a painted metatile.
+- **Events**: tap a cell to select/place; tap a type to change it; double-tap or use Edit details for the extended form.
+- New installs start with an empty canvas; existing autosaves still load.
+- The CLI supports `place-map` and directional `resize` using the same Rust geometry rules.
