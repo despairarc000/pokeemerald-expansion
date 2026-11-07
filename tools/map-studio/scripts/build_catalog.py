@@ -61,6 +61,13 @@ def colored(im,colors):
     cp.putpalette([channel for rgb in colors for channel in rgb])
     return cp
 
+def opaque_mask(indexed):
+    # A P-mode image carries an RGB palette; convert("L") after point()
+    # would re-interpret the result through that palette and erase artwork.
+    # Read the literal 4bpp indices as L values *before* building the mask.
+    indexes=Image.frombytes("L",indexed.size,indexed.tobytes())
+    return indexes.point(lambda value:0 if value==0 else 255)
+
 def generate(main,local,output):
     palettes={}
     for bank in range(16):
@@ -118,7 +125,7 @@ def generate(main,local,output):
             tile_y=(filler_index//(filler_img.width//8))*8
             filler=filler_img.crop((tile_x,tile_y,tile_x+8,tile_y+8))
             indexed=images[0].crop((tile_x,tile_y,tile_x+8,tile_y+8))
-            filler.putalpha(indexed.point(lambda value:0 if value==0 else 255).convert("L"))
+            filler.putalpha(opaque_mask(indexed))
             for fy in (0,8):
                 for fx in (0,8):
                     atlas.alpha_composite(filler,(x+fx,y+fy))
@@ -143,7 +150,7 @@ def generate(main,local,output):
                 idx_img=images[image_src].crop((tile_x,tile_y,tile_x+8,tile_y+8))
                 if flipx:idx_img=idx_img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
                 if flipy:idx_img=idx_img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-                mask=idx_img.point(lambda value:0 if value==0 else 255).convert("L")
+                mask=opaque_mask(idx_img)
                 cell.putalpha(mask)
                 cache[key]=cell
             picture=cache[key]
