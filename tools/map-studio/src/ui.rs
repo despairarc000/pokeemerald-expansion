@@ -331,7 +331,7 @@ impl MapStudioApp {
                     let center = self.screen_at(rect,
                         (map.origin.x as f32 + marker.x as f32 + 0.5),
                         (map.origin.y as f32 + marker.y as f32 + 0.5));
-                    painter.circle_filled(center,(s*.36).clamp(4.0,10.0),Color32::from_rgb(117,66,179));
+                    painter.circle_filled(center,(s*0.36).clamp(4.0,10.0),Color32::from_rgb(117,66,179));
                     painter.text(center,Align2::CENTER_CENTER,"!",FontId::proportional(10.0),Color32::WHITE);
                 }
             }
