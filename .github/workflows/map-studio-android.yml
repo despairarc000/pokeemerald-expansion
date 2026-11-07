@@ -66,6 +66,22 @@ jobs:
           assert layout['cells'][0][0]==(0x170 | (3 << 12))
           print('CLI exported 10x10 native grid and project snapshot')
           PY
+      - name: Convert CLI-exported layout with existing Pokémon map generator
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,struct,subprocess,sys,json
+          root=Path('../..').resolve()
+          archive=zipfile.ZipFile('target/cli-export.zip')
+          archive.extractall(root)
+          subprocess.run([sys.executable,str(root/'tools/textmap/build_textmaps.py')],check=True)
+          binary=(root/'data/layouts/Meadowmere_TestVillage/map.bin').read_bytes()
+          assert len(binary)==200,len(binary)
+          assert binary==struct.pack('<H',0x3170)*100
+          map_json=json.loads((root/'data/maps/Meadowmere_TestVillage/map.json').read_text())
+          assert map_json['layout']=='LAYOUT_MEADOWMERE_TESTVILLAGE'
+          print('Verified native map generator output:',len(binary),'bytes; 100 packed cells')
+          PY
       - name: Compile desktop UI
         run: cargo check --all-targets
 
