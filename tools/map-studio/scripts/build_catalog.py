@@ -40,7 +40,7 @@ def read_palette(path):
         raise ValueError("Unrecognized palette "+str(path))
     return [tuple(map(int,row.split())) for row in rows[3:19]]
 def colored(im,colors):
-    cp=im.copy()
+    cp=im.convert("P") if im.mode=="L" else im.copy()
     colors=colors+[(0,0,0)]*(256-len(colors))
     cp.putpalette([channel for rgb in colors for channel in rgb])
     return cp
@@ -55,7 +55,7 @@ def generate(main,local,output):
         palettes.append(read_palette(fn))
     images=[Image.open(d/"tiles.png") for d in (main,local)]
     for img in images:
-        if img.mode!="P" or img.width%8 or img.height%8 or max(img.getdata())>15:
+        if img.mode not in ("P","L") or img.width%8 or img.height%8 or max(img.getdata())>15:
             raise ValueError("Invalid indexed 8x8 tiles "+str(img))
     tile_banks=[[colored(img,pal).convert("RGBA") for pal in palettes]
                 for img in images]
@@ -137,6 +137,9 @@ for main_sym,sec_sym in pairs:
     catalog.append((key,main,local,output,first,second,group_for(main.name,local.name),
                     main_sym,sec_sym))
 if not any(c[0]=="general/petalburg" for c in catalog):
+    for p,s,reason in omitted:
+        if p=="gTileset_General" and s=="gTileset_Petalburg":
+            print("DEFAULT SOURCE FAILURE:",reason,flush=True)
     raise RuntimeError("Default General/Petalburg atlas failed to build")
 if len(catalog)<60:
     raise RuntimeError("Too few actual Emerald tileset pairs: "+str(len(catalog)))

@@ -400,7 +400,8 @@ impl World {
         let top = i64::from(origin.y);
         let right = left + i64::from(width);
         let bottom = top + i64::from(height);
-        if self.maps.iter().any(|m| left < m.right() && right > i64::from(m.origin.x)
+        if self.maps.iter().any(|m| m.space_id==self.active_space_id &&
+            left < m.right() && right > i64::from(m.origin.x)
             && top < m.bottom() && bottom > i64::from(m.origin.y)) {
             return Err("Map frames cannot overlap");
         }
