@@ -255,7 +255,7 @@ impl MapStudioApp {
 
     fn pan_only(&self)->bool{
         match self.mode {
-            Mode::Terrain=>!self.tool_active,
+            Mode::Terrain=>self.active_pack.is_some() || !self.tool_active,
             Mode::Properties=>!self.properties_active,
             Mode::Events=>!self.events_active,
         }
@@ -1133,6 +1133,10 @@ impl MapStudioApp {
 
 
     fn terrain_toolbar(&mut self, ui:&mut egui::Ui) {
+                if self.active_pack.is_some(){
+                    ui.small("Reference artwork · native conversion needed for painting");
+                    return;
+                }
                 ui.horizontal_wrapped(|ui|{
                     ui.strong("Tool");
                     let brush=self.tool_active && !self.erase_tool && !self.bucket_tool;
@@ -1196,24 +1200,150 @@ impl MapStudioApp {
                 });
     }
 
-    fn terrain_sheet_content(&mut self, ui:&mut egui::Ui) {
-        let chosen=self.browsing_pair();
-        if self.pending_tileset.is_some(){
-            ui.colored_label(Color32::from_rgb(150,84,26),
-                "Artwork preview only — confirm the change above before painting.");
+    fn terrain_sheet_content(&mut self,ui:&mut egui::Ui){
+        if let Some(index)=self.active_pack{
+            if self.artwork_view==ArtworkView::Metatiles{
+                self.imported_artwork_sheet(ui,index);
+            }else{
+                self.prefab_gallery(ui,Some(index));
+            }
+        }else if self.artwork_view==ArtworkView::Prefabs{
+            self.prefab_gallery(ui,None);
+        }else{
+            let pair=self.browsing_pair();
+            if self.pending_tileset.is_some(){
+                ui.small("Preview only — use the selected artwork before painting.");
+            }
+            self.metatile_sheet(ui,pair,0,pair.primary_count,"Shared metatiles");
+            self.metatile_sheet(ui,pair,512,pair.secondary_count,"Local metatiles");
+            if let Some(stamp)=self.selected_stamp.as_ref(){
+                ui.small(format!("{} × {} selected",stamp.width,stamp.height));
+            }else if let Some(tile)=self.tile_preview{
+                ui.small(format!("Selected: {}",tiles::source_label_in(pair,tile)
+                    .unwrap_or("source metatile")));
+            }
         }
-                ui.small("Tap a tile to paint. Hold then slide to select a rectangle.");
-                self.metatile_sheet(ui,chosen,0,chosen.primary_count,"Shared terrain");
-                self.metatile_sheet(ui,chosen,512,chosen.secondary_count,"Local tiles");
-                if let Some(stamp)=self.selected_stamp.as_ref() {
-                    ui.label(format!("Selected {} × {} metatiles · source {}",
-                        stamp.width,stamp.height,chosen.label));
-                }else if let Some(tile)=self.tile_preview {
-                    ui.label(format!("Selected · {}",tiles::source_label_in(chosen,tile)
-                        .unwrap_or("unnamed source metatile")));
-                }
-
         ui.small(&self.message);
+    }
+
+    fn prefab_gallery(&mut self,ui:&mut egui::Ui,imported:Option<usize>){
+        if let Some(index)=imported{
+            let Some(package)=self.installed_packs.get(index) else{return;};
+            let cache_key=format!("imported:{}",package.filename);
+            let texture=self.atlas_cache.get(&cache_key).unwrap_or(&self.atlas).id();
+            let displayed:Vec<(&prefabs::Prefab,bool)>=package.prefabs.iter()
+                .filter(|p|p.metatiles.iter().all(|t|package.valid(t.metatile_id)))
+                .map(|p|(p,false)).collect();
+            if displayed.is_empty(){
+                ui.small("No usable prefab definitions in this imported package.");
+            }
+            for (prefab,_) in displayed{
+                Self::prefab_card(ui,prefab,texture,false,false);
+            }
+            ui.small("Imported prefab previews are read-only until native conversion.");
+            return;
+        }
+        let pair=self.browsing_pair();
+        let indices=prefabs::compatible_indices(pair);
+        if indices.is_empty(){
+            ui.small("No Porymap prefab matches this source tileset. Original metatiles are available.");
+            return;
+        }
+        let texture=self.atlas_cache.get(pair.key).unwrap_or(&self.atlas).id();
+        ui.small(format!("{} compatible Emerald prefabs · Porymap",indices.len()));
+        for index in indices{
+            let prefab=&prefabs::emerald()[index];
+            let selected=self.selected_prefab==Some(index);
+            if Self::prefab_card(ui,prefab,texture,selected,true).clicked(){
+                if self.pending_tileset.is_some(){
+                    self.message="Use the previewed artwork first, then choose a prefab.".into();
+                    continue;
+                }
+                self.selected_prefab=Some(index);
+                self.selected_stamp=None;
+                self.tile_preview=None;
+                self.bucket_tool=false;
+                self.erase_tool=false;
+                self.tool_active=true;
+                self.message=format!("Selected prefab: {} · {} × {}",
+                    prefab.name,prefab.width,prefab.height);
+            }
+        }
+    }
+
+    fn prefab_card(ui:&mut egui::Ui,prefab:&prefabs::Prefab,
+                   texture:egui::TextureId,selected:bool,paintable:bool)->egui::Response{
+        let width=ui.available_width().max(170.0);
+        let (rect,response)=ui.allocate_exact_size(vec2(width,108.0),
+            if paintable{Sense::click()}else{Sense::hover()});
+        let painter=ui.painter_at(rect);
+        painter.rect_filled(rect,6.0,if selected{
+            Color32::from_rgb(198,228,250)
+        }else{Color32::from_gray(242)});
+        if selected{
+            painter.rect_stroke(rect,6.0,Stroke::new(2.0,
+                Color32::from_rgb(35,119,191)),StrokeKind::Inside);
+        }
+        let preview=Rect::from_min_size(rect.min+vec2(6.0,6.0),
+            vec2((rect.width()*0.56).min(160.0),96.0));
+        let scale=(preview.width()/prefab.width.max(1) as f32)
+            .min(preview.height()/prefab.height.max(1) as f32).min(22.0);
+        let origin=pos2(preview.left(),preview.top());
+        if rect.intersects(ui.clip_rect()) {
+            for tile in &prefab.metatiles{
+                if tile.metatile_id>=1024{continue;}
+                let at=Rect::from_min_size(origin+vec2(tile.x as f32*scale,
+                    tile.y as f32*scale),Vec2::splat(scale));
+                painter.image(texture,at,Self::tile_uv(tile.metatile_id),Color32::WHITE);
+            }
+        }
+        let text_x=preview.right()+8.0;
+        painter.text(pos2(text_x,rect.top()+19.0),Align2::LEFT_CENTER,
+            prefab.name.as_str(),FontId::proportional(13.0),
+            Color32::from_rgb(45,56,69));
+        painter.text(pos2(text_x,rect.top()+43.0),Align2::LEFT_CENTER,
+            format!("{} × {}",prefab.width,prefab.height),
+            FontId::proportional(12.0),Color32::DARK_GRAY);
+        painter.text(pos2(text_x,rect.top()+70.0),Align2::LEFT_CENTER,
+            if paintable{"Tap to stamp"}else{"Preview only"},
+            FontId::proportional(11.0),Color32::DARK_GRAY);
+        response
+    }
+
+    fn imported_artwork_sheet(&mut self,ui:&mut egui::Ui,index:usize){
+        let Some(pack)=self.installed_packs.get(index) else{return;};
+        let atlas_key=format!("imported:{}",pack.filename);
+        let texture=self.atlas_cache.get(&atlas_key).unwrap_or(&self.atlas).id();
+        ui.small(format!("{} · {} (preview)",pack.manifest.collection,pack.manifest.label));
+        for (base,count,label) in [
+            (0u16,pack.manifest.primary_count,"Primary source"),
+            (512u16,pack.manifest.secondary_count,"Secondary source")
+        ] {
+            if count==0{continue;}
+            ui.small(format!("{label} · {count} metatiles"));
+            let side=(ui.available_width()/tiles::SHEET_COLUMNS as f32)
+                .floor().clamp(16.0,52.0);
+            let rows=(count+tiles::SHEET_COLUMNS-1)/tiles::SHEET_COLUMNS;
+            let (rect,_)=ui.allocate_exact_size(
+                vec2(side*tiles::SHEET_COLUMNS as f32,side*rows as f32),Sense::hover());
+            let visible=rect.intersect(ui.clip_rect());
+            if visible.width()<=0.0 || visible.height()<=0.0{continue;}
+            let start=((visible.top()-rect.top())/side).floor().max(0.0) as usize;
+            let end=(((visible.bottom()-rect.top())/side).ceil() as usize).min(rows);
+            for row in start..end{
+                for col in 0..tiles::SHEET_COLUMNS{
+                    let offset=row*tiles::SHEET_COLUMNS+col;
+                    if offset>=count{break;}
+                    let id=base+offset as u16;
+                    if !pack.valid(id){continue;}
+                    let dest=Rect::from_min_size(
+                        rect.min+vec2(col as f32*side,row as f32*side),
+                        Vec2::splat(side));
+                    ui.painter().image(texture,dest,Self::tile_uv(id),Color32::WHITE);
+                }
+            }
+        }
+        ui.small("This imported package is browsable; native source conversion is not yet installed.");
     }
 
     /// Large, touch-friendly event cards. Icons are UI symbols except NPC
@@ -2177,7 +2307,7 @@ impl MapStudioApp {
             let at = GridPoint::new(x, y);
             match self.mode {
                 Mode::Terrain => {
-                    if self.tool_active && !self.bucket_tool {
+                    if self.active_pack.is_none() && self.tool_active && !self.bucket_tool {
                         if self.erase_tool {
                             self.world.erase(at);
                         } else if let Some(index)=self.selected_prefab {
@@ -2550,7 +2680,8 @@ impl MapStudioApp {
                                 self.commit_edit();
                             }
                         }
-                    }else if self.mode==Mode::Terrain && self.tool_active && self.bucket_tool {
+                    }else if self.mode==Mode::Terrain && self.active_pack.is_none()
+                        && self.tool_active && self.bucket_tool {
                         if self.selected_stamp.as_ref().is_some_and(|stamp|!stamp.is_single()){
                             self.message="Bucket fills a single metatile. Tap one tile in the sheet.".into();
                         }else{
@@ -2564,7 +2695,8 @@ impl MapStudioApp {
                             self.tool_active=true;
                         }
                     }else if (self.mode==Mode::Properties && self.properties_active)
-                        || (self.mode==Mode::Terrain && self.tool_active) {
+                        || (self.mode==Mode::Terrain && self.active_pack.is_none()
+                            && self.tool_active) {
                         self.begin_edit();
                         self.paint_line(start,start);
                         self.commit_edit();
