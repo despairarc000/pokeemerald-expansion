@@ -1,11 +1,14 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
-use crate::{storage, export, tiles, choices};
+use crate::{storage, export, tiles, choices, artwork, prefabs};
 use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode { Terrain, Properties, Events }
+
+#[derive(Clone,Copy,PartialEq,Eq)]
+enum ArtworkView { Metatiles, Prefabs }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 enum SizeAxis { Width, Height }
@@ -63,6 +66,13 @@ pub struct MapStudioApp {
     warp_return_link: bool,
     brush_id: u16,
     selected_stamp:Option<tiles::MetatileStamp>,
+    selected_prefab:Option<usize>,
+    artwork_view:ArtworkView,
+    active_pack:Option<usize>,
+    installed_packs:Vec<artwork::Package>,
+    import_artwork_open:bool,
+    available_artwork_files:Vec<(String,String)>,
+    selected_artwork_file:Option<String>,
     sheet_anchor:Option<(u16,u16)>,
     sheet_hold:Option<(u16,u16,f64,Pos2)>,
     bucket_tool:bool,
@@ -175,6 +185,15 @@ impl MapStudioApp {
             warp_return_link: false,
             brush_id: 1,
             selected_stamp:None,
+            selected_prefab:None,
+            artwork_view:ArtworkView::Metatiles,
+            active_pack:None,
+            installed_packs:artwork::default_dir(save_path.as_deref())
+                .map(|path|artwork::load_installed(&path))
+                .unwrap_or_default(),
+            import_artwork_open:false,
+            available_artwork_files:Vec::new(),
+            selected_artwork_file:None,
             sheet_anchor:None,
             sheet_hold:None,
             bucket_tool:false,
@@ -381,6 +400,7 @@ impl MapStudioApp {
         self.pending_tileset=None;
         self.tile_filter=tiles::TileFilter::All;
         self.selected_stamp=None;
+        self.selected_prefab=None;
         self.sheet_anchor=None;
     }
 
@@ -439,6 +459,7 @@ impl MapStudioApp {
                     self.pending_tileset=None;
                     self.brush_id=1;
                     self.selected_stamp=None;
+                    self.selected_prefab=None;
                     self.commit_edit();
                 }
                 Err(err)=>{self.message=err;self.commit_edit();}
@@ -448,6 +469,7 @@ impl MapStudioApp {
             self.pending_tileset=None;
             self.brush_id=1;
             self.selected_stamp=None;
+            self.selected_prefab=None;
         }
     }
 
@@ -829,6 +851,7 @@ impl MapStudioApp {
         }
         // Do not keep a metatile stamp from a different source pair.
         self.selected_stamp=None;
+        self.selected_prefab=None;
         self.tile_preview=None;
         self.find_index=0;
         self.find_target=None;
@@ -1561,6 +1584,7 @@ impl MapStudioApp {
                 self.bucket_tool=false;
                 self.tool_active=true;
                 self.selected_stamp=Some(stamp);
+                self.selected_prefab=None;
             }
         }
     }
@@ -2062,6 +2086,10 @@ impl MapStudioApp {
                     if self.tool_active && !self.bucket_tool {
                         if self.erase_tool {
                             self.world.erase(at);
+                        } else if let Some(index)=self.selected_prefab {
+                            if let Some(prefab)=prefabs::emerald().get(index){
+                                self.world.paint_prefab(at,prefab);
+                            }
                         } else if let Some(stamp)=self.selected_stamp.as_ref() {
                             self.world.paint_stamp(at,stamp);
                         } else {
