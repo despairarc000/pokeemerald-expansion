@@ -60,6 +60,30 @@ pub fn source_label_in(pair:&TilePair,id:u16)->Option<&'static str>{
     pair.labels.iter().find(|(candidate,_)|*candidate==id)
         .map(|(_,name)|*name)
 }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub struct SourceMetatileAttributes {
+    pub metatile_id:u16,
+    pub behavior:&'static str,
+    pub layer_type:&'static str,
+    pub raw:u16,
+}
+/// Only fields actually defined for Emerald (behavior and layer type) are
+/// exposed; collision/elevation are independent per-cell block properties.
+pub fn attributes_in(pair:&TilePair,id:u16)->Option<SourceMetatileAttributes>{
+    if !valid_in(pair,id){return None;}
+    let (attrs,index)=if id<512{(pair.attr_primary,id as usize)}
+        else{(pair.attr_secondary,(id-512) as usize)};
+    let raw=u16::from_le_bytes([attrs[index*2],attrs[index*2+1]]);
+    let layer_type=match (raw>>12)&15 {
+        0=>"Normal — middle/top",1=>"Covered — bottom/middle",
+        2=>"Split — bottom/top",_=>"Unknown source layer"
+    };
+    Some(SourceMetatileAttributes{
+        metatile_id:id,
+        behavior:behavior_name_in(pair,id).unwrap_or("Unknown behavior"),
+        layer_type,raw,
+    })
+}
 pub fn is_warp_in(pair:&TilePair,id:u16)->bool {
     let Some(name)=behavior_name_in(pair,id) else{return true;};
     ["WARP","DOOR","LADDER","ESCALATOR","HOLE","STAIR","TELEPORT"]
@@ -284,5 +308,21 @@ mod source_filter_tests {
         assert!(matches_filter(p,1,TileFilter::Grass));
         assert!(matches_filter(p,1,TileFilter::All));
         assert!(!matches_filter(p,1,TileFilter::Buildings));
+    }
+}
+
+#[cfg(test)]
+mod source_properties_tests{
+    use super::*;
+    #[test]
+    fn source_metadata_uses_actual_pair_and_binary(){
+        let pair=pair(DEFAULT_PAIR).unwrap();
+        let prop=attributes_in(pair,1).unwrap();
+        assert_eq!(prop.metatile_id,1);
+        assert_eq!(prop.behavior,"MB_NORMAL");
+        assert!(prop.layer_type.starts_with("Normal")||
+            prop.layer_type.starts_with("Covered")||
+            prop.layer_type.starts_with("Split"));
+        assert!(attributes_in(pair,1024).is_none());
     }
 }
