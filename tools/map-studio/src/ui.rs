@@ -889,9 +889,12 @@ impl MapStudioApp {
         let collection=if let Some(index)=self.active_pack {
             self.installed_packs.get(index).map(|p|
                 format!("{} · {}",p.manifest.engine,p.manifest.collection))
-                .unwrap_or_else(||"Emerald".into())
-        }else{"Emerald".into()};
-        let mut choices=vec![("builtin".to_string(),"Emerald".to_string(),None)];
+                .unwrap_or_else(||self.browsing_pair().collection.to_string())
+        }else{self.browsing_pair().collection.to_string()};
+        let mut choices=vec![
+            ("builtin:emerald".to_string(),"Emerald".to_string(),None),
+            ("builtin:frlg".to_string(),"FireRed/LeafGreen".to_string(),None),
+        ];
         for (index,pack) in self.installed_packs.iter().enumerate(){
             let key=format!("{} · {}",pack.manifest.engine,pack.manifest.collection);
             if !choices.iter().any(|(label,_,_)|label==&key){
@@ -911,9 +914,14 @@ impl MapStudioApp {
                             self.selected_prefab=None;
                             self.selected_stamp=None;
                             self.artwork_view=ArtworkView::Metatiles;
+                            if self.active_pack.is_none(){
+                                if let Some(first)=tiles::first_in_collection(label){
+                                    self.request_tileset(first.key);
+                                }
+                            }
                             self.message=if self.active_pack.is_some(){
-                                "Imported artwork preview; only verified native Emerald art is paintable".into()
-                            }else{"Built-in Emerald source artwork".into()};
+                                "Imported artwork preview; only verified native source is paintable".into()
+                            }else{format!("Built-in {label} source artwork")};
                             ui.close();
                         }
                         let _=key;
@@ -939,21 +947,21 @@ impl MapStudioApp {
                 .show(ui,|ui|{
                     ui.horizontal(|ui|{
                         for category in tiles::SOURCE_CATEGORIES{
+                            let Some(first)=tiles::first_in_collection_category(current.collection,category)
+                                else{continue;};
                             let active=current.category==category;
                             if ui.add_sized(vec2((category.len() as f32*7.0+24.0).max(72.0),34.0),
                                 egui::Button::new(category).fill(
                                     if active{Color32::from_rgb(184,218,247)}
                                     else{Color32::from_gray(234)})).clicked(){
-                                if let Some(first)=tiles::first_in_category(category){
-                                    self.request_tileset(first.key);
-                                }
+                                self.request_tileset(first.key);
                             }
                         }
                     });
                 });
             let pair=self.browsing_pair();
             let group:Vec<&'static tiles::TilePair>=tiles::pairs().iter()
-                .filter(|p|p.category==pair.category).collect();
+                .filter(|p|p.collection==pair.collection && p.category==pair.category).collect();
             let pos=group.iter().position(|p|p.key==pair.key).unwrap_or(0);
             ui.horizontal(|ui|{
                 if ui.add_sized(vec2(34.0,36.0),egui::Button::new("‹")).clicked()
@@ -1261,15 +1269,16 @@ impl MapStudioApp {
             return;
         }
         let pair=self.browsing_pair();
+        let library=prefabs::by_collection(pair.collection);
         let indices=prefabs::compatible_indices(pair);
-        if indices.is_empty(){
-            ui.small("No Porymap prefab matches this source tileset. Original metatiles are available.");
-            return;
-        }
         let texture=self.atlas_cache.get(pair.key).unwrap_or(&self.atlas).id();
-        ui.small(format!("{} compatible Emerald prefabs · Porymap",indices.len()));
-        for index in indices{
-            let prefab=&prefabs::emerald()[index];
+        ui.small(format!("{} compatible of {} {} prefabs · Porymap",
+            indices.len(),library.len(),pair.collection));
+        if indices.is_empty(){
+            ui.small("No prefab fits this tileset. Choose another below to preview its correct artwork.");
+        }
+        for &index in &indices{
+            let prefab=&library[index];
             let selected=self.selected_prefab==Some(index);
             if Self::prefab_card(ui,prefab,texture,selected,true).clicked(){
                 if self.pending_tileset.is_some(){
@@ -1285,6 +1294,28 @@ impl MapStudioApp {
                 self.message=format!("Selected prefab: {} · {} × {}",
                     prefab.name,prefab.width,prefab.height);
             }
+        }
+        // Prefabs are defined per source pair. Always expose the whole
+        // built-in catalog; hiding incompatible entries made the tab look empty.
+        let alternatives:Vec<(usize,&'static tiles::TilePair)>=library.iter()
+            .enumerate().filter(|(i,_)|!indices.contains(i))
+            .filter_map(|(i,prefab)|{
+                tiles::pairs().iter().find(|candidate|
+                    candidate.collection==pair.collection
+                        && prefabs::compatible(prefab,candidate))
+                    .map(|candidate|(i,candidate))
+            }).collect();
+        if !alternatives.is_empty(){
+            ui.collapsing(format!("Browse {} more prefabs",alternatives.len()),|ui|{
+                for (index,source_pair) in &alternatives{
+                    ui.horizontal(|ui|{
+                        ui.label(format!("{} · {}",library[*index].name,source_pair.label));
+                        if ui.button("View").clicked(){
+                            self.request_tileset(source_pair.key);
+                        }
+                    });
+                }
+            });
         }
     }
 
@@ -2185,7 +2216,7 @@ impl MapStudioApp {
                 self.publish_output(&destination,&package.filename)
             }else{
                 let pair=self.browsing_pair();
-                let name=artwork::filename_for("Emerald",pair.key);
+                let name=artwork::filename_for(pair.collection,pair.key);
                 let output=dir.join(&name);
                 artwork::export_pair(pair,&output)?;
                 self.publish_output(&output,&name)
@@ -2434,7 +2465,7 @@ impl MapStudioApp {
                         if self.erase_tool {
                             self.world.erase(at);
                         } else if let Some(index)=self.selected_prefab {
-                            if let Some(prefab)=prefabs::emerald().get(index){
+                            if let Some(prefab)=prefabs::by_collection(self.current_pair().collection).get(index){
                                 self.world.paint_prefab(at,prefab);
                             }
                         } else if let Some(stamp)=self.selected_stamp.as_ref() {
