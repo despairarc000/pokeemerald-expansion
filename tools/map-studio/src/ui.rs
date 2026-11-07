@@ -74,6 +74,8 @@ pub struct MapStudioApp {
     expand_direction: ExpandDirection,
     size_panel_open: bool,
     show_parent:bool,
+    show_events:bool,
+    show_properties:bool,
     zoom: f32,
     offset: Vec2,
     canvas_size: Vec2,
@@ -175,6 +177,8 @@ impl MapStudioApp {
             expand_direction: ExpandDirection::LowerRight,
             size_panel_open: false,
             show_parent:true,
+            show_events:true,
+            show_properties:false,
             zoom: 14.0,
             offset: vec2(28.0, 52.0),
             canvas_size: vec2(360.0,540.0),
@@ -221,7 +225,7 @@ impl MapStudioApp {
                 if ui.small_button(if compact{"↶"}else{"Undo"}).clicked() { self.undo(); }
             });
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.selectable_label(self.mode == Mode::Terrain, "Terrain").clicked() {
                 self.mode = Mode::Terrain; self.gesture = CanvasGesture::Idle;
                 self.selected_event=None;self.event_editor_open=false;
@@ -233,6 +237,11 @@ impl MapStudioApp {
             if ui.selectable_label(self.mode == Mode::Events, "Events").clicked() {
                 self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
             }
+            ui.separator();
+            ui.toggle_value(&mut self.show_events,"👁 Events")
+                .on_hover_text("Show event sprites in any tab; edit only in Events");
+            ui.toggle_value(&mut self.show_properties,"👁 Properties")
+                .on_hover_text("Show collision/elevation overlays in any tab; edit only in Properties");
         });
         if compact{
             ui.horizontal_wrapped(|ui|{
@@ -253,6 +262,9 @@ impl MapStudioApp {
                     }
                 });
                 if ui.small_button("Fit").clicked(){self.fit_world();}
+                let selected=self.selected_map.and_then(|id|
+                    self.world.active_maps().find(|m|m.id==id).map(|m|m.name.clone()));
+                ui.small(format!("Selected: {}",selected.unwrap_or_else(||"None".into())));
                 if ui.add_enabled(self.selected_map.is_some(),
                     egui::Button::new("Size")).clicked(){self.size_panel_open=true;}
             });
@@ -300,6 +312,10 @@ impl MapStudioApp {
             }
             if ui.small_button("Fit").clicked() { self.fit_world(); }
             ui.separator();
+            let selected=self.selected_map.and_then(|id|
+                self.world.active_maps().find(|m|m.id==id).map(|m|m.name.clone()));
+            ui.strong(format!("Selected: {}",
+                selected.unwrap_or_else(||"None".into())));
             ui.label(egui::RichText::new(format!("{} maps", self.world.active_maps().count()))
                 .small().color(Color32::GRAY));
         });
@@ -464,7 +480,7 @@ impl MapStudioApp {
         let height=(max_y-min_y).max(1) as f32;
         let padding=24.0;
         self.zoom=((self.canvas_size.x-2.0*padding)/width)
-            .min((self.canvas_size.y-2.0*padding)/height).clamp(5.0,54.0);
+            .min((self.canvas_size.y-2.0*padding)/height).clamp(2.0,54.0);
         self.offset=vec2(
             (self.canvas_size.x-width*self.zoom)*0.5 - min_x as f32*self.zoom,
             (self.canvas_size.y-height*self.zoom)*0.5 - min_y as f32*self.zoom,
@@ -838,8 +854,8 @@ impl MapStudioApp {
                             for (value,label,color) in [
                                 (0u8,"0 · Walk",Color32::from_rgb(180,234,193)),
                                 (1,"1 · Block",Color32::from_rgb(245,190,190)),
-                                (2,"2 · Special",Color32::from_rgb(215,194,244)),
-                                (3,"3 · Special",Color32::from_rgb(248,219,172)),
+                                (2,"2",Color32::from_rgb(215,194,244)),
+                                (3,"3",Color32::from_rgb(248,219,172)),
                             ]{
                                 let fill=if self.collision_brush==value{color}
                                     else{Color32::from_gray(235)};
@@ -893,7 +909,7 @@ impl MapStudioApp {
             }
             Mode::Events => {
                 ui.horizontal_wrapped(|ui|{
-                    ui.strong("Place");
+                    ui.strong("Add event");
                     for (kind,title) in [
                         (EventKind::Npc,"Person"),
                         (EventKind::Sign,"Sign"),
@@ -1553,7 +1569,7 @@ impl MapStudioApp {
 
     fn change_zoom(&mut self, rect: Rect, focus: Pos2, factor: f32, translation: Vec2) {
         let old_zoom = self.zoom;
-        let new_zoom = (old_zoom * factor).clamp(5.0, 54.0);
+        let new_zoom = (old_zoom * factor).clamp(2.0, 54.0);
         let focus_local = focus - rect.min;
         let anchor = (focus_local - self.offset) / old_zoom;
         self.offset = focus_local - anchor * new_zoom + translation;
@@ -1671,9 +1687,9 @@ impl MapStudioApp {
                             self.message="Move this marker within its map".into();
                             ui.ctx().request_repaint();
                         }else if delta>DRAG_PX {
-                            // Dragging without a hold never moves an event.
-                            self.gesture=CanvasGesture::Idle;
-                            self.message="Hold a marker briefly, then drag to move".into();
+                            self.gesture=CanvasGesture::PanBlank;
+                            self.offset+=response.drag_delta();
+                            ui.ctx().request_repaint();
                         }else{
                             ui.ctx().request_repaint_after(Duration::from_millis(24));
                         }
@@ -1727,8 +1743,9 @@ impl MapStudioApp {
                             if self.mode==Mode::Terrain && self.bucket_tool {
                                 self.gesture=CanvasGesture::Idle;
                             }else if self.mode==Mode::Events{
-                                // Events aren't painted by dragging a finger.
-                                self.gesture=CanvasGesture::Painting{last:start};
+                                self.gesture=CanvasGesture::PanBlank;
+                                self.offset+=response.drag_delta();
+                                ui.ctx().request_repaint();
                             }else{
                                 self.begin_edit();
                                 self.paint_line(start,at);
