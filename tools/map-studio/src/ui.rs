@@ -585,20 +585,20 @@ impl MapStudioApp {
         // Preview shows existing footprint, candidate and nearby neighbors.
         let l=i64::from(m.origin.x).min(i64::from(origin.x));
         let t=i64::from(m.origin.y).min(i64::from(origin.y));
-        let r=m.right().max(i64::from(origin.x)+i64::from(w));
-        let b=m.bottom().max(i64::from(origin.y)+i64::from(h));
+        let r=(i64::from(m.origin.x)+i64::from(m.width)).max(i64::from(origin.x)+i64::from(w));
+        let b=(i64::from(m.origin.y)+i64::from(m.height)).max(i64::from(origin.y)+i64::from(h));
         let mut min_x=l-1;let mut min_y=t-1;
         let mut max_x=r+1;let mut max_y=b+1;
         let close=self.world.maps.iter().filter(|other|{
             other.id!=id && other.space_id==m.space_id
-                && i64::from(other.origin.x)<r+8 && other.right()>l-8
-                && i64::from(other.origin.y)<b+8 && other.bottom()>t-8
+                && i64::from(other.origin.x)<r+8 && (i64::from(other.origin.x)+i64::from(other.width))>l-8
+                && i64::from(other.origin.y)<b+8 && (i64::from(other.origin.y)+i64::from(other.height))>t-8
         }).collect::<Vec<_>>();
         for other in &close {
             min_x=min_x.min(i64::from(other.origin.x));
             min_y=min_y.min(i64::from(other.origin.y));
-            max_x=max_x.max(other.right());
-            max_y=max_y.max(other.bottom());
+            max_x=max_x.max((i64::from(other.origin.x)+i64::from(other.width)));
+            max_y=max_y.max((i64::from(other.origin.y)+i64::from(other.height)));
         }
         let factor=((area.width()-16.0)/(max_x-min_x).max(1) as f32)
             .min((area.height()-16.0)/(max_y-min_y).max(1) as f32);
