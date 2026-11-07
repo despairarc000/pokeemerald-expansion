@@ -750,131 +750,145 @@ impl MapStudioApp {
                 }
             }
             Mode::Properties => {
-                if let Some(id)=self.selected_map {
-                    let before=self.world.clone();
-                    let mut changed=false;
-                    let mut delete=false;
-                    if let Some(map)=self.world.maps.iter_mut().find(|m|m.id==id){
-                        ui.horizontal(|ui|{
-                            ui.label("Map name");
-                            changed=ui.add(egui::TextEdit::singleline(&mut map.name)
-                                .desired_width(130.0)).changed();
-                            ui.label(format!("{} × {}",map.width,map.height));
-                            if ui.small_button("Delete").clicked(){delete=true;}
-                        });
-                    }
-                    if changed{self.before_gesture=Some(before);self.commit_edit();}
-                    if delete{self.confirm_delete=Some(id);}
-                    if self.confirm_delete==Some(id){
-                        ui.horizontal(|ui|{
-                            ui.strong("Delete this map?");
-                            if ui.button("Delete map").clicked(){
-                                self.begin_edit();
-                                match self.world.remove_frame(id){
-                                    Ok(())=>{
-                                        self.selected_map=None;
-                                        self.selected_event=None;
-                                        self.message="Map deleted.".into();
-                                    }
-                                    Err(err)=>self.message=err,
-                                }
-                                self.commit_edit();
-                                self.confirm_delete=None;
-                            }
-                            if ui.small_button("Cancel").clicked(){self.confirm_delete=None;}
-                        });
-                    }
-                }
-                ui.separator();
-                ui.strong("Tile properties");
+                ui.heading("Tile properties");
                 ui.horizontal_wrapped(|ui|{
-                    if ui.selectable_label(!self.elevation_tool,"🛡 Collision brush").clicked(){
-                        self.elevation_tool=false;
-                    }
-                    if ui.selectable_label(self.elevation_tool,"↕ Elevation brush").clicked(){
-                        self.elevation_tool=true;
-                    }
+                    ui.label("Paint layer");
+                    ui.selectable_value(&mut self.elevation_tool,false,"Collision");
+                    ui.selectable_value(&mut self.elevation_tool,true,"Elevation");
                 });
-                ui.label(egui::RichText::new("Collision · walkability").small()
-                    .color(Color32::DARK_GRAY));
-                ui.horizontal_wrapped(|ui|{
-                    let values=[(0u8,"0 · Walk",Color32::from_rgb(45,146,82)),
-                        (1,"1 · Block",Color32::from_rgb(186,67,67)),
-                        (2,"2 · Alt",Color32::from_rgb(126,96,176)),
-                        (3,"3 · Alt",Color32::from_rgb(184,120,42))];
-                    for (code,label,color) in values {
-                        if ui.selectable_label(!self.elevation_tool && self.collision_brush==code,
-                            egui::RichText::new(label).color(color)).clicked(){
-                            self.collision_brush=code;
-                            self.elevation_tool=false;
-                        }
-                    }
-                });
-                ui.label(egui::RichText::new("Elevation · map-layer height").small()
-                    .color(Color32::DARK_GRAY));
-                egui::Grid::new("height_choices").num_columns(4).spacing([8.0,6.0])
-                    .show(ui,|ui|{
-                        for elevation in 0..16u8 {
-                            let label=match elevation{
-                                0=>"0 · Steps",1=>"1 · Water",3=>"3 · Land",
-                                15=>"15 · Bridge",_=>"",
-                            };
-                            let text=if label.is_empty(){elevation.to_string()}
-                                else{label.to_string()};
-                            if ui.selectable_label(self.elevation_tool
-                                && self.elevation_brush==elevation,text).clicked(){
-                                self.elevation_brush=elevation;
-                                self.elevation_tool=true;
-                            }
-                            if elevation%4==3{ui.end_row();}
-                        }
-                    });
-                ui.separator();
+                // The map cell owns collision/elevation; source metatile attributes
+                // are shared by every instance of that graphics tile.
                 let selected=self.selected_cell.and_then(|point|{
                     let map=self.world.map_at(point)?;
                     let x=(point.x-map.origin.x) as u32;
                     let y=(point.y-map.origin.y) as u32;
-                    let cell=map.cell(x,y)?;
-                    let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)?;
-                    Some((map.name.clone(),x,y,cell,pair))
+                    map.cell(x,y).map(|cell|(
+                        map.name.clone(),x,y,cell,
+                        tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)))
                 });
-                if let Some((map_name,x,y,cell,pair))=selected{
-                    ui.strong("Selected metatile");
-                    ui.horizontal(|ui|{
-                        let (preview,_) = ui.allocate_exact_size(
-                            vec2(58.0,58.0),Sense::hover());
-                        ui.painter().rect_filled(preview,4.0,Color32::from_gray(230));
-                        let texture=self.atlas_cache.get(pair.key)
-                            .unwrap_or(&self.atlas).id();
-                        ui.painter().image(texture,preview.shrink(3.0),
-                            Self::tile_uv(cell.metatile_id),Color32::WHITE);
-                        ui.vertical(|ui|{
-                            ui.label(format!("{map_name} · ({x},{y})"));
-                            ui.label(format!("Metatile {}",cell.metatile_id));
-                            ui.label(format!("Collision {}  ·  Elevation {}",
-                                cell.collision,cell.elevation));
-                        });
-                    });
-                    if let Some(attr)=tiles::attributes_in(pair,cell.metatile_id){
-                        ui.label(egui::RichText::new("Native tileset attributes")
-                            .strong().small());
-                        egui::Grid::new("source_metadata").num_columns(2)
-                            .spacing([12.0,5.0]).show(ui,|ui|{
-                                ui.label("Behavior");ui.label(attr.behavior);ui.end_row();
-                                ui.label("Layer type");ui.label(attr.layer_type);ui.end_row();
-                                ui.label("Source label");
-                                ui.label(tiles::source_label_in(pair,cell.metatile_id)
-                                    .unwrap_or("Unlabelled metatile"));ui.end_row();
-                                ui.label("Raw attribute");
-                                ui.monospace(format!("0x{:04X}",attr.raw));ui.end_row();
-                                ui.label("Map cell bits");
-                                ui.monospace(format!("0x{:04X}",cell.pack(cell.metatile_id)));
-                                ui.end_row();
+                if let Some((name,x,y,cell,pair))=selected {
+                    ui.group(|ui|{
+                        ui.horizontal(|ui|{
+                            if let Some(pair)=pair {
+                                let (box_rect,_) = ui.allocate_exact_size(
+                                    Vec2::splat(58.0),Sense::hover());
+                                let texture=self.atlas_cache.get(pair.key).unwrap_or(&self.atlas).id();
+                                ui.painter().rect_filled(box_rect,4.0,Color32::from_gray(230));
+                                ui.painter().image(texture,box_rect.shrink(4.0),
+                                    Self::tile_uv(cell.metatile_id),Color32::WHITE);
+                            }
+                            ui.vertical(|ui|{
+                                ui.strong(format!("{name} · ({x}, {y})"));
+                                ui.small(format!("Collision: {}   Elevation: {}",
+                                    cell.collision,cell.elevation));
+                                if let Some(pair)=pair {
+                                    ui.small(format!("Tileset: {}",pair.label));
+                                }
                             });
-                        ui.small("Behavior and layer type come from Emerald's source tileset and cannot be changed per map cell.");
-                    }
+                        });
+                        if let Some(pair)=pair {
+                            if let Some(attrs)=tiles::attributes_in(pair,cell.metatile_id) {
+                                ui.separator();
+                                ui.label(format!("Behavior: {}",
+                                    attrs.behavior.strip_prefix("MB_").unwrap_or(attrs.behavior)
+                                        .replace('_'," ").to_lowercase()));
+                                ui.label(format!("Drawing layers: {}",attrs.layer_type));
+                                if let Some(label)=tiles::source_label_in(pair,cell.metatile_id){
+                                    ui.small(format!("Source label: {}",
+                                        label.strip_prefix("METATILE_").unwrap_or(label)
+                                            .replace('_'," ")));
+                                }
+                                ui.collapsing("Technical source details",|ui|{
+                                    ui.monospace(format!("Metatile {} · attribute 0x{:04X}",
+                                        attrs.metatile_id,attrs.raw));
+                                    ui.small("Behavior and layering are source-tileset data, not per-cell overrides.");
+                                });
+                            }
+                        }
+                    });
                 }else{
-                    ui.small("Tap a painted tile to inspect its graphics, source behavior and layer type.");
+                    ui.small("Tap a painted map tile to inspect its real Emerald attributes.");
+                }
+
+                ui.group(|ui|{
+                    if self.elevation_tool {
+                        ui.strong("Elevation · game layer");
+                        egui::Grid::new("elevation_palette").num_columns(4).spacing([5.0,6.0])
+                            .show(ui,|ui|{
+                                for level in 0..16u8 {
+                                    let label=match level {
+                                        0=>"0 · All".to_string(),1=>"1 · Water".into(),
+                                        3=>"3 · Land".into(),15=>"15 · High".into(),
+                                        _=>level.to_string()
+                                    };
+                                    let selected=self.elevation_brush==level;
+                                    let color=if selected{Color32::from_rgb(132,191,241)}
+                                        else{Color32::from_rgb(231,236,245)};
+                                    if ui.add_sized(vec2(72.0,34.0),
+                                        egui::Button::new(label).fill(color)).clicked(){
+                                        self.elevation_brush=level;
+                                    }
+                                    if level%4==3{ui.end_row();}
+                                }
+                            });
+                        ui.small("Select an elevation, then touch or drag over painted tiles.");
+                    }else{
+                        ui.strong("Collision · walkability");
+                        ui.horizontal_wrapped(|ui|{
+                            for (value,label,color) in [
+                                (0u8,"0 · Walk",Color32::from_rgb(180,234,193)),
+                                (1,"1 · Block",Color32::from_rgb(245,190,190)),
+                                (2,"2 · Special",Color32::from_rgb(215,194,244)),
+                                (3,"3 · Special",Color32::from_rgb(248,219,172)),
+                            ]{
+                                let fill=if self.collision_brush==value{color}
+                                    else{Color32::from_gray(235)};
+                                if ui.add_sized(vec2(104.0,36.0),
+                                    egui::Button::new(label).fill(fill)).clicked(){
+                                    self.collision_brush=value;
+                                }
+                            }
+                        });
+                        ui.small("Paint collision data. Terrain behavior (water, ledges, doors, ice) belongs to the chosen metatile.");
+                    }
+                });
+                if let Some(id)=self.selected_map {
+                    ui.collapsing("Map settings",|ui|{
+                        let before=self.world.clone();
+                        let mut changed=false;
+                        let mut delete=false;
+                        if let Some(map)=self.world.maps.iter_mut().find(|m|m.id==id){
+                            ui.horizontal_wrapped(|ui|{
+                                ui.label("Name");
+                                changed=ui.add(egui::TextEdit::singleline(&mut map.name)
+                                    .desired_width(155.0)).changed();
+                                ui.label(format!("{} × {}",map.width,map.height));
+                                if ui.small_button("Delete map").clicked(){delete=true;}
+                            });
+                        }
+                        if changed{self.before_gesture=Some(before);self.commit_edit();}
+                        if delete{self.confirm_delete=Some(id);}
+                        if self.confirm_delete==Some(id) {
+                            ui.horizontal_wrapped(|ui|{
+                                ui.colored_label(Color32::DARK_RED,"Remove this map?");
+                                if ui.button("Confirm delete").clicked() {
+                                    self.begin_edit();
+                                    match self.world.remove_frame(id) {
+                                        Ok(())=>{
+                                            self.selected_map=None;
+                                            self.selected_cell=None;
+                                            self.selected_event=None;
+                                            self.message="Map deleted.".into();
+                                        }
+                                        Err(err)=>self.message=err,
+                                    }
+                                    self.commit_edit();
+                                    self.confirm_delete=None;
+                                }
+                                if ui.small_button("Cancel").clicked(){self.confirm_delete=None;}
+                            });
+                        }
+                    });
                 }
             }
             Mode::Events => {
