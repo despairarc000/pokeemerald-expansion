@@ -1670,7 +1670,8 @@ impl MapStudioApp {
                 self.warp_focus=None;
                 if self.warp_pick.is_some() {
                     self.gesture=CanvasGesture::PickWarp{at};
-                }else if let Some((map_id,index))=if self.mode==Mode::Events {
+                }else if let Some((map_id,index))=if self.mode==Mode::Events
+                    && self.show_events {
                     self.event_at_screen(rect,screen)
                 }else{None} {
                     self.selected_map=Some(map_id);
