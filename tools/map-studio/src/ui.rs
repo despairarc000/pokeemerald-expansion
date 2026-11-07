@@ -1,6 +1,6 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
-use crate::model::{Cell, EventKind, GridPoint, World};
+use crate::model::{Cell, EventKind, MapEvent, GridPoint, ExpandDirection, World};
 use crate::{storage, export};
 use std::{path::PathBuf, time::{Duration, Instant}};
 
@@ -12,6 +12,7 @@ pub struct MapStudioApp {
     mode: Mode,
     event_brush: EventKind,
     selected_event: Option<(u32,usize)>,
+    event_editor_open: bool,
     brush_id: u16,
     erase_tool: bool,
     elevation_brush: u8,
@@ -31,6 +32,11 @@ pub struct MapStudioApp {
     collision_brush: u8,
     pan_tool: bool,
     frame_tool: bool,
+    blank_pan: bool,
+    map_width: u32,
+    map_height: u32,
+    expand_direction: ExpandDirection,
+    size_panel_open: bool,
     zoom: f32,
     offset: Vec2,
     creating: Option<(GridPoint, GridPoint)>,
@@ -77,6 +83,7 @@ impl MapStudioApp {
             mode: Mode::Terrain,
             event_brush: EventKind::Npc,
             selected_event: None,
+            event_editor_open: false,
             brush_id: 1,
             erase_tool: false,
             elevation_brush: 3,
@@ -96,6 +103,11 @@ impl MapStudioApp {
             collision_brush: 1,
             pan_tool: false,
             frame_tool: false,
+            blank_pan: false,
+            map_width: 12,
+            map_height: 10,
+            expand_direction: ExpandDirection::LowerRight,
+            size_panel_open: false,
             zoom: 14.0,
             offset: vec2(28.0, 52.0),
             creating: None,
@@ -135,6 +147,16 @@ impl MapStudioApp {
                 self.frame_tool = !self.frame_tool;
                 self.pan_tool = false;
                 self.move_tool = false;
+                if self.frame_tool { self.size_panel_open=true; }
+            }
+            if ui.small_button("Size").clicked() {
+                if !self.size_panel_open {
+                    if let Some(map)=self.world.maps.iter().find(|m|Some(m.id)==self.selected_map) {
+                        self.map_width=map.width;
+                        self.map_height=map.height;
+                    }
+                }
+                self.size_panel_open = !self.size_panel_open;
             }
             if ui.selectable_label(self.pan_tool, "Pan").clicked() {
                 self.pan_tool = !self.pan_tool;
@@ -154,6 +176,60 @@ impl MapStudioApp {
                 .small().color(Color32::GRAY));
         });
         ui.add_space(4.0);
+    }
+
+    fn size_dialog(&mut self,ctx:&egui::Context) {
+        if !self.size_panel_open {return;}
+        let mut open=self.size_panel_open;
+        egui::Window::new("Map dimensions")
+            .id(egui::Id::new("map_size_dialog"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(Align2::CENTER_TOP,[0.0,150.0])
+            .show(ctx,|ui|{
+                ui.set_max_width(310.0);
+                ui.horizontal(|ui|{
+                    ui.label("Width");
+                    ui.add(egui::DragValue::new(&mut self.map_width).range(1..=100).speed(1));
+                    ui.label("Height");
+                    ui.add(egui::DragValue::new(&mut self.map_height).range(1..=100).speed(1));
+                });
+                ui.label("Expand toward");
+                egui::Grid::new("expansion_directions").num_columns(2).spacing([12.0,8.0])
+                    .show(ui,|ui|{
+                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::UpperLeft,"↖ Upper left");
+                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::UpperRight,"↗ Upper right");
+                        ui.end_row();
+                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::LowerLeft,"↙ Lower left");
+                        ui.selectable_value(&mut self.expand_direction,ExpandDirection::LowerRight,"↘ Lower right");
+                        ui.end_row();
+                    });
+                ui.label(egui::RichText::new("The opposite corner stays fixed.").small()
+                    .color(Color32::DARK_GRAY));
+                if self.frame_tool {
+                    ui.label("Tap empty canvas to place the new map.");
+                    if ui.button("Done").clicked(){
+                        self.size_panel_open=false;
+                    }
+                } else if let Some(id)=self.selected_map {
+                    if ui.button("Apply to selected map").clicked(){
+                        self.begin_edit();
+                        match self.world.resize_frame_towards(id,self.map_width,self.map_height,self.expand_direction) {
+                            Ok(())=>{
+                                self.message=format!("Map resized to {}×{} toward {}",
+                                    self.map_width,self.map_height,self.expand_direction.label());
+                                self.size_panel_open=false;
+                            }
+                            Err(err)=>self.message=err,
+                        }
+                        self.commit_edit();
+                    }
+                } else {
+                    ui.label("Select a map, or use + Map to create one.");
+                }
+            });
+        self.size_panel_open &= open;
     }
 
     fn palette(&mut self, ui: &mut egui::Ui) {
@@ -785,6 +861,7 @@ impl eframe::App for MapStudioApp {
         egui::Panel::top("header").show(root,|ui|self.header(ui));
         egui::Panel::bottom("palette").show(root,|ui|self.palette(ui));
         egui::CentralPanel::default().show(root,|ui|self.canvas(ui));
+        self.size_dialog(root.ctx());
         self.maybe_autosave(root.ctx());
     }
 }
