@@ -285,8 +285,19 @@ impl MapStudioApp {
 
     fn ensure_atlas_cache(&mut self,ctx:&egui::Context) {
         let mut keys=vec![self.current_pair().key.to_string()];
+        // Decode only currently visible source atlases. Hundreds of maps may
+        // exist, but a phone should never upload every tileset to its GPU.
+        let left=(-self.offset.x/self.zoom).floor() as i64-2;
+        let top=(-self.offset.y/self.zoom).floor() as i64-2;
+        let right=((self.canvas_size.x-self.offset.x)/self.zoom).ceil() as i64+2;
+        let bottom=((self.canvas_size.y-self.offset.y)/self.zoom).ceil() as i64+2;
         for map in self.world.active_maps(){
-            keys.push(format!("{}/{}",map.primary_tileset,map.secondary_tileset));
+            let mx=i64::from(map.origin.x);
+            let my=i64::from(map.origin.y);
+            if mx<right && mx+i64::from(map.width)>left &&
+                my<bottom && my+i64::from(map.height)>top {
+                keys.push(format!("{}/{}",map.primary_tileset,map.secondary_tileset));
+            }
         }
         if self.show_parent {
             if let Some(p)=self.world.active_space().parent_map_id
@@ -296,6 +307,8 @@ impl MapStudioApp {
         }
         if let Some(key)=self.pending_tileset.as_ref(){keys.push(key.clone());}
         keys.sort();keys.dedup();
+        self.atlas_cache.retain(|key,_|
+            key==tiles::DEFAULT_PAIR || keys.contains(key));
         for key in keys {
             if self.atlas_cache.contains_key(&key){continue;}
             let Some(pair)=tiles::pair(&key) else{continue;};
@@ -1611,10 +1624,18 @@ impl MapStudioApp {
                 let offset=self.world.active_space().anchor;
                 let name=format!("{}/{}",parent.primary_tileset,parent.secondary_tileset);
                 let ghost_texture=self.atlas_cache.get(&name).unwrap_or(&self.atlas);
-                let from_x=parent.origin.x-offset.x;
-                let from_y=parent.origin.y-offset.y;
-                for ly in 0..parent.height {
-                    for lx in 0..parent.width {
+                let from_x=parent.origin.x.saturating_sub(offset.x);
+                let from_y=parent.origin.y.saturating_sub(offset.y);
+                let x0=((-self.offset.x/s).floor() as i64-i64::from(from_x))
+                    .clamp(0,i64::from(parent.width)) as u32;
+                let y0=((-self.offset.y/s).floor() as i64-i64::from(from_y))
+                    .clamp(0,i64::from(parent.height)) as u32;
+                let x1=(((rect.width()-self.offset.x)/s).ceil() as i64-i64::from(from_x))
+                    .clamp(0,i64::from(parent.width)) as u32;
+                let y1=(((rect.height()-self.offset.y)/s).ceil() as i64-i64::from(from_y))
+                    .clamp(0,i64::from(parent.height)) as u32;
+                for ly in y0..y1 {
+                    for lx in x0..x1 {
                         if let Some(cell)=parent.cell(lx,ly){
                             let min=self.screen_at(rect,
                                 from_x as f32+lx as f32,
