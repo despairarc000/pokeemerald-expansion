@@ -903,7 +903,9 @@ mod remove_map_tests {
     #[test]
     fn deletion_refuses_to_break_warp_destinations() {
         let mut world=World::sample();
-        world.add_event(GridPoint::new(13,1),EventKind::Warp);
+        let source=world.add_event(GridPoint::new(13,1),EventKind::Warp).unwrap();
+        let target=world.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        world.link_warps(source,target,false).unwrap();
         assert!(world.remove_frame(1).unwrap_err().contains("warp destination"));
         assert_eq!(world.maps.len(),3);
         world.remove_frame(2).unwrap();
