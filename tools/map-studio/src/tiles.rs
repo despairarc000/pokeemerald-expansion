@@ -278,6 +278,17 @@ mod tests {
 mod all_tileset_catalog_tests {
     use super::*;
     #[test]
+    fn both_builtin_art_collections_have_real_tilesets(){
+        for collection in SOURCE_COLLECTIONS{
+            assert!(first_in_collection(collection).is_some(),
+                "No native tileset for built-in collection {collection}");
+        }
+        let fire_count=pairs().iter()
+            .filter(|p|p.collection=="FireRed/LeafGreen").count();
+        assert!(fire_count>=20,"Expected source-defined FRLG pairs, got {fire_count}");
+        assert!(pairs().iter().all(|p|SOURCE_COLLECTIONS.contains(&p.collection)));
+    }
+    #[test]
     fn catalog_is_real_and_contains_buildings_caves_and_towns(){
         assert!(pairs().len()>60,"Expected source-defined tileset pair coverage");
         for key in ["general/petalburg","general/cave","building/generic_building"] {
