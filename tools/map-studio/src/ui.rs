@@ -1092,7 +1092,8 @@ impl MapStudioApp {
                         self.selected_event=None;
                     }
                 }else{
-                    ui.small("Tap to add · hold a marker to move · double-tap to edit");
+                    ui.small("Tap a map tile to place an event. Hold a marker to move it; double-tap to edit.");
+                    ui.small("Available: NPC dialogue, signs, linked/direct warps, step messages and one-time hidden items. Advanced scripted trainers, conditional scenes and special events are not yet authored here.");
                 }
             }
         }
@@ -1520,6 +1521,26 @@ impl MapStudioApp {
              rect.min.y + self.offset.y + y * self.zoom)
     }
 
+    /// Match a marker's visible screen-sized hit area, even at low world
+    /// zoom where its owning metatile can be only a few physical pixels.
+    fn event_at_screen(&self,rect:Rect,point:Pos2)->Option<(u32,usize)>{
+        self.world.active_maps().flat_map(|map|{
+            map.events.iter().enumerate().filter_map(move |(index,event)|{
+                let center=self.screen_at(rect,
+                    map.origin.x as f32+event.x as f32+0.5,
+                    map.origin.y as f32+event.y as f32+0.5);
+                let bounds=if event.kind==EventKind::Npc {
+                    Rect::from_center_size(center+vec2(0.0,-13.0),vec2(26.0,42.0))
+                }else{
+                    Rect::from_center_size(center,Vec2::splat(28.0))
+                };
+                if bounds.contains(point){
+                    Some(((map.id,index),(point-center).length_sq()))
+                }else{None}
+            })
+        }).min_by(|a,b|a.1.total_cmp(&b.1)).map(|(key,_)|key)
+    }
+
     fn grid_at(&self, rect: Rect, screen: Pos2) -> GridPoint {
         GridPoint::new(
             ((screen.x - rect.min.x - self.offset.x) / self.zoom).floor() as i32,
@@ -1610,7 +1631,7 @@ impl MapStudioApp {
                 if self.warp_pick.is_some() {
                     self.gesture=CanvasGesture::PickWarp{at};
                 }else if let Some((map_id,index))=if self.mode==Mode::Events {
-                    self.world.event_at(at)
+                    self.event_at_screen(rect,screen)
                 }else{None} {
                     self.selected_map=Some(map_id);
                     self.selected_event=Some((map_id,index));
@@ -1979,6 +2000,18 @@ impl MapStudioApp {
                             // collision bits remain visible in the corner of those tiles.
                             let behavior=if self.elevation_tool{None}
                                 else {map_pair.and_then(|pair|tiles::behavior_overlay_in(pair,cell.metatile_id))};
+                            if s<10.0 {
+                                let dot_color=if self.elevation_tool {
+                                    Color32::from_rgb(181,130,45)
+                                }else{match cell.collision {
+                                    0=>Color32::from_rgb(46,153,82),
+                                    1=>Color32::from_rgb(193,66,66),
+                                    2=>Color32::from_rgb(132,96,180),
+                                    _=>Color32::from_rgb(216,136,37)
+                                }};
+                                painter.circle_filled(tile_rect.center(),
+                                    (s*0.30).clamp(1.6,3.2),dot_color);
+                            }
                             if s>=10.0 {
                                 painter.text(tile_rect.center(),Align2::CENTER_CENTER,
                                     behavior.unwrap_or(symbol),
@@ -2145,7 +2178,11 @@ impl MapStudioApp {
             if let Some(p)=self.selected_cell {
                 if self.world.map_at(p).is_some() {
                     let at=self.screen_at(rect,p.x as f32,p.y as f32);
-                    let selected=Rect::from_min_size(at,Vec2::splat(s));
+                    let cell_rect=Rect::from_min_size(at,Vec2::splat(s));
+                    // Constant-size selection halo remains visible when zoomed out.
+                    let selected=if s<14.0 {
+                        Rect::from_center_size(cell_rect.center(),Vec2::splat(16.0))
+                    }else{cell_rect};
                     if rect.intersects(selected) {
                         painter.rect_stroke(selected,0.0,
                             Stroke::new(2.0,Color32::from_rgb(37,62,121)),
