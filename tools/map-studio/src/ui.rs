@@ -621,9 +621,11 @@ impl MapStudioApp {
                 for entry in std::fs::read_dir(&dir).map_err(|e|e.to_string())? {
                     let entry=entry.map_err(|e|e.to_string())?;
                     let file=entry.file_name().to_string_lossy().to_string();
-                    if (file.starts_with("MapStudio-project-")
+                    if ((file.starts_with("MapStudio-project-")
                         || file.starts_with("MapStudio-recovery-"))
-                        && file.ends_with(".json") && entry.path().is_file(){
+                        && file.ends_with(".json")
+                        || file.starts_with("MapStudio-maps-") && file.ends_with(".zip"))
+                        && entry.path().is_file(){
                         items.push((format!("local:{file}"),format!("{file} (local recovery)")));
                     }
                 }
@@ -654,7 +656,8 @@ impl MapStudioApp {
 
     fn read_restore_entry(&self,id:&str)->Result<Vec<u8>,String> {
         if let Some(filename)=id.strip_prefix("local:") {
-            if !filename.starts_with("MapStudio-") || !filename.ends_with(".json")
+            if !filename.starts_with("MapStudio-")
+                || !(filename.ends_with(".json") || filename.ends_with(".zip"))
                 || filename.contains('/') || filename.contains('\\') {
                 return Err("Invalid backup file name".into());
             }
@@ -707,7 +710,7 @@ impl MapStudioApp {
             let key=self.selected_backup.as_deref().ok_or("Select a backup first")?;
             let bytes=self.read_restore_entry(key)?;
             // Validate untrusted media before writing a recovery snapshot or active save.
-            let world=storage::decode(&bytes)?;
+            let world=storage::decode_package(&bytes)?;
             self.install_world(world)
         })();
         if let Err(err)=result{self.message=format!("Restore failed: {err}");}
@@ -787,7 +790,7 @@ impl MapStudioApp {
     fn filename(kind:&str, extension:&str) -> String {
         use std::time::{SystemTime,UNIX_EPOCH};
         let stamp=SystemTime::now().duration_since(UNIX_EPOCH)
-            .unwrap_or_default().as_secs();
+            .unwrap_or_default().as_millis();
         format!("MapStudio-{kind}-{stamp}.{extension}")
     }
 

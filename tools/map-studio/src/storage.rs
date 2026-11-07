@@ -34,6 +34,27 @@ pub fn decode(bytes:&[u8]) -> Result<World,String> {
     Ok(project.world)
 }
 
+/// Restore a JSON project or a Map Studio game-source ZIP containing
+/// mapstudio-project.json. Only the exact project file is read; no ZIP paths
+/// are extracted to the filesystem.
+pub fn decode_package(bytes:&[u8])->Result<World,String> {
+    if bytes.len()>MAX_PROJECT_BYTES {
+        return Err("Archive exceeds the 20 MiB import safety limit".into());
+    }
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return decode(bytes);
+    }
+    let mut zip=zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e|format!("Open Map Studio ZIP: {e}"))?;
+    let mut project=zip.by_name("mapstudio-project.json")
+        .map_err(|_|"ZIP does not contain mapstudio-project.json")?;
+    use std::io::Read;
+    let mut payload=Vec::new();
+    project.by_ref().take((MAX_PROJECT_BYTES as u64)+1)
+        .read_to_end(&mut payload).map_err(|e|format!("Read ZIP project: {e}"))?;
+    decode(&payload)
+}
+
 pub fn load(path:&Path)->Result<World,String> {
     let metadata=fs::metadata(path).map_err(|e|format!("Read project metadata: {e}"))?;
     if metadata.len()>(MAX_PROJECT_BYTES as u64) {
@@ -123,5 +144,31 @@ mod recovery_tests {
         assert_eq!(replace_validated(&path,&bytes).unwrap(),incoming);
         assert_eq!(load(&path).unwrap(),incoming);
         let _=fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod package_import_tests {
+    use super::*;
+    #[test]
+    fn zip_round_trip_recovers_exact_editor_project() {
+        let mut world=World::new();
+        world.add_map("Lake",crate::model::GridPoint::new(0,0),5,5).unwrap();
+        for y in 0..5 {
+            for x in 0..5 {
+                world.paint_metatile(crate::model::GridPoint::new(x,y),0x0170);
+            }
+        }
+        let path=std::env::temp_dir()
+            .join(format!("mapstudio-package-import-{}.zip",std::process::id()));
+        crate::export::export_zip(&world,&path).unwrap();
+        let bytes=std::fs::read(&path).unwrap();
+        assert_eq!(decode_package(&bytes).unwrap(),world);
+        let _=std::fs::remove_file(path);
+    }
+    #[test]
+    fn malformed_or_unrelated_zips_are_not_projects() {
+        assert!(decode_package(b"PK\x03\x04bad").is_err());
+        assert!(decode_package(b"[]").is_err());
     }
 }

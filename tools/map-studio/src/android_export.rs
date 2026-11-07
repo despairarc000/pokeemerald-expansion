@@ -154,7 +154,8 @@ pub fn list_backups()->Result<Vec<BackupEntry>,String> {
                     "(I)Ljava/lang/String;",&[JValue::Int(name_col)])?.l()?;
                 if label.is_null() {continue;}
                 let name:String=env.get_string(&JString::from(label))?.into();
-                if name.starts_with("MapStudio-project-") && name.ends_with(".json") {
+                if (name.starts_with("MapStudio-project-") && name.ends_with(".json"))
+                    || (name.starts_with("MapStudio-maps-") && name.ends_with(".zip")) {
                     out.push(BackupEntry{id,name});
                 }
                 if out.len()>=80 {break;}
