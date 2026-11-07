@@ -892,7 +892,6 @@ impl MapStudioApp {
         // Native egui touch drag / kinetic scrolling owns all swipe motion.
         // The previous duplicate per-frame scroll deltas caused the stiffness.
         egui::ScrollArea::vertical().id_salt("dock_content")
-            .drag_to_scroll(self.sheet_anchor.is_none())
             .auto_shrink([false,false]).show(ui,|ui|{
                 if self.mode==Mode::Terrain {
                     self.terrain_sheet_content(ui);
