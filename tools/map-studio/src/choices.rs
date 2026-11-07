@@ -108,3 +108,23 @@ mod item_picker_tests {
         }
     }
 }
+
+
+// Generated from the same source object-event picture and palette tables as
+// the game's actual sprite renderer. No invented NPC art or unverified IDs.
+include!(concat!(env!("OUT_DIR"),"/npc_sprite_catalog.rs"));
+pub fn npc_preview_index(id:&str)->Option<usize>{
+    NPC_PREVIEW_REFS.iter().find(|(name,_)|*name==id).map(|(_,n)|*n)
+}
+#[cfg(test)]
+mod npc_preview_tests {
+    #[test]
+    fn editor_character_previews_use_only_supported_engine_ids(){
+        assert!(super::NPC_PREVIEW_COUNT>=15);
+        for (symbol,_) in super::NPC_PREVIEW_REFS {
+            assert!(super::is_verified_sprite_id(symbol));
+            assert!(super::NPC_SPRITES.iter().any(|(_,id)|id==symbol));
+        }
+        assert!(super::NPC_ATLAS_PNG.starts_with(&[137,80,78,71]));
+    }
+}

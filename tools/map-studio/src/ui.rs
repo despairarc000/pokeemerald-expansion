@@ -45,6 +45,7 @@ pub struct MapStudioApp {
     elevation_brush: u8,
     elevation_tool: bool,
     atlas: egui::TextureHandle,
+    npc_atlas:egui::TextureHandle,
     atlas_cache: HashMap<String,egui::TextureHandle>,
     preferred_pair: String,
     tile_filter: tiles::TileFilter,
@@ -98,6 +99,13 @@ impl MapStudioApp {
         let dimensions = [image.width() as usize, image.height() as usize];
         let texture = ctx.load_texture("Emerald metatiles",egui::ColorImage::from_rgba_unmultiplied(
             dimensions,image.as_raw()),egui::TextureOptions::NEAREST);
+        let npc_image=image::load_from_memory(choices::NPC_ATLAS_PNG)
+            .expect("source-verified NPC preview sprite atlas").to_rgba8();
+        let npc_dimensions=[npc_image.width() as usize,npc_image.height() as usize];
+        let npc_atlas=ctx.load_texture("Emerald NPC sprites",
+            egui::ColorImage::from_rgba_unmultiplied(npc_dimensions,npc_image.as_raw()),
+            egui::TextureOptions::NEAREST);
+
         // Never silently overwrite an incompatible/corrupt project with demo maps.
         let (world, load_error)=match save_path.as_deref() {
             Some(path) if path.exists() => match storage::load(path) {
@@ -125,6 +133,7 @@ impl MapStudioApp {
             elevation_brush: 3,
             elevation_tool: false,
             atlas: texture.clone(),
+            npc_atlas,
             atlas_cache: HashMap::from([(tiles::DEFAULT_PAIR.to_string(),texture)]),
             preferred_pair:tiles::DEFAULT_PAIR.into(),
             tile_filter:tiles::TileFilter::All,
@@ -1660,6 +1669,28 @@ impl MapStudioApp {
                     let center=self.screen_at(rect,
                         map.origin.x as f32+event.x as f32+0.5,
                         map.origin.y as f32+event.y as f32+0.5);
+                    if event.kind==EventKind::Npc {
+                        if let Some(idx)=choices::npc_preview_index(&event.graphics_id){
+                            let rows=(choices::NPC_PREVIEW_COUNT+7)/8;
+                            let col=(idx%8) as f32;
+                            let row=(idx/8) as f32;
+                            let uv=Rect::from_min_max(
+                                pos2(col/8.0,row/(rows as f32)),
+                                pos2((col+1.0)/8.0,(row+1.0)/(rows as f32)));
+                            let sprite_height=(s*2.25).clamp(20.0,55.0);
+                            let sprite_width=sprite_height*24.0/40.0;
+                            let bottom=center.y+s*0.50;
+                            let bounds=Rect::from_min_max(
+                                pos2(center.x-sprite_width*0.5,bottom-sprite_height),
+                                pos2(center.x+sprite_width*0.5,bottom));
+                            painter.image(self.npc_atlas.id(),bounds,uv,Color32::WHITE);
+                            if self.selected_event==Some((map.id,event_index)){
+                                painter.rect_stroke(bounds,3.0,Stroke::new(1.8,
+                                    Color32::from_rgb(14,39,84)),StrokeKind::Inside);
+                            }
+                            continue;
+                        }
+                    }
                     let (symbol,color):(String,Color32)=match event.kind {
                         EventKind::Npc=>("N".into(),Color32::from_rgb(121,82,193)),
                         EventKind::Sign=>("S".into(),Color32::from_rgb(179,124,48)),

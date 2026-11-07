@@ -58,5 +58,21 @@ fn main() {
     let result=Command::new("python3").arg(catalog).arg(&root).arg(&atlas_folder)
         .status().expect("Python atlas catalog builder unavailable");
     assert!(result.success(),"Cannot build real tileset atlas catalog");
+    let sprite_script=root.join("tools/map-studio/scripts/build_sprites.py");
+    println!("cargo:rerun-if-changed={}",sprite_script.display());
+    for source in [
+        "src/data/object_events/object_event_graphics_info.h",
+        "src/data/object_events/object_event_graphics_info_pointers.h",
+        "src/data/object_events/object_event_pic_tables.h",
+        "src/data/object_events/object_event_graphics.h",
+        "tools/map-studio/src/choices.rs",
+    ] {
+        println!("cargo:rerun-if-changed={}",root.join(source).display());
+    }
+    let sprite_output=PathBuf::from(env::var("OUT_DIR").unwrap()).join("sprites");
+    let process=Command::new("python3").arg(sprite_script).arg(&root).arg(&sprite_output)
+        .status().expect("Python sprite atlas builder unavailable");
+    assert!(process.success(),"Failed to load source-verified NPC art");
+
 
 }
