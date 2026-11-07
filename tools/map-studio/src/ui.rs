@@ -757,48 +757,96 @@ impl MapStudioApp {
                         });
                     }
                 }
-                ui.horizontal(|ui|{
-                    ui.selectable_value(&mut self.elevation_tool,false,"Collision");
-                    ui.selectable_value(&mut self.elevation_tool,true,"Elevation");
+                ui.separator();
+                ui.strong("Tile properties");
+                ui.horizontal_wrapped(|ui|{
+                    if ui.selectable_label(!self.elevation_tool,"🛡 Collision brush").clicked(){
+                        self.elevation_tool=false;
+                    }
+                    if ui.selectable_label(self.elevation_tool,"↕ Elevation brush").clicked(){
+                        self.elevation_tool=true;
+                    }
                 });
-                if let Some(p)=self.selected_cell {
-                    if let Some(map)=self.world.map_at(p) {
-                        let (x,y)=((p.x-map.origin.x) as u32,(p.y-map.origin.y) as u32);
-                        if let Some(cell)=map.cell(x,y) {
-                            let behavior=tiles::friendly_behavior(cell.metatile_id).unwrap_or("Normal");
-                            ui.label(egui::RichText::new(format!(
-                                "{} ({x},{y}) · Collision {} · Height {} · {behavior}",
-                                map.name,cell.collision,cell.elevation,
-                            )).small().color(Color32::DARK_GRAY));
+                ui.label(egui::RichText::new("Collision · walkability").small()
+                    .color(Color32::DARK_GRAY));
+                ui.horizontal_wrapped(|ui|{
+                    let values=[(0u8,"0 · Walk",Color32::from_rgb(45,146,82)),
+                        (1,"1 · Block",Color32::from_rgb(186,67,67)),
+                        (2,"2 · Alt",Color32::from_rgb(126,96,176)),
+                        (3,"3 · Alt",Color32::from_rgb(184,120,42))];
+                    for (code,label,color) in values {
+                        if ui.selectable_label(!self.elevation_tool && self.collision_brush==code,
+                            egui::RichText::new(label).color(color)).clicked(){
+                            self.collision_brush=code;
+                            self.elevation_tool=false;
                         }
                     }
-                }
-                if self.elevation_tool {
-                    ui.strong("Choose height");
-                    egui::Grid::new("height_choices").num_columns(4).spacing([9.0,6.0])
-                        .show(ui,|ui|{
-                            for elevation in 0..16u8 {
-                                let label=match elevation {
-                                    0=>"0 · Steps".to_string(),
-                                    1=>"1 · Water".to_string(),
-                                    3=>"3 · Land".to_string(),
-                                    15=>"15 · Bridge".to_string(),
-                                    _=>elevation.to_string(),
-                                };
-                                if ui.selectable_label(self.elevation_brush==elevation,label).clicked(){
-                                    self.elevation_brush=elevation;
-                                }
-                                if elevation%4==3{ui.end_row();}
+                });
+                ui.label(egui::RichText::new("Elevation · map-layer height").small()
+                    .color(Color32::DARK_GRAY));
+                egui::Grid::new("height_choices").num_columns(4).spacing([8.0,6.0])
+                    .show(ui,|ui|{
+                        for elevation in 0..16u8 {
+                            let label=match elevation{
+                                0=>"0 · Steps",1=>"1 · Water",3=>"3 · Land",
+                                15=>"15 · Bridge",_=>"",
+                            };
+                            let text=if label.is_empty(){elevation.to_string()}
+                                else{label.to_string()};
+                            if ui.selectable_label(self.elevation_tool
+                                && self.elevation_brush==elevation,text).clicked(){
+                                self.elevation_brush=elevation;
+                                self.elevation_tool=true;
                             }
-                        });
-                    ui.small("Height controls game-level traversal. Colors show the selected levels.");
-                }else{
-                    ui.horizontal_wrapped(|ui|{
-                        for (code,label) in [(0,"0 · Walk"),(1,"1 · Block"),(2,"2"),(3,"3")]{
-                            ui.selectable_value(&mut self.collision_brush,code,label);
+                            if elevation%4==3{ui.end_row();}
                         }
                     });
-                    ui.small("~ water · ❄ ice · arrows mark ledges — read from the actual tile.");
+                ui.separator();
+                let selected=self.selected_cell.and_then(|point|{
+                    let map=self.world.map_at(point)?;
+                    let x=(point.x-map.origin.x) as u32;
+                    let y=(point.y-map.origin.y) as u32;
+                    let cell=map.cell(x,y)?;
+                    let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)?;
+                    Some((map.name.clone(),x,y,cell,pair))
+                });
+                if let Some((map_name,x,y,cell,pair))=selected{
+                    ui.strong("Selected metatile");
+                    ui.horizontal(|ui|{
+                        let (preview,_) = ui.allocate_exact_size(
+                            vec2(58.0,58.0),Sense::hover());
+                        ui.painter().rect_filled(preview,4.0,Color32::from_gray(230));
+                        let texture=self.atlas_cache.get(pair.key)
+                            .unwrap_or(&self.atlas).id();
+                        ui.painter().image(texture,preview.shrink(3.0),
+                            Self::tile_uv(cell.metatile_id),Color32::WHITE);
+                        ui.vertical(|ui|{
+                            ui.label(format!("{map_name} · ({x},{y})"));
+                            ui.label(format!("Metatile {}",cell.metatile_id));
+                            ui.label(format!("Collision {}  ·  Elevation {}",
+                                cell.collision,cell.elevation));
+                        });
+                    });
+                    if let Some(attr)=tiles::attributes_in(pair,cell.metatile_id){
+                        ui.label(egui::RichText::new("Native tileset attributes")
+                            .strong().small());
+                        egui::Grid::new("source_metadata").num_columns(2)
+                            .spacing([12.0,5.0]).show(ui,|ui|{
+                                ui.label("Behavior");ui.label(attr.behavior);ui.end_row();
+                                ui.label("Layer type");ui.label(attr.layer_type);ui.end_row();
+                                ui.label("Source label");
+                                ui.label(tiles::source_label_in(pair,cell.metatile_id)
+                                    .unwrap_or("Unlabelled metatile"));ui.end_row();
+                                ui.label("Raw attribute");
+                                ui.monospace(format!("0x{:04X}",attr.raw));ui.end_row();
+                                ui.label("Map cell bits");
+                                ui.monospace(format!("0x{:04X}",cell.pack(cell.metatile_id)));
+                                ui.end_row();
+                            });
+                        ui.small("Behavior and layer type come from Emerald's source tileset and cannot be changed per map cell.");
+                    }
+                }else{
+                    ui.small("Tap a painted tile to inspect its graphics, source behavior and layer type.");
                 }
             }
             Mode::Events => {
