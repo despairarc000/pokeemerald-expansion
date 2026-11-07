@@ -16,6 +16,7 @@ const HELP:&str = "Map Studio CLI
   event <project.json> <npc|sign|warp|trigger> <x> <y>
   validate <project.json>
   export <project.json> <output.zip>
+  export-project <project.json> <editable.zip>
   import <new-project.json> <backup.json|source.zip>
   restore <project.json> <backup.json|source.zip>
 Notes: metatile IDs are decimal or 0xHEX, game export requires all cells
@@ -171,7 +172,12 @@ fn run(args:&[String])->Result<(),String> {
         "export" => {
             let output=Path::new(field(args,3,"output zip")?);
             export::export_zip(&world,output)?;
-            println!("Exported {}",output.display());
+            println!("Exported game source {}",output.display());
+        }
+        "export-project" => {
+            let output=Path::new(field(args,3,"output zip")?);
+            storage::export_project_zip(output,&world)?;
+            println!("Exported editable project {}",output.display());
         }
         _=>return Err(format!("Unknown command: {action}\n{HELP}")),
     }
@@ -270,5 +276,29 @@ mod import_restore_cli_tests {
         assert_eq!(storage::load(&target).unwrap(),World::sample());
         let _=std::fs::remove_file(target);
         let _=std::fs::remove_file(source);
+    }
+}
+
+#[cfg(test)]
+mod portable_zip_cli_tests{
+    use super::*;
+    #[test]
+    fn unfinished_project_can_be_exported_and_reimported(){
+        let temp=std::env::temp_dir();
+        let tag=std::process::id();
+        let source=temp.join(format!("ms-editable-{tag}.json"));
+        let archive=temp.join(format!("ms-editable-{tag}.zip"));
+        let target=temp.join(format!("ms-editable-copy-{tag}.json"));
+        let _=std::fs::remove_file(&target);
+        let _=std::fs::remove_file(&archive);
+        let mut world=World::new();
+        world.add_map("Unfinished",GridPoint::new(0,0),7,7).unwrap();
+        storage::save(&source,&world).unwrap();
+        run(&["bin".into(),"export-project".into(),source.display().to_string(),
+            archive.display().to_string()]).unwrap();
+        run(&["bin".into(),"import".into(),target.display().to_string(),
+            archive.display().to_string()]).unwrap();
+        assert_eq!(storage::load(&target).unwrap(),world);
+        for p in [source,archive,target] {let _=std::fs::remove_file(p);}
     }
 }

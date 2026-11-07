@@ -1,6 +1,6 @@
 [package]
 name = "map-studio"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 publish = false
 description = "Native Rust Android map editor for pokeemerald-expansion"
@@ -31,12 +31,12 @@ winit = { version = "0.30", default-features = false, features = ["android-nativ
 
 [package.metadata.android]
 strip = "strip"
-package = "dev.despairarc.mapstudio.dockpreview"
-apk_name = "map-studio-dock-preview"
+package = "dev.despairarc.mapstudio.editorpreview"
+apk_name = "map-studio-editor-preview"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.application]
-label = "Map Studio Dock Preview"
+label = "Map Studio Editor Preview"
 
 # Explicitly support split-screen and freeform Android activities.
 # NativeActivity receives surface/config changes without a forced restart.

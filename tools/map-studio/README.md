@@ -391,3 +391,29 @@ The v0.15 test APK has its own package
 `dev.despairarc.mapstudio.dockpreview` so it cannot overwrite private saves
 from older preview installations. The CI artifact contains one signed APK,
 not cargo-apk's unaligned intermediate.
+
+## v0.16 — compact controls, real NPC movement and portable projects
+
+- Tapping the active Terrain/Properties/Events tab enters a **neutral Pan**
+  state. Explicit Pan button works in any tab; reselect the property brush
+  or event card to author again. Overlay checkboxes remain independent.
+- Normal collision tools show Passable (0) and Blocked (1) only; legacy
+  collision 2/3 values remain intact when loading/re-saving existing maps.
+- Art category and tileset dropdowns share a row; header shortcuts and map
+  selection are compact and keep a usable touch target.
+- NPCs expose a verified subset of the existing
+  `MOVEMENT_TYPE_*` source constants plus X/Y movement ranges.
+  `map.json` export writes the chosen fields rather than fixed face-down.
+- `Project > Export editable ZIP` saves unfinished project state as a
+  portable `mapstudio-project.json` archive (no fully painted map
+  required). `Import backup / ZIP` restores verified archive/JSON data
+  and creates a recovery copy of the current project first.
+  `Project > Export game-source ZIP` remains stricter and may reject
+  incomplete or unsupported map events.
+- CLI supports `export-project` and round-trips the same editable format.
+- See [source feature gap audit](docs/SOURCE_FEATURE_GAP_AUDIT.md)
+  for a truthful list of complete, limited and absent Emerald features.
+- The Android import list currently browses readable project backups
+  written under this installation's Downloads/MapStudio, **not arbitrary
+  files through the Android system picker**. Cross-preview backups
+  must be transferred through a supported readable location.
