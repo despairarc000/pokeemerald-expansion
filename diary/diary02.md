@@ -1,4 +1,4 @@
-# Diary 02 (logs 11 to 20)
+# Diary 02 (logs 11 to 22)
 
 The story of the project in order. Short on purpose. Dates are by session. For the routine, see `ONBOARDING.md`. Earlier history is in `diary01.md`.
 
@@ -39,7 +39,12 @@ The owner requested further implementation after v0.4. On `feature/map-studio-na
 
 GitHub Actions run `42329689310` passed Rust unit tests (including import-restore safety), CLI geometry and Rust-to-Python map export checks, desktop compile and optimized ARM64 APK packaging. The checked, self-signed APK is 3,641,706 bytes (about 3.47 MiB) under package `dev.despairarc.mapstudio.preview`. **Only automated tests passed; Android device restore UI/MediaStore access in this build has not yet been physically tested.** This is not a generic Storage Access Framework picker: backups created by another package may not be visible. The Preview still uses ephemeral test signing per CI run. Full ROM emulator proof and secure GitHub/live AI collaboration remain unfinished; do not conflate local backup browsing with cloud synchronization.
 
-## State (as of log 21)
+## Log 22: Map Studio touch-first UX after owner device feedback (2026-11-07)
+Owner reported that v0.5 made map creation harder, requested the original long-press rectangle drawing and automatic map movement, a draggable/resizable bottom palette, original numeric collision indicators and behavior icons, elevation choices rather than a slider, and no arbitrary technical IDs for NPCs. Researched established Tiled/Porymap rectangle, layer/property and event conventions plus Android bottom-sheet drag-handle guidelines. On `feature/map-studio-native-android` these are implemented in native egui: hold on blank grid ~0.46s then drag to create, with visible valid/invalid rectangle and immediate overlap warning; quick drag on blank grid pans; hold map then slide moves it with no collision overlap; Size panel previews invalid directional expansions **before** Apply; 38-pixel visible dock handle adjusts responsive palette height. The Properties panel again shows collision values `0`–`3`, data-driven `~`/snowflake/ledge arrows from the actual General/Petalburg metatile attribute binaries, and a discrete 4×4 elevation grid. NPC choices are vetted from the real `event_objects.h` symbols but displayed as friendly names, with no free-form graphics identifier; NPC/sign dialogues now start empty and prohibit invalid script characters. Warp/trigger creation and authoring are intentionally deferred.
+
+GitHub Actions `42333090627` succeeded for Rust tests, CLI + numeric map export checks, desktop UI and optimized ARM64 APK. Extracted `map-studio-ux-preview.apk` from the artifact and ZIP-integrity-checked its Android manifest, arm64 `libmap_studio.so`, and JAR signature: 3,649,898 bytes (3.48 MiB), SHA-256 `953a52df95734e4f0acbdf1958ab62de02a90f4ad31457dd2465cec53d6d288e`. The install package is now `dev.despairarc.mapstudio.uxpreview` (**Map Studio UX Preview**), independent of the older Preview and its saved projects. **No physical-device test of v0.6 gestures or actual GBA emulator verification** was performed in this session. Game runtime, GitHub live collaboration and full tileset breadth remain future work. No main game-engine source changed.
+
+## State (as of log 22)
 
 **Done**
 - Meadowmere natural environment design, down to 20 natural maps (`design/region-meadowmere.md`, `meadowmere-areas.md`, `meadowmere-places.md`, `meadowmere-interiors.md`, `meadowmere-maps-natural.md`).
@@ -54,7 +59,7 @@ GitHub Actions run `42329689310` passed Rust unit tests (including import-restor
 - Villages and other buildings are not designed in any region.
 - Species per zone not assigned. The species list has not been checked in the repo. Rarity tier numbers are AI estimates.
 - Map Studio now has a Rust numeric map format and verified atlas generator; real-device export, broader tilesets and ROM/emulator parity still need proof.
-- Map Studio: v0.5 Preview compiled in Actions run `42329689310` (3.47 MiB) with JSON/ZIP project backups, local recovery and Android MediaStore restore UI. Device restoration, full GBA emulator verification, GitHub Pull/Publish and live collaboration remain pending. See `tools/map-studio/README.md` on `feature/map-studio-native-android`.
+- Map Studio: v0.6 native UX Preview built in Actions run `42333090627` (3.48 MiB), fixing gesture-first map creation/movement, adjustable dock, real collision/behavior icons, elevation tile selection and verified NPC presets. Real-phone interaction check pending; prior Preview versions remain separate. No full GBA ROM or live collaboration proof yet. See `tools/map-studio/README.md` on the feature branch.
 - Healing and rest rules, where the player begins, and which regions have gyms are undecided.
 - Owner to confirm the world layout sketch (diary log 10) and whether the "world feel rules" become a core design rule in `design/CORE.md`.
 - Ladder rows were drafted by the AI and need owner review.
