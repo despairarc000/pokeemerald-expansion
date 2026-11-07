@@ -1,6 +1,6 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
-use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, World};
+use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
 use crate::{storage, export, tiles, choices};
 use std::{path::PathBuf, time::{Duration, Instant}};
 
@@ -63,6 +63,7 @@ pub struct MapStudioApp {
     map_height: u32,
     expand_direction: ExpandDirection,
     size_panel_open: bool,
+    show_parent:bool,
     zoom: f32,
     offset: Vec2,
     canvas_size: Vec2,
@@ -138,6 +139,7 @@ impl MapStudioApp {
             map_height: 10,
             expand_direction: ExpandDirection::LowerRight,
             size_panel_open: false,
+            show_parent:true,
             zoom: 14.0,
             offset: vec2(28.0, 52.0),
             canvas_size: vec2(360.0,540.0),
@@ -192,6 +194,38 @@ impl MapStudioApp {
                 self.mode = Mode::Events; self.gesture = CanvasGesture::Idle;
             }
         });
+        // Spaces are editor-only; maps retain native map-local coordinates.
+        let current=self.world.active_space();
+        let space_label=current.name.clone();
+        let parent_space=current.parent_map_id
+            .and_then(|map_id|self.world.space_for_map(map_id));
+        ui.horizontal_wrapped(|ui|{
+            ui.menu_button(format!("◫ {space_label}"),|ui|{
+                let entries:Vec<_>=self.world.spaces.iter()
+                    .map(|sp|(sp.id,sp.name.clone(),sp.kind)).collect();
+                for (id,name,kind) in entries {
+                    if ui.selectable_label(id==self.world.active_space_id,
+                        format!("{} · {}",kind.label(),name)).clicked(){
+                        self.switch_space(id);
+                        ui.close();
+                    }
+                }
+            });
+            ui.menu_button("+ Space",|ui|{
+                for kind in [SpaceKind::Interior,SpaceKind::Cave,SpaceKind::Other]{
+                    if ui.button(format!("New {}",kind.label())).clicked(){
+                        self.create_editor_space(kind);
+                        ui.close();
+                    }
+                }
+            });
+            if let Some(parent)=parent_space {
+                if ui.small_button("↑ Parent").clicked(){self.switch_space(parent);}
+            }
+            if self.world.active_space_id!=0 {
+                ui.toggle_value(&mut self.show_parent,"◉ Overlay");
+            }
+        });
         ui.horizontal(|ui| {
             if ui.add_enabled(self.selected_map.is_some(),egui::Button::new("Size")).clicked(){
                 if let Some(map)=self.world.maps.iter().find(|m|Some(m.id)==self.selected_map){
@@ -202,20 +236,73 @@ impl MapStudioApp {
             }
             if ui.small_button("Fit").clicked() { self.fit_world(); }
             ui.separator();
-            ui.label(egui::RichText::new(format!("{} maps", self.world.maps.len()))
+            ui.label(egui::RichText::new(format!("{} maps", self.world.active_maps().count()))
                 .small().color(Color32::GRAY));
         });
         ui.add_space(4.0);
     }
 
-    fn fit_world(&mut self){
-        if self.world.maps.is_empty() || self.canvas_size.x<40.0 || self.canvas_size.y<40.0 {
+    fn switch_space(&mut self,id:u32){
+        if id==self.world.active_space_id{return;}
+        self.commit_edit();
+        self.begin_edit();
+        if let Err(err)=self.world.set_active_space(id){
+            self.message=err;
             return;
         }
-        let min_x=self.world.maps.iter().map(|m|i64::from(m.origin.x)).min().unwrap();
-        let min_y=self.world.maps.iter().map(|m|i64::from(m.origin.y)).min().unwrap();
-        let max_x=self.world.maps.iter().map(|m|i64::from(m.origin.x)+i64::from(m.width)).max().unwrap();
-        let max_y=self.world.maps.iter().map(|m|i64::from(m.origin.y)+i64::from(m.height)).max().unwrap();
+        self.commit_edit();
+        self.selected_map=None;
+        self.selected_cell=None;
+        if self.warp_pick.is_none(){self.selected_event=None;}
+        self.gesture=CanvasGesture::Idle;
+        self.palette_page=0;
+        self.tile_preview=None;
+        self.size_panel_open=false;
+        self.fit_world();
+        self.message=format!("Editing {} · overlays do not affect game coordinates",
+            self.world.active_space().name);
+    }
+
+    fn create_editor_space(&mut self,kind:SpaceKind){
+        let parent_id=self.selected_map.filter(|id|
+            self.world.space_for_map(*id)==Some(self.world.active_space_id));
+        let anchor=parent_id.and_then(|id|{
+            let m=self.world.maps.iter().find(|m|m.id==id)?;
+            let event=self.selected_event
+                .filter(|(mid,_)|*mid==id)
+                .and_then(|(_,index)|m.events.get(index));
+            Some(event.map(|e|GridPoint::new(
+                m.origin.x.saturating_add(e.x as i32),
+                m.origin.y.saturating_add(e.y as i32)))
+                .unwrap_or(GridPoint::new(
+                    m.origin.x.saturating_add((m.width/2) as i32),
+                    m.origin.y.saturating_add((m.height/2) as i32))))
+        }).unwrap_or_default();
+        self.begin_edit();
+        match self.world.create_space(kind,parent_id,anchor) {
+            Ok(id)=>{
+                self.message=format!("{} created · draw its first map here",kind.label());
+                self.selected_map=None;
+                self.selected_event=None;
+                self.gesture=CanvasGesture::Idle;
+                self.fit_world();
+                self.commit_edit();
+                debug_assert_eq!(self.world.active_space_id,id);
+            }
+            Err(err)=>{self.message=err;self.commit_edit();}
+        }
+    }
+
+    fn fit_world(&mut self){
+        if self.world.active_maps().next().is_none() ||
+            self.canvas_size.x<40.0 || self.canvas_size.y<40.0 {
+            self.offset=vec2(28.0,40.0);
+            return;
+        }
+        let min_x=self.world.active_maps().map(|m|i64::from(m.origin.x)).min().unwrap();
+        let min_y=self.world.active_maps().map(|m|i64::from(m.origin.y)).min().unwrap();
+        let max_x=self.world.active_maps().map(|m|i64::from(m.origin.x)+i64::from(m.width)).max().unwrap();
+        let max_y=self.world.active_maps().map(|m|i64::from(m.origin.y)+i64::from(m.height)).max().unwrap();
         let width=(max_x-min_x).max(1) as f32;
         let height=(max_y-min_y).max(1) as f32;
         let padding=24.0;
@@ -1344,8 +1431,39 @@ impl MapStudioApp {
             painter.line_segment([pos2(rect.left(),at),pos2(rect.right(),at)],grid_stroke);
         }
 
+        // A parent map may be ghosted behind the active Space near its
+        // entry point. It is NEVER hit-testable or painted through.
+        if self.show_parent && self.world.active_space_id!=0 {
+            if let Some(parent)=self.world.active_space().parent_map_id
+                .and_then(|id|self.world.maps.iter().find(|m|m.id==id)) {
+                let offset=self.world.active_space().anchor;
+                let name=format!("{}/{}",parent.primary_tileset,parent.secondary_tileset);
+                let ghost_texture=self.atlas_cache.get(&name).unwrap_or(&self.atlas);
+                let from_x=parent.origin.x-offset.x;
+                let from_y=parent.origin.y-offset.y;
+                for ly in 0..parent.height {
+                    for lx in 0..parent.width {
+                        if let Some(cell)=parent.cell(lx,ly){
+                            let min=self.screen_at(rect,
+                                from_x as f32+lx as f32,
+                                from_y as f32+ly as f32);
+                            let spot=Rect::from_min_size(min,Vec2::splat(s));
+                            if rect.intersects(spot) {
+                                painter.image(ghost_texture.id(),spot,
+                                    Self::tile_uv(cell.metatile_id),
+                                    Color32::from_white_alpha(73));
+                            }
+                        }
+                    }
+                }
+                painter.text(self.screen_at(rect,from_x as f32,from_y as f32)+vec2(3.0,3.0),
+                    Align2::LEFT_TOP,format!("Underlay: {}",parent.name),
+                    FontId::proportional(10.0),Color32::from_gray(140));
+            }
+        }
+
         // First: gray frames, painted metatiles, property tint, then labels and events.
-        for map in &self.world.maps {
+        for map in self.world.active_maps() {
             let top_left = self.screen_at(rect,map.origin.x as f32,map.origin.y as f32);
             let mrect = Rect::from_min_size(top_left,vec2(map.width as f32*s,map.height as f32*s));
             if !rect.intersects(mrect) { continue; }
@@ -1439,7 +1557,7 @@ impl MapStudioApp {
         if let Some((from_id,event_index))=self.selected_event {
             if let Some(map)=self.world.maps.iter().find(|m|m.id==from_id) {
                 if let Some(warp)=map.events.get(event_index).filter(|e|e.kind==EventKind::Warp){
-                    if let Some(target)=self.world.maps.iter().find(|m|m.id==warp.dest_map_id) {
+                    if let Some(target)=self.world.active_maps().find(|m|m.id==warp.dest_map_id) {
                         let to=if warp.warp_mode==WarpMode::Direct {
                             Some((warp.dest_x,warp.dest_y))
                         }else{
@@ -1507,7 +1625,7 @@ impl MapStudioApp {
             Color32::from_rgb(49,150,95),
             Color32::from_rgb(58,112,190),
         ];
-        for map in &self.world.maps {
+        for map in self.world.active_maps() {
             let min = self.screen_at(rect,map.origin.x as f32,map.origin.y as f32);
             let frame_rect = Rect::from_min_size(min,vec2(map.width as f32*s,map.height as f32*s));
             if rect.intersects(frame_rect) {
