@@ -82,6 +82,12 @@ pub const PICKUP_SLOTS:[&str;16]=[
     "FLAG_UNUSED_0x028","FLAG_UNUSED_0x029","FLAG_UNUSED_0x02A","FLAG_UNUSED_0x02B",
     "FLAG_UNUSED_0x02C","FLAG_UNUSED_0x02D","FLAG_UNUSED_0x02E","FLAG_UNUSED_0x02F",
 ];
+include!(concat!(env!("OUT_DIR"),"/items/item_icon_catalog.rs"));
+pub const HIDDEN_ITEM_ATLAS:&[u8]=include_bytes!(concat!(
+    env!("OUT_DIR"),"/items/item-previews.png"));
+pub fn hidden_item_preview(id:&str)->Option<usize>{
+    HIDDEN_ICON_REFS.iter().find(|(symbol,_)|*symbol==id).map(|(_,index)|*index)
+}
 pub fn valid_hidden_item(value:&str)->bool {
     HIDDEN_ITEMS.iter().any(|(_,id)|*id==value)
 }
