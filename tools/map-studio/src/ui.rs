@@ -325,19 +325,25 @@ impl MapStudioApp {
                         ui.label("Elevation");
                         ui.add(egui::Slider::new(&mut self.elevation_brush,0..=15).show_value(true));
                     });
+                    ui.label(egui::RichText::new(
+                        "Canvas shows E0–E15 with a height tint. This changes game elevation bits, not visual tile height."
+                    ).small().color(Color32::DARK_GRAY));
                 } else {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         for value in 0..4 {
                             if ui.selectable_label(self.collision_brush==value,
-                                format!("Collision {value}")).clicked() {
+                                format!("C{value}")).clicked() {
                                 self.collision_brush=value;
                             }
                         }
                     });
+                    ui.label(egui::RichText::new(
+                        "C0 clear · C1 blocking · C2/C3 other native collision values. Paint across tiles to apply."
+                    ).small().color(Color32::DARK_GRAY));
                 }
             }
             Mode::Events => {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.strong("Place");
                     for (kind,label) in [
                         (EventKind::Npc,"NPC"),(EventKind::Sign,"Sign"),
@@ -352,67 +358,98 @@ impl MapStudioApp {
                     let before=self.world.clone();
                     let mut changed=false;
                     let mut remove=false;
+                    let mut found=false;
                     if let Some(event)=self.world.maps.iter_mut()
                         .find(|m|m.id==map_id).and_then(|m|m.events.get_mut(index)) {
+                        found=true;
                         ui.horizontal(|ui| {
-                            ui.label(format!("{:?} ({},{})",event.kind,event.x,event.y));
+                            ui.strong(format!("{:?} ({},{})",event.kind,event.x,event.y));
+                            let text=if self.event_editor_open {"Close details"}else{"Edit details"};
+                            if ui.small_button(text).clicked(){
+                                self.event_editor_open=!self.event_editor_open;
+                            }
                             if ui.small_button("Remove").clicked(){remove=true;}
                         });
-                        egui::ScrollArea::vertical().id_salt("event-editor").max_height(110.0)
-                            .show(ui,|ui| {
-                                match event.kind {
-                                    EventKind::Npc => {
-                                        ui.horizontal(|ui|{
-                                            ui.label("Dialogue");
-                                            changed|=ui.text_edit_singleline(&mut event.dialogue).changed();
-                                        });
-                                        ui.horizontal(|ui|{
-                                            ui.label("Graphics");
-                                            changed|=ui.text_edit_singleline(&mut event.graphics_id).changed();
-                                        });
-                                    }
-                                    EventKind::Sign => {
-                                        ui.horizontal(|ui|{
-                                            ui.label("Sign text");
-                                            changed|=ui.text_edit_singleline(&mut event.dialogue).changed();
-                                        });
-                                    }
-                                    EventKind::Warp => {
-                                        ui.horizontal(|ui|{
-                                            ui.label("To");
-                                            egui::ComboBox::from_id_salt("warp-destination")
-                                                .selected_text(destinations.iter().find(|(id,_)|*id==event.dest_map_id)
-                                                    .map(|(_,name)|name.as_str()).unwrap_or("Choose map"))
-                                                .show_ui(ui,|ui|{
-                                                    for (id,name) in &destinations {
-                                                        changed|=ui.selectable_value(&mut event.dest_map_id,*id,name).changed();
-                                                    }
-                                                });
-                                            ui.label("Warp ID");
-                                            changed|=ui.add(egui::DragValue::new(&mut event.dest_warp_id)
-                                                .range(0..=30)).changed();
-                                        });
-                                        ui.small("A destination warp must exist in the target map.");
-                                    }
-                                    EventKind::Trigger => {
-                                        ui.horizontal(|ui|{
-                                            ui.label("Var");
-                                            changed|=ui.text_edit_singleline(&mut event.var).changed();
-                                            ui.label("Value");
-                                            changed|=ui.add(egui::DragValue::new(&mut event.var_value)).changed();
-                                        });
-                                        ui.horizontal(|ui|{
-                                            ui.label("Existing script");
-                                            changed|=ui.text_edit_singleline(&mut event.script).changed();
-                                        });
-                                    }
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Change");
+                            for (kind,label) in [
+                                (EventKind::Npc,"NPC"),(EventKind::Sign,"Sign"),
+                                (EventKind::Warp,"Warp"),(EventKind::Trigger,"Trigger")
+                            ] {
+                                if ui.selectable_label(event.kind==kind,label).clicked() && event.kind!=kind {
+                                    let mut new_event=MapEvent::new(kind,event.x,event.y);
+                                    new_event.elevation=event.elevation;
+                                    *event=new_event;
+                                    changed=true;
                                 }
-                                ui.horizontal(|ui|{
-                                    ui.label("Elevation");
-                                    changed|=ui.add(egui::DragValue::new(&mut event.elevation)
-                                        .range(0..=15)).changed();
+                            }
+                        });
+                        if self.event_editor_open {
+                            egui::ScrollArea::vertical().id_salt("event-editor")
+                                .max_height(125.0).show(ui,|ui| {
+                                    match event.kind {
+                                        EventKind::Npc => {
+                                            ui.horizontal(|ui|{
+                                                ui.label("Dialogue");
+                                                changed|=ui.text_edit_singleline(&mut event.dialogue).changed();
+                                            });
+                                            ui.horizontal(|ui|{
+                                                ui.label("Graphics");
+                                                changed|=ui.text_edit_singleline(&mut event.graphics_id).changed();
+                                            });
+                                        }
+                                        EventKind::Sign => {
+                                            ui.horizontal(|ui|{
+                                                ui.label("Sign text");
+                                                changed|=ui.text_edit_singleline(&mut event.dialogue).changed();
+                                            });
+                                        }
+                                        EventKind::Warp => {
+                                            ui.horizontal(|ui|{
+                                                ui.label("To");
+                                                egui::ComboBox::from_id_salt("warp-destination")
+                                                    .selected_text(destinations.iter()
+                                                        .find(|(id,_)|*id==event.dest_map_id)
+                                                        .map(|(_,name)|name.as_str())
+                                                        .unwrap_or("Choose map"))
+                                                    .show_ui(ui,|ui|{
+                                                        for (id,name) in &destinations {
+                                                            changed|=ui.selectable_value(
+                                                                &mut event.dest_map_id,*id,name
+                                                            ).changed();
+                                                        }
+                                                    });
+                                                ui.label("Warp ID");
+                                                changed|=ui.add(egui::DragValue::new(&mut event.dest_warp_id)
+                                                    .range(0..=30)).changed();
+                                            });
+                                            ui.small("Destination must have a matching warp.");
+                                        }
+                                        EventKind::Trigger => {
+                                            ui.horizontal(|ui|{
+                                                ui.label("Var");
+                                                changed|=ui.text_edit_singleline(&mut event.var).changed();
+                                                ui.label("Value");
+                                                changed|=ui.add(egui::DragValue::new(&mut event.var_value)).changed();
+                                            });
+                                            ui.horizontal(|ui|{
+                                                ui.label("Script");
+                                                changed|=ui.text_edit_singleline(&mut event.script).changed();
+                                            });
+                                            ui.small("Use an existing script reference.");
+                                        }
+                                    }
+                                    ui.horizontal(|ui|{
+                                        ui.label("Elevation");
+                                        changed|=ui.add(egui::DragValue::new(&mut event.elevation)
+                                            .range(0..=15)).changed();
+                                    });
                                 });
-                            });
+                        } else {
+                            ui.label(egui::RichText::new(
+                                "Tap type to change · double-tap icon for full details"
+                            ).small().color(Color32::DARK_GRAY));
+                        }
                     }
                     if changed {
                         self.before_gesture=Some(before);
@@ -423,9 +460,15 @@ impl MapStudioApp {
                         self.world.remove_event(map_id,index);
                         self.commit_edit();
                         self.selected_event=None;
+                        self.event_editor_open=false;
+                    } else if !found {
+                        self.selected_event=None;
+                        self.event_editor_open=false;
                     }
                 } else {
-                    ui.label(egui::RichText::new("Tap a map cell to place an event; tap an event to edit.").small());
+                    ui.label(egui::RichText::new(
+                        "Tap map to place · tap event to select · double-tap to edit"
+                    ).small().color(Color32::DARK_GRAY));
                 }
             }
         }
@@ -788,12 +831,12 @@ impl MapStudioApp {
                                 Stroke::new(0.5,Color32::from_white_alpha(48)),StrokeKind::Inside);
                         }
                         if self.mode == Mode::Properties {
-                            let (tint,symbol) = property_visual(cell);
+                            let (tint,symbol) = property_visual(cell,self.elevation_tool);
                             painter.rect_filled(tile_rect,0.0,tint);
                             if s >= 10.0 {
                                 painter.text(tile_rect.center(),Align2::CENTER_CENTER,symbol,
-                                    FontId::proportional((s*0.55).clamp(9.0,17.0)),
-                                    Color32::from_black_alpha(190));
+                                    FontId::proportional((s*0.53).clamp(8.0,16.0)),
+                                    Color32::from_black_alpha(220));
                             }
                         }
                     }
@@ -867,10 +910,27 @@ impl eframe::App for MapStudioApp {
     }
 }
 
-fn property_visual(cell: Cell) -> (Color32, &'static str) {
-    if cell.collision != 0 {
-        (Color32::from_rgba_unmultiplied(232,66,66,33),"1")
+fn property_visual(cell: Cell, elevation_mode:bool) -> (Color32, &'static str) {
+    if elevation_mode {
+        const LABELS:[&str;16]=[
+            "E0","E1","E2","E3","E4","E5","E6","E7",
+            "E8","E9","E10","E11","E12","E13","E14","E15",
+        ];
+        let elevation=cell.elevation.min(15);
+        // Gold for low heights through cool indigo at high heights.
+        let tint=Color32::from_rgba_unmultiplied(
+            220u8.saturating_sub(elevation.saturating_mul(9)),
+            192u8.saturating_sub(elevation.saturating_mul(6)),
+            75u8.saturating_add(elevation.saturating_mul(9)),
+            106,
+        );
+        (tint,LABELS[elevation as usize])
     } else {
-        (Color32::from_rgba_unmultiplied(68,181,98,29),"0")
+        match cell.collision {
+            0=>(Color32::from_rgba_unmultiplied(55,196,96,94),"C0"),
+            1=>(Color32::from_rgba_unmultiplied(230,67,67,112),"C1"),
+            2=>(Color32::from_rgba_unmultiplied(152,99,207,110),"C2"),
+            _=>(Color32::from_rgba_unmultiplied(241,169,53,110),"C3"),
+        }
     }
 }
