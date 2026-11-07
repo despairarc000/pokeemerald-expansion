@@ -47,6 +47,8 @@ pub struct MapStudioApp {
     atlas: egui::TextureHandle,
     palette_page: usize,
     palette_search: String,
+    palette_hold: Option<(u16,f64)>,
+    tile_preview: Option<u16>,
     save_path: Option<PathBuf>,
     export_dir: Option<PathBuf>,
     dirty_since: Option<Instant>,
@@ -120,6 +122,8 @@ impl MapStudioApp {
             atlas: texture,
             palette_page: 0,
             palette_search: String::new(),
+            palette_hold: None,
+            tile_preview: None,
             save_path,
             export_dir,
             dirty_since: None,
@@ -351,7 +355,7 @@ impl MapStudioApp {
                 .clamp(126.0,ui.ctx().content_rect().height()*0.72);
             ui.ctx().request_repaint();
         }
-        if response.clicked() {
+        if response.double_clicked() {
             self.panel_height=if self.panel_height<260.0 {390.0}else{185.0};
         }
 
@@ -381,10 +385,13 @@ impl MapStudioApp {
                     }
                 });
                 ui.horizontal(|ui|{
-                    ui.label("Find tile ID");
-                    ui.add(egui::TextEdit::singleline(&mut self.palette_search)
-                        .desired_width(75.0).hint_text("e.g. 368"));
+                    ui.label("Find tile");
+                    if ui.add(egui::TextEdit::singleline(&mut self.palette_search)
+                        .desired_width(75.0).hint_text("number")).changed() {
+                        self.palette_search.retain(|ch|ch.is_ascii_digit());
+                    }
                 });
+                if !ui.input(|i|i.pointer.any_down()) {self.palette_hold=None;}
                 let available=tiles::all_metatiles();
                 let displayed:Vec<u16>=if let Ok(id)=self.palette_search.trim().parse::<u16>() {
                     available.into_iter().filter(|candidate|*candidate==id).collect()
@@ -401,12 +408,37 @@ impl MapStudioApp {
                                     {Color32::from_rgb(153,208,241)}else{Color32::from_gray(231)});
                                 ui.painter().image(self.atlas.id(),tile.shrink(5.0),
                                     Self::tile_uv(id),Color32::WHITE);
-                                if response.clicked(){self.brush_id=id;self.erase_tool=false;}
+                                if response.clicked(){
+                                    self.brush_id=id;
+                                    self.erase_tool=false;
+                                    self.tile_preview=Some(id);
+                                }
+                                if response.is_pointer_button_down_on() {
+                                    let now=ui.input(|i|i.time);
+                                    match self.palette_hold {
+                                        Some((held,since)) if held==id => {
+                                            if now-since>=0.46 {
+                                                self.tile_preview=Some(id);
+                                                ui.ctx().request_repaint();
+                                            } else {
+                                                ui.ctx().request_repaint_after(Duration::from_millis(26));
+                                            }
+                                        }
+                                        _ => self.palette_hold=Some((id,now))
+                                    }
+                                }
                                 ui.label(egui::RichText::new(format!("{id}")).small());
                             });
                         }
                     });
                 });
+                if let Some(tile)=self.tile_preview {
+                    let label=tiles::friendly_behavior(tile).unwrap_or("Normal terrain");
+                    ui.label(egui::RichText::new(format!("Tile {tile} · {label}"))
+                        .small().color(Color32::DARK_GRAY));
+                }else{
+                    ui.small("Tap to select · hold a tile for details");
+                }
             }
             Mode::Properties => {
                 if let Some(id)=self.selected_map {
@@ -606,10 +638,11 @@ impl MapStudioApp {
                                     });
                                     ui.small(if ev.hidden_flag.is_empty(){
                                         "No pickup slot assigned"
-                                    }else{"This hidden item has a reserved pickup slot"});
+                                    }else{"One-time pickup · collection slot assigned automatically"});
                                 }
                                 EventKind::Warp=>{
-                                    ui.checkbox(&mut self.warp_return_link,"Create return link too");
+                                    ui.checkbox(&mut self.warp_return_link,"Also link a return warp");
+                                    ui.small("For direct arrivals, create a separate return warp if needed.");
                                     ui.horizontal_wrapped(|ui|{
                                         if ui.button("Link existing warp").clicked(){
                                             select_pick=Some(WarpPickMethod::Existing);

@@ -31,12 +31,12 @@ winit = { version = "0.30", default-features = false, features = ["android-nativ
 
 [package.metadata.android]
 strip = "strip"
-package = "dev.despairarc.mapstudio.uxpreview"
-apk_name = "map-studio-ux-preview"
+package = "dev.despairarc.mapstudio.eventspreview"
+apk_name = "map-studio-events-preview"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.application]
-label = "Map Studio UX Preview"
+label = "Map Studio Events Preview"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26

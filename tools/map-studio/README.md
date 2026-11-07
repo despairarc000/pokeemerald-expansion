@@ -92,3 +92,15 @@ Keep this tool isolated from the Emerald ROM runtime.
 - NPCs use verified selectable characters with friendly names. Arbitrary character IDs are not editable. Default dialogue is empty; users write actual NPC/sign text. Warps and triggers are intentionally deferred.
 
 **Still requires a physical phone test for gestures and panel sizing.** Emulator correctness and actual full ROM runtime behavior remain separate gates.
+
+## Events preview: gestural editing and warp travel
+
+**Map Studio Events Preview** uses package `dev.despairarc.mapstudio.eventspreview` and has independent storage. Older working builds need not be uninstalled. New CI test keys are temporary.
+
+Gestures: quick drag on blank canvas pans; long hold then drag creates a map. Hold an existing map then drag moves it. **Existing event markers take priority over maps**: tap selects an event, long hold then drag moves it inside the same map, double-tap opens its properties. Double-tap a painted tile for its tile properties; double-tap an unpainted map tile for map settings; double-tap empty canvas to zoom. Drag the palette handle to resize; double-tap its handle to toggle compact/expanded. Palette tiles show details on long hold.
+
+Events: **Person**, **Sign**, **Warp**, **Step message**, and **Hidden item**. Warp settings offer (1) link an existing native warp, (2) create a destination arrival-only warp marker on painted non-warp terrain, or (3) scripted **direct arrival** at a safe tile with no destination warp event. Linking can optionally install a reverse warp. Native warps show the **destination warp ID** on their source map tile, direct warp triggers show an arrow, and arrival-only markers show their own ID. Selected warps have a map-to-map line overlay and a readable destination label. Changing/removing native warp references preserves indexes or refuses unsafe operations.
+
+Direct arrivals use Emerald's `warp MAP, x, y` script macro through an immediate coordinate event, not fabricated `warp_events` coordinate fields. Hidden items use verified item constants and a small reserved pool of source-declared unused **persistent** pickup flags, with unique allocation in the editor. Step messages generate a legitimate immediate trigger script. Manual entry of engine symbol IDs is not exposed. Map game export checks missing event configuration, map/warp references, destination tile safety, unique pickup flags and dialogue encoding.
+
+**Caveats:** Touch gestures require on-device verification. A scripted coordinate event needs in-game ROM testing to confirm interaction timing on door/walk tiles. Reserved unused flags must be checked for conflicts when integrating with other mods. This test tool does not yet support every specialized NPC, weather trigger, hidden-item variant or secret-base event. Do not treat the green Rust tests as proof the generated ROM boots and travels correctly.
