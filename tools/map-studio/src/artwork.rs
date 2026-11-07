@@ -120,15 +120,15 @@ pub fn export_pair(pair:&TilePair,destination:&Path)->Result<(),String>{
     let pack=Manifest{
         format:"mapstudio-artwork-pack".into(),
         version:PACKAGE_VERSION,
-        collection:"Emerald".into(),engine:"pokeemerald".into(),
+        collection:pair.collection.into(),engine:"pokeemerald".into(),
         source:"despairarc000/pokeemerald-expansion source tilesets".into(),
-        attribution:"Emerald source metatiles; prefabs from huderlem/porymap (LGPL-3.0), original Pokemon artwork rights remain with owners".into(),
+        attribution:"Native Generation III source metatiles; prefabs from huderlem/porymap (LGPL-3.0), original Pokemon artwork rights remain with owners".into(),
         label:pair.label.into(),category:pair.category.into(),pair_key:pair.key.into(),
         primary_symbol:pair.primary_symbol.into(),secondary_symbol:pair.secondary_symbol.into(),
         primary_count:pair.primary_count,secondary_count:pair.secondary_count,
         valid_mask:pair.valid_mask.to_vec(),
     };
-    let prefab_list:Vec<&Prefab>=prefabs::emerald().iter()
+    let prefab_list:Vec<&Prefab>=prefabs::by_collection(pair.collection).iter()
         .filter(|p|prefabs::compatible(p,pair)).collect();
     let mut entries:Vec<(String,&[u8])>=vec![
         ("atlas.png".into(),pair.atlas),
