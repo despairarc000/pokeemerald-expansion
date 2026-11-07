@@ -852,7 +852,17 @@ impl MapStudioApp {
         }
     }
 
-    fn palette(&mut self, ui: &mut egui::Ui) {
+    /// Fixed-size dock regions may not request more height than the Android
+    /// viewport has left, even when a split-screen window becomes tiny.
+    fn dock_height_bounds(available:f32)->(f32,f32){
+        let height=available.max(12.0);
+        let min=(height*0.26).clamp(28.0,88.0).min(height*0.75);
+        let max=(height*0.68).max(min).min(height);
+        (min,max)
+    }
+
+    fn artwork_selectors(&mut self,ui:&mut egui::Ui){
+
         // A roomy but compact grab handle; tool choices remain pinned.
         let (handle,response)=ui.allocate_exact_size(
             vec2(ui.available_width(),33.0),Sense::click_and_drag());
@@ -871,7 +881,6 @@ impl MapStudioApp {
         if response.double_clicked() {
             self.panel_height=if self.panel_height<230.0 {370.0}else{165.0};
         }
-        if self.mode==Mode::Terrain {
             // Independent, touch-sized selection boxes. The first filters the
             // second; selecting a family immediately previews its first REAL
             // repository-defined tileset (no nested collapsing menu).
@@ -927,21 +936,95 @@ impl MapStudioApp {
                     });
             });
             if let Some(key)=selected_key{self.request_tileset(key);}
+        if let Some(pending)=self.pending_tileset.clone(){
+            if let Some(pair)=tiles::pair(&pending){
+                let map_name=self.selected_map.and_then(|id|
+                    self.world.active_maps().find(|m|m.id==id))
+                    .map(|map|map.name.clone())
+                    .unwrap_or_else(||"map".into());
+                ui.horizontal_wrapped(|ui|{
+                    ui.label(egui::RichText::new(
+                        format!("Preview: {} · {} unchanged",pair.label,map_name))
+                        .small().color(Color32::from_rgb(118,84,39)));
+                    if ui.small_button("Use artwork").clicked(){
+                        // Explicit action; previewing never changes existing
+                        // painted map data or reinterprets tile IDs.
+                        self.apply_pair(&pending);
+                    }
+                    if ui.small_button("Revert").clicked(){
+                        self.pending_tileset=None;
+                        self.selected_stamp=None;
+                        self.find_target=None;
+                        self.tileset_group=self.current_pair().category.into();
+                    }
+                });
+            }
         }
-        if self.mode==Mode::Terrain {
-            self.terrain_toolbar(ui);
+    }
+
+    fn palette(&mut self, ui: &mut egui::Ui) {
+        // Keep the grab handle visible even in a very short freeform window.
+        // Too-tall pinned content previously pushed the sheet below screen.
+        let handle_height=if ui.available_height()<112.0{24.0}else{32.0};
+        let (handle,response)=ui.allocate_exact_size(
+            vec2(ui.available_width(),handle_height),Sense::click_and_drag());
+        let center=handle.center();
+        ui.painter().rect_filled(handle,0.0,Color32::from_gray(243));
+        ui.painter().rect_filled(Rect::from_center_size(
+            pos2(center.x,handle.top()+8.0),vec2(48.0,4.0)),
+            2.0,Color32::from_gray(144));
+        if handle_height>26.0 {
+            ui.painter().text(pos2(center.x,handle.bottom()-2.0),
+                Align2::CENTER_BOTTOM,"Drag to resize",
+                FontId::proportional(11.0),Color32::from_gray(110));
         }
-        ui.separator();
-        // Native egui touch drag / kinetic scrolling owns all swipe motion.
-        // The previous duplicate per-frame scroll deltas caused the stiffness.
-        egui::ScrollArea::vertical().id_salt("dock_content")
-            .auto_shrink([false,false]).show(ui,|ui|{
-                if self.mode==Mode::Terrain {
-                    self.terrain_sheet_content(ui);
-                }else{
-                    self.palette_content(ui);
-                }
-            });
+        if response.dragged(){
+            let available=ui.ctx().available_rect().height()
+                .max(ui.ctx().content_rect().height()*0.40);
+            let (minimum,maximum)=Self::dock_height_bounds(available);
+            self.panel_height=(self.panel_height-response.drag_delta().y)
+                .clamp(minimum,maximum);
+            ui.ctx().request_repaint();
+        }
+        if response.double_clicked(){
+            self.panel_height=if self.panel_height<205.0{330.0}else{132.0};
+            ui.ctx().request_repaint();
+        }
+        // With enough room, the pickers/tools stay pinned while art scrolls.
+        // In split-screen/freeform, all content except the grip scrolls in a
+        // bounded area. That ensures a huge picker cannot push the dock away.
+        let compact=ui.available_height()<205.0;
+        if compact{
+            egui::ScrollArea::vertical().id_salt("compact_dock_content")
+                .auto_shrink([false,false])
+                .max_height(ui.available_height().max(1.0))
+                .show(ui,|ui|{
+                    if self.mode==Mode::Terrain{
+                        self.artwork_selectors(ui);
+                        self.terrain_toolbar(ui);
+                        ui.separator();
+                        self.terrain_sheet_content(ui);
+                    }else{
+                        self.palette_content(ui);
+                    }
+                });
+        }else{
+            if self.mode==Mode::Terrain{
+                self.artwork_selectors(ui);
+                self.terrain_toolbar(ui);
+            }
+            ui.separator();
+            egui::ScrollArea::vertical().id_salt("dock_content")
+                .auto_shrink([false,false])
+                .max_height(ui.available_height().max(1.0))
+                .show(ui,|ui|{
+                    if self.mode==Mode::Terrain{
+                        self.terrain_sheet_content(ui);
+                    }else{
+                        self.palette_content(ui);
+                    }
+                });
+        }
     }
 
     fn sanitize_dialogue(input:&mut String) {
@@ -992,21 +1075,6 @@ impl MapStudioApp {
                     }
                     if !self.tool_active {ui.small("Pan mode");}
                 });
-                if let Some(pending)=self.pending_tileset.clone(){
-                    if let Some(p)=tiles::pair(&pending){
-                        ui.horizontal_wrapped(|ui|{
-                            ui.colored_label(Color32::from_rgb(157,83,33),
-                                format!("Change existing map to {}?",p.label));
-                            if ui.button("Apply").clicked(){self.apply_pair(&pending);}
-                            if ui.small_button("Cancel").clicked(){
-                            self.pending_tileset=None;
-                            self.tileset_group=self.current_pair().category.into();
-                            self.selected_stamp=None;
-                            self.find_target=None;
-                        }
-                        });
-                    }
-                }
                 let chosen=self.browsing_pair();
                 ui.horizontal_wrapped(|ui|{
                     ui.label("Find");
@@ -2857,11 +2925,16 @@ impl eframe::App for MapStudioApp {
                 .show(root,|ui| { ui.add_space(12.0); });
         }
         egui::Panel::top("header").show(root,|ui|self.header(ui));
+        // Android 15 edge-to-edge navigation can cover the bottom dock.
+        // Reserve a small system-gesture strip before laying out the panel.
+        #[cfg(target_os = "android")]
+        egui::Panel::bottom("system_navigation_inset")
+            .exact_size(20.0).show(root,|_|{});
         self.ensure_atlas_cache(root.ctx());
-        let viewport=root.available_height().max(48.0);
-        // Leave meaningful canvas space in short split-screen windows.
-        let minimum=(viewport*0.19).clamp(36.0,86.0);
-        let maximum=(viewport*0.55).max(minimum);
+        let viewport=root.available_height().max(12.0);
+        // All dimensions are computed from the *current* window, not the
+        // original fullscreen dimensions, after Android freeform resizing.
+        let (minimum,maximum)=Self::dock_height_bounds(viewport);
         self.panel_height=self.panel_height.clamp(minimum,maximum);
         egui::Panel::bottom("palette")
             .resizable(false).exact_size(self.panel_height)
