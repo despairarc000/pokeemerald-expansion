@@ -43,6 +43,7 @@ pub struct MapStudioApp {
     last_painted: Option<GridPoint>,
     multitouch_in_progress: bool,
     selected_map: Option<u32>,
+    selected_cell: Option<GridPoint>,
     confirm_delete: Option<u32>,
     message: String,
 }
@@ -113,6 +114,7 @@ impl MapStudioApp {
             last_painted: None,
             multitouch_in_progress: false,
             selected_map: None,
+            selected_cell: None,
             confirm_delete: None,
             message,
         }
@@ -345,6 +347,22 @@ impl MapStudioApp {
                     ui.selectable_value(&mut self.elevation_tool,false,"Collision");
                     ui.selectable_value(&mut self.elevation_tool,true,"Elevation");
                 });
+                if let Some(p)=self.selected_cell {
+                    if let Some(map)=self.world.map_at(p) {
+                        let x=(p.x-map.origin.x) as u32;
+                        let y=(p.y-map.origin.y) as u32;
+                        if let Some(cell)=map.cell(x,y) {
+                            ui.label(egui::RichText::new(format!(
+                                "{} · ({},{})  C{} / E{}",
+                                map.name,x,y,cell.collision,cell.elevation
+                            )).small().color(Color32::DARK_GRAY));
+                        } else {
+                            ui.label(egui::RichText::new(
+                                "Unpainted cell — choose a metatile first"
+                            ).small().color(Color32::DARK_GRAY));
+                        }
+                    }
+                }
                 if self.elevation_tool {
                     ui.horizontal(|ui| {
                         ui.label("Elevation");
@@ -732,6 +750,7 @@ impl MapStudioApp {
                 if let Some((id,origin,width,height))=self.world.map_at(p)
                     .map(|map|(map.id,map.origin,map.width,map.height)) {
                     self.selected_map=Some(id);
+                    self.selected_cell=Some(p);
                     self.begin_edit();
                     if self.move_tool {
                         if p.x>=origin.x+(width as i32)-2 && p.y>=origin.y+(height as i32)-2 {
@@ -898,6 +917,19 @@ impl MapStudioApp {
                 FontId::proportional(11.0),Color32::from_black_alpha(if is_editing {48} else {160}));
         }
 
+        if self.mode==Mode::Properties {
+            if let Some(p)=self.selected_cell {
+                if self.world.map_at(p).is_some() {
+                    let at=self.screen_at(rect,p.x as f32,p.y as f32);
+                    let selected=Rect::from_min_size(at,Vec2::splat(s));
+                    if rect.intersects(selected) {
+                        painter.rect_stroke(selected,0.0,
+                            Stroke::new(2.0,Color32::from_rgb(37,62,121)),
+                            StrokeKind::Inside);
+                    }
+                }
+            }
+        }
         // Outlines drawn LAST, above terrain, properties, labels, and markers.
         let colors = [
             Color32::from_rgb(166,64,79),
@@ -961,6 +993,33 @@ fn property_visual(cell: Cell, elevation_mode:bool) -> (Color32, &'static str) {
             1=>(Color32::from_rgba_unmultiplied(230,67,67,112),"C1"),
             2=>(Color32::from_rgba_unmultiplied(152,99,207,110),"C2"),
             _=>(Color32::from_rgba_unmultiplied(241,169,53,110),"C3"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod properties_visual_tests {
+    use super::*;
+    use crate::model::TileKind;
+    #[test]
+    fn collision_overlay_displays_all_native_values() {
+        let mut cell=Cell::new(TileKind::Grass);
+        let mut seen=std::collections::HashSet::new();
+        for collision in 0..4 {
+            cell.collision=collision;
+            let (color,label)=property_visual(cell,false);
+            assert_eq!(label,format!("C{collision}"));
+            seen.insert(color);
+        }
+        assert_eq!(seen.len(),4);
+    }
+    #[test]
+    fn elevation_overlay_has_sixteen_distinct_labels() {
+        let mut cell=Cell::new(TileKind::Grass);
+        for height in 0..16 {
+            cell.elevation=height;
+            let (_,label)=property_visual(cell,true);
+            assert_eq!(label,format!("E{height}"));
         }
     }
 }
