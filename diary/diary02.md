@@ -34,7 +34,12 @@ After testing an earlier native APK on Android, the owner requested automatic em
 
 GitHub Actions run `42328590131` **passed** Rust model/CLI tests, desktop UI compile, and ARM64 APK packaging. The signed, ZIP-verified APK is 3,584,362 bytes (3.42 MiB). The new APK has separate Android package `dev.despairarc.mapstudio.preview` (label **Map Studio Preview**) so installing it does not require removing the older package `dev.despairarc.mapstudio`; save data is *not* shared between the two. Preview signing keys remain disposable. **No physical-device test of this new UI version or full GBA ROM/emulator playtest has been completed.** Secure GitHub synchronization, generic project import, stable release signing, and live AI collaboration are not yet implemented.
 
-## State (as of log 20)
+## Log 21: Map Studio v0.5 native project restoration milestone (2026-11-07)
+The owner requested further implementation after v0.4. On `feature/map-studio-native-android`, the Rust editor now has a Project menu for New / Backup / Restore / Export. Android MediaStore integration can list and read *this app's own* Downloads/MapStudio JSON backup files and map-export ZIPs; the desktop app also sees local recovery files. Versioned project decoding has a 20 MiB safety cap and validates map geometry, cells, events and schema before allowing replacement. Every New/Restore action writes a recovery copy of the previous canvas before saving the replacement, and resets UI selections/history. Game-source ZIPs can be restored by decoding the embedded `mapstudio-project.json` without extracting files. The headless `map-studio-cli` likewise supports safe `import` / `restore` with recovery snapshots.
+
+GitHub Actions run `42329689310` passed Rust unit tests (including import-restore safety), CLI geometry and Rust-to-Python map export checks, desktop compile and optimized ARM64 APK packaging. The checked, self-signed APK is 3,641,706 bytes (about 3.47 MiB) under package `dev.despairarc.mapstudio.preview`. **Only automated tests passed; Android device restore UI/MediaStore access in this build has not yet been physically tested.** This is not a generic Storage Access Framework picker: backups created by another package may not be visible. The Preview still uses ephemeral test signing per CI run. Full ROM emulator proof and secure GitHub/live AI collaboration remain unfinished; do not conflate local backup browsing with cloud synchronization.
+
+## State (as of log 21)
 
 **Done**
 - Meadowmere natural environment design, down to 20 natural maps (`design/region-meadowmere.md`, `meadowmere-areas.md`, `meadowmere-places.md`, `meadowmere-interiors.md`, `meadowmere-maps-natural.md`).
@@ -49,7 +54,7 @@ GitHub Actions run `42328590131` **passed** Rust model/CLI tests, desktop UI com
 - Villages and other buildings are not designed in any region.
 - Species per zone not assigned. The species list has not been checked in the repo. Rarity tier numbers are AI estimates.
 - Map Studio now has a Rust numeric map format and verified atlas generator; real-device export, broader tilesets and ROM/emulator parity still need proof.
-- Map Studio: v0.4 Preview native Rust APK successfully built in Actions run `42328590131` (3.42 MiB) after automatic panning, precise directional map sizing, collision/elevation overlays and event UX fixes; phone verification of this build and in-game export is still pending. See `tools/map-studio/README.md` on `feature/map-studio-native-android`. GitHub sync/live collaboration remain future work.
+- Map Studio: v0.5 Preview compiled in Actions run `42329689310` (3.47 MiB) with JSON/ZIP project backups, local recovery and Android MediaStore restore UI. Device restoration, full GBA emulator verification, GitHub Pull/Publish and live collaboration remain pending. See `tools/map-studio/README.md` on `feature/map-studio-native-android`.
 - Healing and rest rules, where the player begins, and which regions have gyms are undecided.
 - Owner to confirm the world layout sketch (diary log 10) and whether the "world feel rules" become a core design rule in `design/CORE.md`.
 - Ladder rows were drafted by the AI and need owner review.
