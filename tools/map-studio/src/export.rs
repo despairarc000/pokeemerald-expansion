@@ -1,6 +1,6 @@
 //! Safe, deterministic expansion source ZIP export.
 //! The Python custom-map compiler consumes layout.mapstudio.json in each folder.
-use crate::model::{MapFrame, World, EventKind};
+use crate::model::{MapFrame, World, EventKind, WarpMode};
 use std::{collections::HashMap, fs, io::Write, path::Path};
 use serde_json::{json, Value};
 
@@ -16,6 +16,7 @@ pub fn map_name(map: &MapFrame) -> String {
 pub fn validate(world:&World) -> Result<(), String> {
     if world.maps.is_empty(){return Err("Add a map before exporting".into());}
     let mut names=std::collections::HashSet::new();
+    let mut pickup_slots=std::collections::HashSet::new();
     for m in &world.maps {
         if !names.insert(map_name(m)) {return Err(format!("Duplicate Emerald map name: {}",map_name(m))); }
         if m.width == 0 || m.height == 0 ||
@@ -55,16 +56,44 @@ pub fn validate(world:&World) -> Result<(), String> {
                     }
                 }
                 EventKind::Warp => {
-                    let Some(target)=world.maps.iter().find(|target|target.id==e.dest_map_id)
-                        else {return Err(format!("{} warp destination missing",m.name));};
-                    let count=target.events.iter().filter(|item|item.kind==EventKind::Warp).count();
-                    if usize::from(e.dest_warp_id)>=count {
-                        return Err(format!("{} references missing destination warp {}",m.name,e.dest_warp_id));
+                    let target=world.maps.iter().find(|m|m.id==e.dest_map_id)
+                        .ok_or_else(||format!("{} warp has no destination",m.name))?;
+                    if e.arrival_only {
+                        let p=crate::model::GridPoint::new(
+                            i32::try_from(i64::from(m.origin.x)+i64::from(e.x)).map_err(|_|"Overflow")?,
+                            i32::try_from(i64::from(m.origin.y)+i64::from(e.y)).map_err(|_|"Overflow")?,
+                        );
+                        if !world.safe_arrival_at(p) {
+                            return Err(format!("{} arrival marker needs safe, non-warp terrain",m.name));
+                        }
+                    }
+                    if e.warp_mode==WarpMode::Linked {
+                        let native_count=target.events.iter().filter(|other|
+                            other.kind==EventKind::Warp && other.warp_mode!=WarpMode::Direct).count();
+                        if usize::from(e.dest_warp_id)>=native_count{
+                            return Err(format!("{} references missing destination warp",m.name));
+                        }
+                    }else{
+                        let cell=target.cell(e.dest_x,e.dest_y).ok_or_else(||
+                            format!("{} direct arrival needs a painted destination tile",m.name))?;
+                        if cell.collision!=0 || crate::tiles::is_warp_behavior(cell.metatile_id)
+                            || !crate::tiles::valid_metatile(cell.metatile_id) {
+                            return Err(format!("{} direct arrival needs walkable, non-warp terrain",m.name));
+                        }
                     }
                 }
                 EventKind::Trigger => {
-                    if !valid_symbol(&e.script) || !valid_symbol(&e.var) {
-                        return Err(format!("{} trigger requires valid script and variable references",m.name));
+                    if !safe_dialogue(&e.dialogue){
+                        return Err(format!("{} step trigger needs a valid message",m.name));
+                    }
+                }
+                EventKind::HiddenItem => {
+                    if !crate::choices::valid_hidden_item(&e.hidden_item) {
+                        return Err(format!("{} hidden item needs a chosen item",m.name));
+                    }
+                    if !crate::choices::valid_pickup_slot(&e.hidden_flag)
+                        || !pickup_slots.insert(e.hidden_flag.as_str()){
+                        return Err(format!("{} hidden item requires a unique pickup slot",m.name));
                     }
                 }
             }
@@ -73,8 +102,9 @@ pub fn validate(world:&World) -> Result<(), String> {
     Ok(())
 }
 
-fn valid_symbol(s:&str)->bool {
-    !s.is_empty() && s.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_')
+fn safe_dialogue(s:&str)->bool {
+    !s.is_empty() && s.len()<=100 && s.chars().all(|c|
+        (c.is_ascii_graphic() || c==' ') && c!='"' && c!='$' && (c as u32)!=92)
 }
 
 pub fn layout_json(map:&MapFrame) -> Value {
@@ -127,14 +157,29 @@ pub fn map_json(map:&MapFrame, world:&World) -> Value {
                 "player_facing_dir":"BG_EVENT_PLAYER_FACING_ANY",
                 "script":format!("{}_EventScript_Sign{}",map_name(map),number)
             })),
-            EventKind::Warp => warps.push(json!({
-                "x":e.x,"y":e.y,"elevation":e.elevation,
-                "dest_map":format!("MAP_{}",by_id[&e.dest_map_id].to_uppercase()),
-                "dest_warp_id":e.dest_warp_id.to_string()
-            })),
+            EventKind::Warp => {
+                if e.warp_mode==WarpMode::Direct {
+                    coords.push(json!({
+                        "type":"trigger","x":e.x,"y":e.y,"elevation":e.elevation,
+                        "var":"TRIGGER_RUN_IMMEDIATELY","var_value":"0",
+                        "script":format!("{}_EventScript_DirectWarp{}",map_name(map),number)
+                    }));
+                }else{
+                    warps.push(json!({
+                        "x":e.x,"y":e.y,"elevation":e.elevation,
+                        "dest_map":format!("MAP_{}",by_id[&e.dest_map_id].to_uppercase()),
+                        "dest_warp_id":e.dest_warp_id.to_string()
+                    }));
+                }
+            }
             EventKind::Trigger => coords.push(json!({
                 "type":"trigger","x":e.x,"y":e.y,"elevation":e.elevation,
-                "var":e.var,"var_value":e.var_value.to_string(),"script":e.script
+                "var":"TRIGGER_RUN_IMMEDIATELY","var_value":"0",
+                "script":format!("{}_EventScript_Trigger{}",map_name(map),number)
+            })),
+            EventKind::HiddenItem => signs.push(json!({
+                "type":"hidden_item","x":e.x,"y":e.y,"elevation":e.elevation,
+                "item":e.hidden_item,"flag":e.hidden_flag
             })),
         }
     }
@@ -159,7 +204,7 @@ pub fn map_json(map:&MapFrame, world:&World) -> Value {
 }
 
 
-fn script_text(map:&MapFrame) -> String {
+fn script_text(map:&MapFrame,world:&World) -> String {
     let name=map_name(map);
     let mut out=format!("{name}_MapScripts::\n\t.byte 0\n");
     for (index,e) in map.events.iter().enumerate() {
@@ -170,6 +215,16 @@ fn script_text(map:&MapFrame) -> String {
                 e.dialogue)),
             EventKind::Sign => out.push_str(&format!(
                 "\n{name}_EventScript_Sign{number}::\n\tmsgbox {name}_Text_Sign{number}, MSGBOX_SIGN\n\tend\n\n{name}_Text_Sign{number}:\n\t.string \"{}$\"\n",
+                e.dialogue)),
+            EventKind::Warp if e.warp_mode==WarpMode::Direct => {
+                if let Some(target)=world.maps.iter().find(|m|m.id==e.dest_map_id){
+                    out.push_str(&format!(
+                        "\n{name}_EventScript_DirectWarp{number}::\n\twarp MAP_{}, {}, {}\n\tend\n",
+                        map_name(target).to_uppercase(),e.dest_x,e.dest_y));
+                }
+            }
+            EventKind::Trigger => out.push_str(&format!(
+                "\n{name}_EventScript_Trigger{number}::\n\tmsgbox {name}_Text_Trigger{number}, MSGBOX_DEFAULT\n\tend\n\n{name}_Text_Trigger{number}:\n\t.string \"{}$\"\n",
                 e.dialogue)),
             _ => {}
         }
@@ -190,7 +245,7 @@ pub fn export_zip(world:&World, destination:&Path) -> Result<(),String> {
         for (filename,contents) in [
             ("layout.mapstudio.json",serde_json::to_vec_pretty(&layout_json(map)).map_err(|e|e.to_string())?),
             ("map.json",serde_json::to_vec_pretty(&map_json(map,world)).map_err(|e|e.to_string())?),
-            ("scripts.inc",script_text(map).into_bytes())
+            ("scripts.inc",script_text(map,world).into_bytes())
         ] {
             zip.start_file(format!("{folder}{filename}"),options)
                 .map_err(|e|format!("ZIP entry: {e}"))?;
@@ -272,16 +327,17 @@ mod map_event_export_tests {
         let json=map_json(m,&world);
         assert_eq!(json["object_events"].as_array().unwrap().len(),1);
         assert_eq!(json["bg_events"].as_array().unwrap().len(),1);
-        let scripts=script_text(m);
+        let scripts=script_text(m,&world);
         assert!(scripts.contains("MSGBOX_NPC"));
         assert!(scripts.contains("MSGBOX_SIGN"));
     }
     #[test]
     fn only_existing_destination_warps_are_exportable() {
         let mut world=ready_world();
-        world.add_event(GridPoint::new(1,1),EventKind::Warp);
-        assert!(validate(&world).unwrap_err().contains("missing destination warp"));
-        world.add_event(GridPoint::new(11,1),EventKind::Warp);
+        let from=world.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        assert!(validate(&world).unwrap_err().contains("no destination"));
+        let to=world.add_event(GridPoint::new(11,1),EventKind::Warp).unwrap();
+        world.link_warps(from,to,true).unwrap();
         validate(&world).unwrap();
         assert_eq!(map_json(&world.maps[0],&world)["warp_events"][0]["dest_map"],"MAP_MEADOWMERE_HOUSE");
     }
@@ -293,5 +349,53 @@ mod empty_project_tests {
     #[test]
     fn empty_editor_project_is_backup_eligible_but_not_map_export_eligible() {
         assert!(validate(&World::new()).unwrap_err().contains("Add a map"));
+    }
+}
+
+#[cfg(test)]
+mod travel_exports {
+    use super::*;
+    use crate::model::{GridPoint,TileKind};
+    fn prepared()->World{
+        let mut w=World::new();
+        w.add_map("Outside",GridPoint::new(0,0),5,5).unwrap();
+        w.add_map("Home",GridPoint::new(10,0),5,5).unwrap();
+        for m in &mut w.maps{m.cells.fill(Some(crate::model::Cell::new(TileKind::Grass)));}
+        w
+    }
+    #[test]
+    fn linked_and_arrival_only_destinations_are_native_warps() {
+        let mut w=prepared();
+        let from=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        let target=w.create_arrival_marker(from,GridPoint::new(11,1),false).unwrap();
+        validate(&w).unwrap();
+        assert!(w.event(target.0,target.1).unwrap().arrival_only);
+        assert_eq!(map_json(&w.maps[0],&w)["warp_events"][0]["dest_map"],"MAP_MEADOWMERE_HOME");
+        w.link_warps(from,target,true).unwrap();
+        validate(&w).unwrap();
+    }
+    #[test]
+    fn script_direct_arrival_does_not_require_a_destination_warp() {
+        let mut w=prepared();
+        let from=w.add_event(GridPoint::new(1,1),EventKind::Warp).unwrap();
+        w.set_direct_arrival(from,GridPoint::new(12,2)).unwrap();
+        validate(&w).unwrap();
+        let j=map_json(&w.maps[0],&w);
+        assert_eq!(j["coord_events"][0]["var"],"TRIGGER_RUN_IMMEDIATELY");
+        assert!(j["warp_events"].as_array().unwrap().is_empty());
+        assert!(script_text(&w.maps[0],&w).contains("warp MAP_MEADOWMERE_HOME, 2, 2"));
+    }
+    #[test]
+    fn hidden_item_and_step_message_are_real_events() {
+        let mut w=prepared();
+        let item=w.add_event(GridPoint::new(1,1),EventKind::HiddenItem).unwrap();
+        w.assign_hidden_slot(item.0,item.1).unwrap();
+        w.event_mut(item.0,item.1).unwrap().hidden_item="ITEM_POTION".into();
+        let step=w.add_event(GridPoint::new(2,2),EventKind::Trigger).unwrap();
+        w.event_mut(step.0,step.1).unwrap().dialogue="Watch your step".into();
+        validate(&w).unwrap();
+        let j=map_json(&w.maps[0],&w);
+        assert_eq!(j["bg_events"][0]["type"],"hidden_item");
+        assert_eq!(j["coord_events"][0]["type"],"trigger");
     }
 }
