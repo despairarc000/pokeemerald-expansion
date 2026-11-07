@@ -116,21 +116,18 @@ def generate(main,local,output):
                 cell=image.crop((tile_x,tile_y,tile_x+8,tile_y+8))
                 if flipx:cell=cell.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
                 if flipy:cell=cell.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-                # Upper layer's index-zero pixels are transparent in the atlas.
-                if n>=4:
-                    # Derive transparency from indexed source, not RGB black.
-                    idx_img=images[image_src].crop((tile_x,tile_y,tile_x+8,tile_y+8))
-                    if flipx:idx_img=idx_img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-                    if flipy:idx_img=idx_img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-                    mask=idx_img.point(lambda value:0 if value==0 else 255).convert("L")
-                    cell.putalpha(mask)
+                # Palette index 0 is transparent on *every* GBA BG layer.
+                # Only masking the upper layer paints opaque palette-zero
+                # rectangles where the base layer should show through.
+                idx_img=images[image_src].crop((tile_x,tile_y,tile_x+8,tile_y+8))
+                if flipx:idx_img=idx_img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+                if flipy:idx_img=idx_img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+                mask=idx_img.point(lambda value:0 if value==0 else 255).convert("L")
+                cell.putalpha(mask)
                 cache[key]=cell
             picture=cache[key]
             dest=(x+(n%2)*8,y+((n//2)%2)*8)
-            if n>=4:
-                atlas.paste(picture,dest,picture)
-            else:
-                atlas.paste(picture,dest)
+            atlas.alpha_composite(picture,dest)
     atlas.save(output,optimize=True)
     mask=bytearray(128)
     for mid in valid:mask[mid//8]|=1<<(mid%8)
