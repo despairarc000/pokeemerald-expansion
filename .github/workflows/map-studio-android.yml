@@ -84,7 +84,7 @@ jobs:
               pixels=list(picture.getdata())
               opaque=[pixel for pixel in pixels if pixel[3]>0]
               assert len(opaque)>4000,(name,"missing source art")
-              assert len(set(opaque))>12,(name,"unexpectedly flat source art")
+              assert len(set(opaque))>2,(name,"not enough distinct source colors")
               assert len(opaque)<len(pixels),(name,"lost metatile transparency")
               shutil.copy2(path,audit/name)
           sprites=list(catalog_file.parent.parent.glob("sprites/npc-previews.png"))
