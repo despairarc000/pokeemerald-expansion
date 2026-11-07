@@ -3,12 +3,12 @@
 Development branch: `feature/map-studio-native-android`.
 Engineering baseline: [design/map-studio-implementation.md](../../design/map-studio-implementation.md).
 
-This is a working native `eframe` / `egui` / `wgpu` Android prototype with real Pokémon Emerald General + Petalburg metatile art. It is **not** a fully validated GBA ROM tool or a live GitHub collaboration client.
+This is a native `eframe` / `egui` / `wgpu` Android editor with source-generated visual tileset atlases for 129 of the 137 layout-declared primary/secondary combinations currently resolvable in the repository. Its nested editing Spaces and per-map tilesets do not change the Emerald engine's map-local coordinates. It is **not yet** a fully playtested GBA ROM tool or a live GitHub collaboration client.
 
 ## What's implemented
 
 - White-grid canvas, adjoining colored map frames, touch painting, pinch zoom, panning and frame creation/movement/resizing.
-- Real Emerald metatile-ID palette (compiled from actual tileset graphics and metatile binaries), collision and elevation editing, frame renaming and safe deletion.
+- Real Emerald visual tile galleries across the available 129 source-defined tileset combinations, filters by collection and verified behavior, collision/elevation editing, frame renaming and safe deletion.
 - Native NPC, sign, warp and trigger event records; basic NPC/sign dialogue script generation, with explicit validation for incomplete script references or missing warp targets.
 - Offline versioned JSON project autosaves, undo/redo, and a **Backup** action for unfinished projects.
 - **Export** creates a ZIP with `custom_maps/<MapName>/layout.mapstudio.json`, map headers, scripts, connections and the project snapshot. All cells must be painted and validation must pass.
@@ -17,7 +17,7 @@ This is a working native `eframe` / `egui` / `wgpu` Android prototype with real 
 
 ## Side-by-side Android preview builds
 
-The current Android package is `dev.despairarc.mapstudio.preview`, displayed as **Map Studio Preview**. This is deliberately separate from the older `dev.despairarc.mapstudio` app, so the owner can compare UX changes without removing previously autosaved work. The two packages **do not share** saved projects. The old test APK and this Preview can remain installed simultaneously.
+The current build is **Map Studio Spaces Preview** (`dev.despairarc.mapstudio.spacespreview`). This is a separate package from the earlier base, UX and Events Previews; it cannot overwrite or directly share their private saved projects. Preserve and export any valuable maps before uninstalling an older build.
 
 CI still uses a temporary test signing key on every run. A later **Preview** APK may require uninstalling the previous Preview before installation. Do not uninstall an app containing valuable unsaved/unexported maps. Stable signing and safe project import/restore are separate unfinished tasks.
 
