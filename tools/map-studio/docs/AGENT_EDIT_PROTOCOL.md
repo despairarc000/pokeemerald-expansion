@@ -33,7 +33,12 @@ map's resolved `native_pair` is shown by `inspect-region`.
 The origin in inspect/render commands is **map-local**, not the merged editor
 world coordinate. Inspect returns each cell's exact numeric ID, collision,
 elevation, verified named source label (if one exists), true source behavior,
-and tracked prefab UUID (if any). Empty cells remain null. Rendering uses the
+and tracked prefab UUID (if any). Each cell also exposes an editor-only
+`layer`: `background`, `macro`, `building`, or `micro`. An untracked native tile
+is automatically `background` **without modifying its ID, collision, elevation,
+or existing artwork**. Even an empty, unpainted cell is classified as background
+but its `cell` value remains `null` (never fabricated grass). Explicit object
+ownership is distinguished by the non-null prefab UUID. Empty cells remain null. Rendering uses the
 matching native atlas, with no invented tiles or borrowed source palettes.
 
 ## Transaction JSON
