@@ -301,6 +301,11 @@ mod tests {
         let mut world=World::new();
         world.add_map("Town",GridPoint::new(0,0),8,8).unwrap();
         world.add_map("town",GridPoint::new(20,0),8,8).unwrap();
+        for map in &mut world.maps {
+            for cell in &mut map.cells {
+                *cell=Some(crate::model::Cell::new(TileKind::Grass));
+            }
+        }
         // A case-sensitive folder name is not a distinct game map constant.
         let err=validate(&world).unwrap_err();
         assert!(err.contains("Duplicate native game map symbol"),"{err}");
