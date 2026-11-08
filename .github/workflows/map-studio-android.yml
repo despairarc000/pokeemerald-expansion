@@ -114,6 +114,34 @@ jobs:
           shutil.copy2(sprites[0],audit/"npc-previews.png")
           print("Verified real atlas gallery and selected NPC previews")
           PY
+      - name: Verify source-native background, macro and micro prefab gallery
+        run: |
+          python3 - <<'PY'
+          import glob,json,os,shutil
+          from pathlib import Path
+          from PIL import Image
+          sources=glob.glob('target/**/emerald_environment_prefabs.json',recursive=True)
+          assert sources,"Rust build did not extract native environment assets"
+          source=Path(max(sources,key=os.path.getmtime))
+          candidates=json.loads(source.read_text())
+          assert len(candidates)==14,len(candidates)
+          assert {p["semantic_class"] for p in candidates}=={"background","macro","micro"}
+          assert len({p["asset_id"] for p in candidates})==len(candidates)
+          for p in candidates:
+              assert p["source_map"] and p["primary_tileset"] and p["secondary_tileset"]
+              assert len(p["metatiles"])==p["width"]*p["height"]
+              assert all(0<=c["metatile_id"]<1024 and 0<=c["collision"]<=3
+                         and 0<=c["elevation"]<=15 for c in p["metatiles"])
+          thumbs=source.parent/"emerald_prefabs.png"
+          picture=Image.open(thumbs).convert("RGBA")
+          assert picture.width==8*96 and picture.height>=11*96,picture.size
+          assert picture.getbbox() is not None
+          output=Path("target/studio-asset-audit")
+          output.mkdir(exist_ok=True,parents=True)
+          shutil.copy2(source,output/"environment-prefabs.json")
+          shutil.copy2(thumbs,output/"environment-prefabs-gallery.png")
+          print("Verified 71 Porymap +",len(candidates),"native environment prefabs")
+          PY
       - name: Reconstruct native Lilycove terrain reference for verified terrain rules
         run: |
           ATLAS="$(find target -name general__lilycove.png | head -n 1)"
