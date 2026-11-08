@@ -1,14 +1,14 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
-use crate::{storage, export, tiles, choices, artwork, prefabs, projects, github_sync, emerald_library};
+use crate::{storage, export, tiles, choices, artwork, prefabs, projects, github_sync, emerald_library, emerald_terrain};
 use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode { Terrain, Properties, Events }
 
 #[derive(Clone,Copy,PartialEq,Eq)]
-enum ArtworkView { Metatiles, Prefabs }
+enum ArtworkView { Metatiles, Prefabs, Walkways }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 enum SizeAxis { Width, Height }
@@ -1011,6 +1011,15 @@ impl MapStudioApp {
                 "Metatiles").clicked(){
                 self.artwork_view=ArtworkView::Metatiles;
             }
+            if ui.selectable_label(self.artwork_view==ArtworkView::Walkways,
+                "Paths").clicked(){
+                self.artwork_view=ArtworkView::Walkways;
+                self.selected_prefab=None;
+                self.selected_stamp=None;
+                self.bucket_tool=false;
+                self.erase_tool=false;
+                self.tool_active=true;
+            }
             if self.artwork_view==ArtworkView::Prefabs{
                 egui::ComboBox::from_id_salt("emerald_asset_group")
                     .selected_text(self.prefab_group.name())
@@ -1165,6 +1174,26 @@ impl MapStudioApp {
     fn terrain_sheet_content(&mut self,ui:&mut egui::Ui){
         if self.artwork_view==ArtworkView::Prefabs{
             self.prefab_gallery(ui,None);
+        }else if self.artwork_view==ArtworkView::Walkways{
+            let pair=self.current_pair();
+            if pair.key==emerald_terrain::LILYCOVE_PAIR{
+                ui.horizontal(|ui|{
+                    let atlas=self.atlas_cache.get(pair.key)
+                        .unwrap_or(&self.atlas).id();
+                    let (rect,_)=ui.allocate_exact_size(vec2(60.0,60.0),Sense::hover());
+                    ui.painter().image(atlas,rect,
+                        Self::tile_uv(emerald_terrain::LILYCOVE_PAVED_METATILE),
+                        Color32::WHITE);
+                    ui.vertical(|ui|{
+                        ui.strong("Lilycove paved path");
+                        ui.small("Native Emerald · Paint by dragging");
+                        ui.small("Protected buildings and events cannot be overwritten.");
+                    });
+                });
+            }else{
+                ui.label("No verified path family for this native tileset yet.");
+                ui.small("Select a General/Lilycove map to use source-backed paving.");
+            }
         }else{
             let pair=self.current_pair();
             self.metatile_sheet(ui,pair,0,pair.primary_count,"Shared source metatiles");
@@ -2891,6 +2920,19 @@ impl MapStudioApp {
                 }
                 return;
             }
+        }
+        if self.mode==Mode::Terrain && self.tool_active
+            && self.artwork_view==ArtworkView::Walkways{
+            let map_id=self.world.map_at(from).map(|map|map.id);
+            self.message=match map_id{
+                Some(map_id)=>match emerald_terrain::draw_lilycove_walkway(
+                    &mut self.world,map_id,from,to){
+                    Ok(count)=>format!("Paved {count} native Lilycove walkway tiles"),
+                    Err(err)=>format!("Path blocked: {err}"),
+                },
+                None=>"Path must start inside a map".into(),
+            };
+            return;
         }
         // Bresenham avoids holes when the finger moves faster than render frames.
         let (mut x, mut y) = (from.x, from.y);
