@@ -188,9 +188,13 @@ impl MapStudioApp {
             selected_prefab:None,
             artwork_view:ArtworkView::Metatiles,
             active_pack:None,
-            installed_packs:artwork::default_dir(save_path.as_deref())
-                .map(|path|artwork::load_installed(&path))
-                .unwrap_or_default(),
+            installed_packs:{
+                let mut packs=artwork::builtin_reference_packs();
+                packs.extend(artwork::default_dir(save_path.as_deref())
+                    .map(|path|artwork::load_installed(&path))
+                    .unwrap_or_default());
+                packs
+            },
             import_artwork_open:false,
             available_artwork_files:Vec::new(),
             selected_artwork_file:None,
@@ -2208,10 +2212,14 @@ impl MapStudioApp {
                     .ok_or("Selected artwork package is missing")?;
                 let folder=artwork::default_dir(self.save_path.as_deref())
                     .ok_or("Artwork library is unavailable")?;
-                let source=folder.join(&package.filename);
                 let destination=dir.join(&package.filename);
-                if source!=destination{
-                    std::fs::copy(&source,&destination).map_err(|e|e.to_string())?;
+                if let Some(bytes)=package.embedded_archive{
+                    std::fs::write(&destination,bytes).map_err(|e|e.to_string())?;
+                }else{
+                    let source=folder.join(&package.filename);
+                    if source!=destination{
+                        std::fs::copy(&source,&destination).map_err(|e|e.to_string())?;
+                    }
                 }
                 self.publish_output(&destination,&package.filename)
             }else{
