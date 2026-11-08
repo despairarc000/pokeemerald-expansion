@@ -1,5 +1,62 @@
 # Map Studio — Native Rust Android editor
 
+## v0.18 Emerald-first rebuild (active development)
+
+The artwork picker has been **rebuilt for Emerald**, with the old
+multi-collection / per-tileset browse-load menu removed from the main
+editing workflow. Existing project JSON, source metatile IDs, primary and
+secondary tileset assignments, and other historical artwork files remain
+loadable. This is a new interaction layer, not a destructive migration.
+
+- **Compact Android UI:** the palette defaults to 184 logical points
+  instead of 280, has a short drag grip, and snaps between peek/browse/
+  expanded on double-tap. The source and asset view are pinned; only the
+  actual content gallery scrolls. API35 edge-to-edge handling now queries
+  native Android WindowInsets rather than a constant 12pt top spacer.
+- **Source-backed prefab gallery:** all 71 Porymap Emerald prefabs appear
+  in one index with native thumbnails generated from the source atlas.
+  Compatible items are shown first, with no extra "Browse more",
+  "View", or "Use" steps. Other source-pair assets remain discoverable
+  but cannot be stamped into an incompatible map.
+- **Source-based placement:** complete prefab bounds are checked before
+  painting. Only unpainted/native-grass terrain or an exact matching tile
+  can be replaced; occupied structures, events, source-incompatible IDs
+  and cross-map clipping reject the entire action. One touch = one stamp.
+- **Metatile preview correction:** the atlas builder no longer fills every
+  transparent source pixel with an opaque palette-zero backdrop, which
+  previously introduced visible magenta on many tilesets. Original
+  layered/native rendering remains a separate fidelity test.
+- **AI editing:** \`map-studio-cli assets <project.json> <map-id>\`
+  lists source-compatible Emerald prefabs with stable upstream indexes;
+  \`map-studio-cli place-prefab <project.json> <map-id>
+  <source-prefab-index> <local-x> <local-y>\` safely stamps the full
+  footprint using the same Rust checks as the Android UI.
+- **GitHub:** opt-in auto-pull every 15 seconds when authenticated,
+  conditional ETag reads of unchanged project data, and opt-in
+  auto-publish of completed local autosaves. Both retain GitHub revision
+  preconditions and reject simultaneous edits. Auto-publish is disabled
+  by default and tokens are still kept only in memory.
+- **Verification:** CI generates a visual Lilycove source-layout audit
+  from the actual Emerald \`LilycoveCity/map.bin\`, source atlas and
+  tile attributes before any road/pond auto-tiling rules are promoted
+  into the editor.
+
+**Current limits:** smart road and shoreline painting, persistent
+building-as-object moves, secure one-tap GitHub device authorization,
+and a webhook-to-WebSocket live notification relay remain unfinished.
+The GitHub polling upgrade is low latency but **not true instant push**.
+No remote server is deployed by this release. A generated APK must
+still pass CI and actual on-device UI/network tests before being called
+fully verified.
+
+**Safe install:** v0.18 uses a *different* Android package
+(\`dev.despairarc.mapstudio.emeraldrebuildpreview\`) so the user's
+previous preview and its private autosaves remain untouched. Older
+Android package storage is not automatically readable from this one;
+use a compatible exported project or GitHub pairing to transfer data.
+
+See [concrete engineering review and acceptance gates](docs/EDITOR_UX_ART_AI_SYNC_DESIGN.md).
+
 Development branch: `feature/map-studio-native-android`.
 Engineering baseline: [design/map-studio-implementation.md](../../design/map-studio-implementation.md).
 
