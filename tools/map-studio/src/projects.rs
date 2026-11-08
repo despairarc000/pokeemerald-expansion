@@ -53,7 +53,7 @@ impl ProjectManifest {
         }
         let fragments:Vec<_>=self.target_repository.split('/').collect();
         if fragments.len()!=2 || fragments.iter().any(|s|s.is_empty() || s.len()>100
-            || s=="." || s==".." || !s.chars().all(|c|c.is_ascii_alphanumeric()
+            || *s=="." || *s==".." || !s.chars().all(|c|c.is_ascii_alphanumeric()
                 || matches!(c,'-'|'_'|'.'))) {
             return Err("Invalid target repository owner/name".into());
         }
