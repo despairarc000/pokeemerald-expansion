@@ -3,6 +3,7 @@ pub mod model;
 pub mod export;
 pub mod storage;
 pub mod projects;
+pub mod compiled;
 pub mod tiles;
 pub mod prefabs;
 pub mod artwork;
