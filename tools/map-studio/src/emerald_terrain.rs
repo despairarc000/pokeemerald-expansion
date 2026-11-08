@@ -177,13 +177,13 @@ mod tests{
         let (mut world,id)=test_world();
         draw_lilycove_walkway(&mut world,id,GridPoint::new(16,27),GridPoint::new(20,27)).unwrap();
         let m=&world.maps[0];
-        for x in 6..=10{
+        for x in 5..=11{
             let top=m.cell(x,6).unwrap().metatile_id;
             let mid=m.cell(x,7).unwrap().metatile_id;
             let bottom=m.cell(x,8).unwrap().metatile_id;
-            assert_eq!(top,if x==6{0x22A}else if x==10{0x22C}else{0x22B});
-            assert_eq!(mid,if x==6{0x232}else if x==10{0x234}else{0x233});
-            assert_eq!(bottom,if x==6{0x23A}else if x==10{0x23C}else{0x23B});
+            assert_eq!(top,if x==5{0x22A}else if x==11{0x22C}else{0x22B});
+            assert_eq!(mid,if x==5{0x232}else if x==11{0x234}else{0x233});
+            assert_eq!(bottom,if x==5{0x23A}else if x==11{0x23C}else{0x23B});
         }
         let changed=draw_lilycove_walkway(&mut world,id,
             GridPoint::new(19,24),GridPoint::new(19,29)).unwrap();
