@@ -10,9 +10,10 @@
   and decoration **matrix recipes** are appended (85 total).
 - Recipes are extracted at build time from the fork's own Emerald map.bin
   layouts, with the exact original primary/secondary tileset symbols,
-  metatile IDs, collision and elevation. Their source coordinates and
-  stable IDs live in \`assets/emerald-environment-regions.json\`.
-  The build verifies the expected source metatile/behavior is present.
+  metatile IDs, collision and elevation. The manifest contains stable IDs
+  and preferred map regions; the build locates matching native features,
+  records resolved source coordinates and a source-map checksum, and
+  rejects missing or unsupported artwork rather than inventing metatiles.
 - Examples include genuine pond-bank sections from Routes 102 and 104,
   a Lilycove coast and rock shelf, actual grass/tall-grass regions, trees,
   and berry soil. They are **source-map selections**, not independently
