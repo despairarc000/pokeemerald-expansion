@@ -1,6 +1,6 @@
 //! Source-backed prefab library. Default Emerald definitions from Porymap.
 //! Prefabs are NOT new tilesets. IDs are validated against the active pair.
-use crate::{model::{GridPoint,World},tiles::{self,TilePair}};
+use crate::{model::{GridPoint,World,PlacedPrefab,PrefabStamp},tiles::{self,TilePair}};
 use serde::{Deserialize,Serialize};
 use std::sync::OnceLock;
 
@@ -113,6 +113,14 @@ impl World {
                         local_x+tile.x,local_y+tile.y));
                 }
             }
+            // Identical source tiles are not permission to overwrite
+            // another tracked building's footprint.
+            if self.prefab_instances.iter().any(|obj|
+                obj.map_id==map.id && obj.stamps.iter().any(|st|
+                    obj.x+st.x==local_x+tile.x
+                    && obj.y+st.y==local_y+tile.y)){
+                return Err("Another tracked building occupies this footprint".into());
+            }
             // Events cannot be overwritten accidentally. Existing events
             // remain authoritative native map objects.
             if map.events.iter().any(|e|e.x==local_x+tile.x && e.y==local_y+tile.y){
@@ -132,21 +140,122 @@ impl World {
         let local_x=(at.x-map.origin.x) as u32;
         let local_y=(at.y-map.origin.y) as u32;
         let mut changed=0;
+        let mut stamps=Vec::with_capacity(prefab.metatiles.len());
         for tile in &prefab.metatiles {
             let index=map.index(local_x+tile.x,local_y+tile.y)
-                .expect("preflight checked the full footprint");
+                .expect("preflight checked full footprint");
             let previous=map.cells[index];
             let mut cell=previous.unwrap_or_else(||
                 crate::model::Cell::new(crate::model::TileKind::Grass));
             cell.metatile_id=tile.metatile_id;
             cell.collision=tile.collision;
             cell.elevation=tile.elevation;
+            stamps.push(PrefabStamp{
+                x:tile.x,y:tile.y,before:previous,painted:cell
+            });
             if previous!=Some(cell) {
                 map.cells[index]=Some(cell);
                 changed+=1;
             }
         }
+        // Only exact original Emerald prefabs are tracked as movable.
+        // Custom stamps retain their existing flattened cell behavior.
+        if let Some(source_index)=emerald().iter().position(|p|p==prefab){
+            let record=PlacedPrefab{
+                instance_id:uuid::Uuid::new_v4().to_string(),
+                map_id:map.id,
+                prefab_index:source_index,
+                primary_tileset:map.primary_tileset.clone(),
+                secondary_tileset:map.secondary_tileset.clone(),
+                x:local_x,y:local_y,width:prefab.width,height:prefab.height,
+                stamps,
+            };
+            self.prefab_instances.push(record);
+        }
         Ok(changed)
+    }
+
+    /// A tracked prefab is a complete editable object, rather than
+    /// unrelated tiles. Old stamps remain paintable but untracked.
+    pub fn tracked_prefab_at(&self,map_id:u32,x:u32,y:u32)
+        ->Option<&PlacedPrefab>{
+        self.prefab_instances.iter().rev().find(|p|
+            p.map_id==map_id && p.stamps.iter().any(|st|
+                p.x+st.x==x && p.y+st.y==y))
+    }
+
+    fn verify_prefab_snapshot(&self,record:&PlacedPrefab)->Result<(),String>{
+        let map=self.maps.iter().find(|m|m.id==record.map_id)
+            .ok_or("Prefab map was deleted")?;
+        for stamp in &record.stamps {
+            let x=record.x+stamp.x;
+            let y=record.y+stamp.y;
+            let idx=map.index(x,y).ok_or("Prefab position is outside map")?;
+            if map.cells[idx]!=Some(stamp.painted){
+                return Err("Building tiles were edited manually; move is blocked to protect those edits".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a whole tracked prefab and restore its original ground.
+    pub fn remove_prefab_instance(&mut self,instance_id:&str)->Result<usize,String>{
+        let source=self.prefab_instances.iter()
+            .find(|p|p.instance_id==instance_id)
+            .ok_or("Tracked building not found")?.clone();
+        self.verify_prefab_snapshot(&source)?;
+        let index=self.maps.iter().position(|m|m.id==source.map_id)
+            .ok_or("Tracked building map missing")?;
+        for stamp in &source.stamps {
+            let ix=self.maps[index].index(source.x+stamp.x,source.y+stamp.y)
+                .ok_or("Prefab footprint changed")?;
+            self.maps[index].cells[ix]=stamp.before;
+        }
+        self.prefab_instances.retain(|p|p.instance_id!=instance_id);
+        Ok(source.stamps.len())
+    }
+
+    /// Move tracked prefab as one transaction preserving its identity.
+    /// Old ground is restored in a detached copy before new preflight.
+    pub fn move_prefab_instance(&mut self,instance_id:&str,to:GridPoint)
+        ->Result<usize,String>{
+        let source=self.prefab_instances.iter()
+            .find(|p|p.instance_id==instance_id)
+            .ok_or("Tracked building not found")?.clone();
+        self.verify_prefab_snapshot(&source)?;
+        let map=self.maps.iter().find(|m|m.id==source.map_id)
+            .ok_or("Tracked building map missing")?;
+        if !map.contains(to){
+            return Err("The building must stay within its current map".into());
+        }
+        if map.primary_tileset!=source.primary_tileset
+            || map.secondary_tileset!=source.secondary_tileset{
+            return Err("Building has the wrong native source pair".into());
+        }
+        let prefab=emerald().get(source.prefab_index)
+            .ok_or("Original Emerald prefab is no longer available")?;
+        if prefab.width!=source.width || prefab.height!=source.height
+            || prefab.metatiles.len()!=source.stamps.len(){
+            return Err("Prefab source definition changed; cannot safely move".into());
+        }
+        for (tile,stamp) in prefab.metatiles.iter().zip(&source.stamps){
+            if tile.x!=stamp.x || tile.y!=stamp.y
+                || tile.metatile_id!=stamp.painted.metatile_id
+                || tile.collision!=stamp.painted.collision
+                || tile.elevation!=stamp.painted.elevation{
+                return Err("Original prefab source no longer matches saved artwork".into());
+            }
+        }
+        let source_space=map.space_id;
+        let mut draft=self.clone();
+        draft.remove_prefab_instance(instance_id)?;
+        draft.active_space_id=source_space;
+        draft.try_paint_prefab(to,prefab)?;
+        let last=draft.prefab_instances.last_mut()
+            .ok_or("Moved prefab tracking was not created")?;
+        last.instance_id=source.instance_id;
+        *self=draft;
+        Ok(source.stamps.len())
     }
 
     /// Legacy caller convenience. New UI should use try_paint_prefab so
@@ -160,6 +269,50 @@ impl World {
 mod tests{
     use super::*;
     use crate::model::{GridPoint,World};
+    #[test]
+    fn movable_native_prefab_restores_original_ground_and_id(){
+        let pair=tiles::pair("general/lilycove").unwrap();
+        let idx=compatible_indices(pair)[0];
+        let prefab=&emerald()[idx];
+        let mut world=World::new();
+        let map_id=world.add_map("Town",GridPoint::new(0,0),40,40).unwrap();
+        world.set_map_tileset(map_id,pair.key).unwrap();
+        let original=world.clone();
+        assert!(world.try_paint_prefab(GridPoint::new(5,5),prefab).unwrap()>0);
+        assert_eq!(world.prefab_instances.len(),1);
+        let original_id=world.prefab_instances[0].instance_id.clone();
+        world.check_integrity().unwrap();
+        assert!(world.try_paint_prefab(GridPoint::new(5,5),prefab).is_err());
+        let count=world.move_prefab_instance(&original_id,GridPoint::new(20,20)).unwrap();
+        assert_eq!(count,prefab.metatiles.len());
+        assert_eq!(world.prefab_instances[0].instance_id,original_id);
+        assert_eq!(world.prefab_instances[0].x,20);
+        let after_move=world.clone();
+        assert!(world.move_prefab_instance(&original_id,GridPoint::new(39,39)).is_err());
+        assert_eq!(world,after_move);
+        world.remove_prefab_instance(&original_id).unwrap();
+        assert_eq!(world,original);
+    }
+    #[test]
+    fn manually_modified_building_refuses_destructive_move(){
+        let pair=tiles::pair("general/lilycove").unwrap();
+        let prefab=&emerald()[compatible_indices(pair)[0]];
+        let mut world=World::new();
+        let map_id=world.add_map("Town",GridPoint::new(0,0),35,35).unwrap();
+        world.set_map_tileset(map_id,pair.key).unwrap();
+        world.try_paint_prefab(GridPoint::new(3,4),prefab).unwrap();
+        let record=world.prefab_instances[0].clone();
+        let stamp=&record.stamps[0];
+        let cell=world.maps[0].cell(record.x+stamp.x,record.y+stamp.y).unwrap();
+        let idx=(record.y+stamp.y) as usize*35+(record.x+stamp.x) as usize;
+        world.maps[0].cells[idx]
+            =Some(crate::model::Cell{collision:if cell.collision==0{1}else{0},..cell});
+        let before=world.clone();
+        let err=world.move_prefab_instance(&record.instance_id,GridPoint::new(12,12)).unwrap_err();
+        assert!(err.contains("edited manually"),"{err}");
+        assert_eq!(world,before);
+        world.check_integrity().unwrap();
+    }
     #[test]
     fn complete_prefab_placement_never_clips_at_map_edges(){
         let pair=tiles::pair(tiles::DEFAULT_PAIR).unwrap();
