@@ -39,6 +39,10 @@ pub enum MapOperation {
     PaintTile { map_id:u32, x:u32, y:u32, metatile_id:u16,
                 #[serde(default)] collision:Option<u8>,
                 #[serde(default)] elevation:Option<u8> },
+    /// Paint one whole authored row-major matrix. Null cells are transparent:
+    /// they do not erase or claim the underlying map cell.
+    PaintMatrix { map_id:u32, native_pair:String, x:u32, y:u32,
+                  matrix:Vec<Vec<Option<prefabs::MatrixCell>>> },
     EraseTile { map_id:u32, x:u32, y:u32 },
     SetCollision { map_id:u32, x:u32, y:u32, collision:u8 },
     SetElevation { map_id:u32, x:u32, y:u32, elevation:u8 },
@@ -188,6 +192,51 @@ fn apply_one(world:&mut World,request:&TransactionRequest,index:usize,op:&MapOpe
             world.paint_metatile(pos,*metatile_id);
             if let Some(value)=collision {world.set_collision(pos,*value);}
             if let Some(value)=elevation {world.set_elevation(pos,*value);}
+        }
+        MapOperation::PaintMatrix{map_id,native_pair,x,y,matrix}=>{
+            if matrix.is_empty() || matrix.len()>64 || matrix[0].is_empty()
+                || matrix[0].len()>64 || matrix.iter().any(|row|
+                    row.len()!=matrix[0].len()){
+                return Err("Matrix must be rectangular, 1–64 rows and 1–64 columns".into());
+            }
+            let height=matrix.len() as u32;
+            let width=matrix[0].len() as u32;
+            let map=world.maps.iter().find(|m|m.id==*map_id).ok_or("Map not found")?;
+            let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+                .ok_or("Map has an unknown native tileset pair")?;
+            if pair.collection!="Emerald" || native_pair!=pair.key{
+                return Err(format!("Matrix source pair {native_pair} does not match map {}",pair.key));
+            }
+            if x.checked_add(width).is_none_or(|right|right>map.width)
+                || y.checked_add(height).is_none_or(|bottom|bottom>map.height){
+                return Err("Complete matrix must fit inside the selected map".into());
+            }
+            let mut count=0usize;
+            // Validate the WHOLE matrix before painting any cells.
+            for (dy,row) in matrix.iter().enumerate(){
+                for (dx,cell) in row.iter().enumerate(){
+                    let Some(cell)=cell else{continue};
+                    editable_pair(world,*map_id,cell.metatile_id)?;
+                    if cell.collision>3 || cell.elevation>15{
+                        return Err("Matrix collision must be 0–3 and elevation 0–15".into());
+                    }
+                    check_event_overlap(world,*map_id,*x+dx as u32,*y+dy as u32)?;
+                    count+=1;
+                }
+            }
+            if count==0{return Err("Matrix contains no painted cells".into());}
+            select_map(world,*map_id)?;
+            for (dy,row) in matrix.iter().enumerate(){
+                for (dx,cell) in row.iter().enumerate(){
+                    let Some(cell)=cell else{continue};
+                    let position=map_point(world,*map_id,*x+dx as u32,*y+dy as u32)?;
+                    // Use the same World primitives as touchscreen painting:
+                    // object references detach as native tiles change.
+                    world.paint_metatile(position,cell.metatile_id);
+                    world.set_collision(position,cell.collision);
+                    world.set_elevation(position,cell.elevation);
+                }
+            }
         }
         MapOperation::EraseTile{map_id,x,y}=>{
             check_event_overlap(world,*map_id,*x,*y)?;
@@ -512,6 +561,59 @@ mod tests{
         let inspect=inspect_region(&a.world,id,5,7,5,5).unwrap();
         assert!(inspect.cells.iter().any(|c|c.object_id.is_some()));
     }
+    #[test]
+    fn native_matrix_transaction_paints_rows_and_keeps_null_background(){
+        let (mut w,id)=world("general/lilycove");
+        let untouched=GridPoint::new(14,24);
+        assert!(w.paint_metatile(untouched,1));
+        assert!(w.set_collision(untouched,1));
+        let preserved=w.maps[0].cell(4,4);
+        let cell=prefabs::MatrixCell{metatile_id:1,collision:0,elevation:3};
+        let matrix=vec![
+            vec![Some(cell),None],
+            vec![Some(cell),Some(cell)],
+        ];
+        let original=w.clone();
+        let request=tx(&w,vec![MapOperation::PaintMatrix{
+            map_id:id,native_pair:"general/lilycove".into(),
+            x:3,y:4,matrix:matrix.clone()
+        }]);
+        let serialized=serde_json::to_value(&request).unwrap();
+        let decoded:TransactionRequest=serde_json::from_value(serialized).unwrap();
+        let preview=prepare(&w,&decoded).unwrap();
+        assert_eq!(w,original,"Preview must not modify original map");
+        assert_eq!(preview.report.changed_cell_count,3);
+        assert_eq!(preview.world.maps[0].cell(4,4),preserved,
+            "Null must preserve preexisting background/collision");
+        assert_eq!(preview.world.maps[0].cell(3,4).unwrap().metatile_id,1);
+        assert_eq!(preview.world.maps[0].cell(4,5).unwrap().elevation,3);
+    }
+
+    #[test]
+    fn matrix_transaction_rejects_wrong_pair_invalid_and_clipped_cells(){
+        let (w,id)=world("general/lilycove");
+        let cell=prefabs::MatrixCell{metatile_id:1,collision:0,elevation:3};
+        let matrix=vec![vec![Some(cell),None]];
+        let wrong=tx(&w,vec![MapOperation::PaintMatrix{
+            map_id:id,native_pair:"general/rustboro".into(),
+            x:1,y:1,matrix:matrix.clone()
+        }]);
+        assert!(prepare(&w,&wrong).is_err());
+        let clipped=tx(&w,vec![MapOperation::PaintMatrix{
+            map_id:id,native_pair:"general/lilycove".into(),
+            x:39,y:1,matrix:matrix.clone()
+        }]);
+        assert!(prepare(&w,&clipped).is_err());
+        let invalid=tx(&w,vec![MapOperation::PaintMatrix{
+            map_id:id,native_pair:"general/lilycove".into(),
+            x:1,y:1,matrix:vec![vec![
+                Some(prefabs::MatrixCell{metatile_id:1024,..cell}),None
+            ]]
+        }]);
+        assert!(prepare(&w,&invalid).is_err());
+        assert!(w.maps[0].cells.iter().all(Option::is_none));
+    }
+
     #[test]
     fn stale_revision_and_invalid_step_leave_world_unchanged(){
         let (w,id)=world("general/lilycove");
