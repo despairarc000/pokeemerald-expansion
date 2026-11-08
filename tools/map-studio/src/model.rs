@@ -248,6 +248,32 @@ pub struct Connection {
     pub common_tiles: u32,
 }
 
+/// Optional source-aware tracking for future move-as-one building operations.
+/// Actual Pokémon tile cells remain canonical. If a user manually repaints a
+/// stamp, moving/removing it will reject rather than erase their new artwork.
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub struct PrefabStamp {
+    pub x:u32,
+    pub y:u32,
+    pub before:Option<Cell>,
+    pub painted:Cell,
+}
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub struct PlacedPrefab {
+    pub instance_id:String,
+    pub map_id:u32,
+    /// Original Porymap Emerald prefab index: stable for this bundled source.
+    pub prefab_index:usize,
+    pub primary_tileset:String,
+    pub secondary_tileset:String,
+    /// Map-local top-left position, not merged-editor world coordinates.
+    pub x:u32,
+    pub y:u32,
+    pub width:u32,
+    pub height:u32,
+    pub stamps:Vec<PrefabStamp>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct World {
     pub maps: Vec<MapFrame>,
@@ -258,6 +284,8 @@ pub struct World {
     pub active_space_id:u32,
     #[serde(default="default_next_space_id")]
     next_space_id:u32,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub prefab_instances:Vec<PlacedPrefab>,
 }
 
 impl World {
@@ -319,6 +347,41 @@ impl World {
         if self.next_id <= max_id {
             return Err("Project map ID counter is inconsistent".into());
         }
+        if self.prefab_instances.len()>2048 {
+            return Err("Too many tracked prefab objects".into());
+        }
+        let mut prefab_ids=std::collections::HashSet::new();
+        for object in &self.prefab_instances {
+            let valid_uuid=uuid::Uuid::parse_str(&object.instance_id)
+                .is_ok_and(|id|id.to_string()==object.instance_id);
+            if !valid_uuid || !prefab_ids.insert(&object.instance_id) {
+                return Err("Invalid or duplicate prefab instance ID".into());
+            }
+            let m=self.maps.iter().find(|m|m.id==object.map_id)
+                .ok_or("Prefab instance refers to missing map")?;
+            if object.primary_tileset!=m.primary_tileset
+                || object.secondary_tileset!=m.secondary_tileset {
+                return Err("Tracked prefab is bound to a different native tileset".into());
+            }
+            if object.width==0 || object.height==0
+                || object.width>32 || object.height>32 || object.stamps.is_empty()
+                || object.stamps.len()>1024 || object.x.checked_add(object.width)
+                    .is_none_or(|x|x>m.width)
+                || object.y.checked_add(object.height).is_none_or(|y|y>m.height) {
+                return Err("Invalid tracked prefab size or location".into());
+            }
+            let mut seen=std::collections::HashSet::new();
+            for stamp in &object.stamps {
+                if stamp.x>=object.width || stamp.y>=object.height
+                    || !seen.insert((stamp.x,stamp.y))
+                    || stamp.painted.metatile_id>=1024
+                    || stamp.painted.collision>3 || stamp.painted.elevation>15
+                    || stamp.before.is_some_and(|c|c.metatile_id>=1024
+                        || c.collision>3 || c.elevation>15) {
+                    return Err("Malformed tracked prefab tile".into());
+                }
+            }
+        }
         for (i,a) in self.maps.iter().enumerate() {
             let al=i64::from(a.origin.x);
             let at=i64::from(a.origin.y);
@@ -340,7 +403,7 @@ impl World {
 
     pub fn new() -> Self {
         Self { maps:Vec::new(),next_id:1,spaces:default_spaces(),
-            active_space_id:0,next_space_id:1 }
+            active_space_id:0,next_space_id:1,prefab_instances:Vec::new() }
     }
 
     pub fn active_space(&self)->&EditorSpace{
@@ -375,6 +438,11 @@ impl World {
     }
     pub fn set_map_tileset(&mut self,id:u32,key:&str)->Result<(),String>{
         let tileset=crate::tiles::pair(key).ok_or("Tileset not available")?;
+        if self.prefab_instances.iter().any(|obj|obj.map_id==id
+            && (obj.primary_tileset!=tileset.primary
+                || obj.secondary_tileset!=tileset.secondary)) {
+            return Err("Move/remove tracked buildings before changing native tilesets".into());
+        }
         let m=self.maps.iter_mut().find(|m|m.id==id).ok_or("Map not found")?;
         if m.cells.iter().flatten().any(|cell|!crate::tiles::valid_in(tileset,cell.metatile_id)){
             return Err("The new tileset lacks a tile already painted on this map".into());
@@ -831,6 +899,7 @@ impl World {
             return Err("A nested editing Space is attached to this map".into());
         }
         self.maps.retain(|m|m.id!=id);
+        self.prefab_instances.retain(|object|object.map_id!=id);
         Ok(())
     }
 
@@ -995,6 +1064,26 @@ impl World {
         let mut events=old.events.clone();
         for event in &mut events {
             (event.x,event.y)=transform(event.x,event.y)?;
+        }
+        // Keep tracked building coordinates local to the resized map.
+        // Their source metatiles were already checked against clipping.
+        let mut remapped_objects=Vec::new();
+        for object in self.prefab_instances.iter().filter(|p|p.map_id==id){
+            let (new_lx,new_ly)=transform(object.x,object.y)?;
+            for stamp in &object.stamps {
+                let global_x=object.x.checked_add(stamp.x)
+                    .ok_or("Prefab coordinate overflow")?;
+                let global_y=object.y.checked_add(stamp.y)
+                    .ok_or("Prefab coordinate overflow")?;
+                let _=transform(global_x,global_y)?;
+            }
+            remapped_objects.push((object.instance_id.clone(),new_lx,new_ly));
+        }
+        for (instance_id,new_lx,new_ly) in remapped_objects {
+            if let Some(p)=self.prefab_instances.iter_mut()
+                .find(|p|p.instance_id==instance_id){
+                p.x=new_lx;p.y=new_ly;
+            }
         }
         let updated=&mut self.maps[index];
         updated.origin=origin;
