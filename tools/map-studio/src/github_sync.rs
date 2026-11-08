@@ -224,6 +224,41 @@ fn cursor(project:&ProjectManifest,link:&GithubLink,sha:String,hash:String)
     }
 }
 
+// Pure conflict decisions are deliberately separate from HTTP I/O so that
+// simultaneous edits can be tested without publishing throwaway projects.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum PullDecision { Current, LocalPending, ApplyRemote, Paired }
+
+fn assess_pull(base:Option<&SyncCursor>,remote_sha:&str,
+    local_hash:&str,remote_hash:&str)->Result<PullDecision,String>{
+    if let Some(b)=base{
+        if remote_sha==b.remote_sha {
+            return Ok(if local_hash==b.local_hash{
+                PullDecision::Current
+            }else{PullDecision::LocalPending});
+        }
+        if local_hash!=b.local_hash {
+            return Err("Conflict: both the phone and GitHub changed. Export a backup and resolve manually.".into());
+        }
+    } else if remote_hash!=local_hash {
+        return Err("Remote project differs from the phone's unpaired copy. Import or reconcile it before syncing.".into());
+    }
+    Ok(if remote_hash==local_hash{PullDecision::Paired}
+       else{PullDecision::ApplyRemote})
+}
+fn assess_publish(base:Option<&SyncCursor>,remote_sha:&str,
+    local_hash:&str,remote_hash:&str)->Result<bool,String>{
+    if let Some(b)=base {
+        if remote_sha!=b.remote_sha {
+            if remote_hash==local_hash{return Ok(false);}
+            return Err("Conflict: GitHub changed since the last sync. Pull/review before publishing.".into());
+        }
+    }else if remote_hash!=local_hash{
+        return Err("GitHub contains a different unpaired project; refusing to overwrite it.".into());
+    }
+    Ok(remote_hash!=local_hash)
+}
+
 pub fn perform(action:SyncAction,link:GithubLink,token:String,
     project:ProjectManifest,local_bytes:Vec<u8>,baseline:Option<SyncCursor>)
     ->Result<SyncOutcome,String>{
@@ -258,24 +293,20 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
                     cursor:None,message:"No remote project published yet".into()
                 });
             };
-            if let Some(b)=&base{
-                if remote.sha==b.remote_sha{
-                    return Ok(SyncOutcome::Unchanged{
-                        cursor:None,
-                        message:if hash!=b.local_hash{
-                            "Local edits are waiting to be published".into()
-                        }else{"Already synchronized".into()},
-                    });
-                }
-                if hash!=b.local_hash{
-                    return Err("Conflict: both the phone and GitHub changed. Export a backup and resolve manually.".into());
-                }
-            }else if hash_project(&remote.bytes)!=hash{
-                return Err("Remote project differs from the phone's unpaired copy. Import or reconcile it before syncing.".into());
+            let remote_hash=hash_project(&remote.bytes);
+            let decision=assess_pull(base.as_ref(),&remote.sha,&hash,&remote_hash)?;
+            match decision {
+                PullDecision::Current => return Ok(SyncOutcome::Unchanged{
+                    cursor:None,message:"Already synchronized".into()
+                }),
+                PullDecision::LocalPending => return Ok(SyncOutcome::Unchanged{
+                    cursor:None,message:"Local edits are waiting to be published".into()
+                }),
+                PullDecision::ApplyRemote | PullDecision::Paired => {}
             }
             let _world=storage::decode(&remote.bytes)?;
-            let new_cursor=cursor(&project,&link,remote.sha,hash_project(&remote.bytes));
-            if hash_project(&remote.bytes)==hash{
+            let new_cursor=cursor(&project,&link,remote.sha,remote_hash);
+            if decision==PullDecision::Paired{
                 return Ok(SyncOutcome::Unchanged{
                     cursor:Some(new_cursor),message:"Paired with matching GitHub project".into(),
                 });
@@ -300,20 +331,7 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
                 }
                 Some(remote)=>{
                     let remote_hash=hash_project(&remote.bytes);
-                    if let Some(b)=&base {
-                        if remote.sha!=b.remote_sha{
-                            if remote_hash==hash{
-                                return Ok(SyncOutcome::Unchanged{
-                                    cursor:Some(cursor(&project,&link,remote.sha,hash)),
-                                    message:"Already current on GitHub".into(),
-                                });
-                            }
-                            return Err("Conflict: GitHub changed since the last sync. Pull/review before publishing.".into());
-                        }
-                    }else if remote_hash!=hash{
-                        return Err("GitHub contains a different unpaired project; refusing to overwrite it.".into());
-                    }
-                    if remote_hash==hash{
+                    if !assess_publish(base.as_ref(),&remote.sha,&hash,&remote_hash)? {
                         return Ok(SyncOutcome::Unchanged{
                             cursor:Some(cursor(&project,&link,remote.sha,hash)),
                             message:"Already current on GitHub".into(),
@@ -331,6 +349,37 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn simulate_remote_edit_phone_edit_and_first_pairing(){
+        let hash_a="a".repeat(64);
+        let hash_b="b".repeat(64);
+        let hash_c="c".repeat(64);
+        let baseline=SyncCursor{
+            project_id:uuid::Uuid::new_v4().to_string(),
+            repository:"owner/repo".into(),branch:"main".into(),
+            remote_sha:"1".repeat(40),local_hash:hash_a.clone(),
+        };
+        assert_eq!(assess_pull(Some(&baseline),&baseline.remote_sha,
+            &hash_a,&hash_a).unwrap(),PullDecision::Current);
+        assert_eq!(assess_pull(Some(&baseline),&baseline.remote_sha,
+            &hash_b,&hash_a).unwrap(),PullDecision::LocalPending);
+        assert_eq!(assess_pull(Some(&baseline),&"2".repeat(40),
+            &hash_a,&hash_b).unwrap(),PullDecision::ApplyRemote);
+        assert!(assess_pull(Some(&baseline),&"2".repeat(40),
+            &hash_c,&hash_b).unwrap_err().contains("Conflict"));
+        assert_eq!(assess_pull(None,&"2".repeat(40),
+            &hash_a,&hash_a).unwrap(),PullDecision::Paired);
+        assert!(assess_pull(None,&"2".repeat(40),
+            &hash_a,&hash_b).unwrap_err().contains("unpaired"));
+        assert_eq!(assess_publish(Some(&baseline),&baseline.remote_sha,
+            &hash_b,&hash_a).unwrap(),true);
+        assert!(assess_publish(Some(&baseline),&"2".repeat(40),
+            &hash_b,&hash_c).unwrap_err().contains("Conflict"));
+        assert!(!assess_publish(Some(&baseline),&"2".repeat(40),
+            &hash_b,&hash_b).unwrap());
+        assert!(assess_publish(None,&"2".repeat(40),
+            &hash_b,&hash_a).unwrap_err().contains("unpaired"));
+    }
     #[test]
     fn same_world_with_different_json_format_has_same_sync_hash(){
         let world=crate::model::World::new();
