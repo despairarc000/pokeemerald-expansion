@@ -69,6 +69,8 @@ pub enum SyncOutcome {
 }
 pub struct SyncReply{
     pub project_id:String,
+    pub repository:String,
+    pub branch:String,
     pub local_hash:String,
     pub outcome:Result<SyncOutcome,String>,
 }
