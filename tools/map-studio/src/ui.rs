@@ -1,7 +1,7 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
-use crate::{storage, export, tiles, choices, artwork, prefabs, projects, github_sync};
+use crate::{storage, export, tiles, choices, artwork, prefabs, projects, github_sync, emerald_library};
 use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,6 +86,9 @@ pub struct MapStudioApp {
     elevation_tool: bool,
     atlas: egui::TextureHandle,
     npc_atlas:egui::TextureHandle,
+    prefab_atlas:egui::TextureHandle,
+    prefab_group:emerald_library::Group,
+    prefab_stamped_this_touch:bool,
     item_atlas:egui::TextureHandle,
     atlas_cache: HashMap<String,egui::TextureHandle>,
     preferred_pair: String,
@@ -158,6 +161,16 @@ impl MapStudioApp {
         let dimensions = [image.width() as usize, image.height() as usize];
         let texture = ctx.load_texture("Emerald metatiles",egui::ColorImage::from_rgba_unmultiplied(
             dimensions,image.as_raw()),egui::TextureOptions::NEAREST);
+        // Source-authored thumbnails: all 71 original Emerald prefabs share
+        // one small GPU texture. No cross-tileset palette substitutions.
+        let prefabs_image=image::load_from_memory(emerald_library::THUMBNAILS)
+            .expect("native Emerald prefab thumbnails").to_rgba8();
+        let prefab_dimensions=[prefabs_image.width() as usize,
+            prefabs_image.height() as usize];
+        let prefab_atlas=ctx.load_texture("Emerald prefab library",
+            egui::ColorImage::from_rgba_unmultiplied(
+                prefab_dimensions,prefabs_image.as_raw()),
+            egui::TextureOptions::NEAREST);
         let npc_image=image::load_from_memory(choices::NPC_ATLAS_PNG)
             .expect("source-verified NPC preview sprite atlas").to_rgba8();
         let npc_dimensions=[npc_image.width() as usize,npc_image.height() as usize];
@@ -206,7 +219,7 @@ impl MapStudioApp {
             brush_id: 1,
             selected_stamp:None,
             selected_prefab:None,
-            artwork_view:ArtworkView::Metatiles,
+            artwork_view:ArtworkView::Prefabs,
             active_pack:None,
             installed_packs:{
                 let mut packs=artwork::builtin_reference_packs();
@@ -231,6 +244,9 @@ impl MapStudioApp {
             elevation_tool: false,
             atlas: texture.clone(),
             npc_atlas,
+            prefab_atlas,
+            prefab_group:emerald_library::Group::All,
+            prefab_stamped_this_touch:false,
             item_atlas,
             atlas_cache: HashMap::from([(tiles::DEFAULT_PAIR.to_string(),texture)]),
             preferred_pair:tiles::DEFAULT_PAIR.into(),
@@ -249,7 +265,7 @@ impl MapStudioApp {
             gesture: CanvasGesture::Idle,
             preview_error: None,
             collision_brush: 0,
-            panel_height: 280.0,
+            panel_height: 184.0,
             map_width: 12,
             map_height: 10,
             expand_direction: ExpandDirection::LowerRight,
@@ -938,252 +954,104 @@ impl MapStudioApp {
     /// viewport has left, even when a split-screen window becomes tiny.
     fn dock_height_bounds(available:f32)->(f32,f32){
         let height=available.max(12.0);
-        let min=(height*0.26).clamp(28.0,88.0).min(height*0.75);
+        let min=(height*0.25).clamp(40.0,64.0).min(height*0.75);
         let max=(height*0.68).max(min).min(height);
         (min,max)
     }
 
+    /// The v2 library is Emerald-first. Legacy tile source definitions are
+    /// preserved in project data, not exposed as a stack of collection menus.
     fn artwork_selectors(&mut self,ui:&mut egui::Ui){
-        let collection=if let Some(index)=self.active_pack {
-            self.installed_packs.get(index).map(|p|
-                p.manifest.collection.clone())
-                .unwrap_or_else(||self.browsing_pair().collection.to_string())
-        }else{self.browsing_pair().collection.to_string()};
-        let mut choices=vec![
-            ("builtin:emerald".to_string(),"Emerald".to_string(),None),
-            ("builtin:frlg".to_string(),"FireRed/LeafGreen".to_string(),None),
-        ];
-        for (index,pack) in self.installed_packs.iter().enumerate(){
-            let key=format!("{} · {}",pack.manifest.engine,pack.manifest.collection);
-            if !choices.iter().any(|(label,_,_)|label==&key){
-                choices.push((key,pack.manifest.collection.clone(),Some(index)));
-            }
-        }
-        ui.horizontal(|ui|{
-            ui.strong("Collection");
-            egui::ComboBox::from_id_salt("artwork_collection")
-                .selected_text(collection.as_str())
-                .width(ui.available_width().max(110.0)*0.50)
-                .show_ui(ui,|ui|{
-                    for (key,label,first_index) in &choices{
-                        if ui.add_sized(vec2(ui.available_width().max(150.0),36.0),
-                            egui::Button::new(label)).clicked(){
-                            self.active_pack=*first_index;
-                            self.selected_prefab=None;
-                            self.selected_stamp=None;
-                            self.artwork_view=ArtworkView::Metatiles;
-                            if self.active_pack.is_none(){
-                                if let Some(first)=tiles::first_in_collection(label){
-                                    self.request_tileset(first.key);
+        let pair=self.current_pair();
+        ui.horizontal_wrapped(|ui|{
+            ui.strong("Emerald");
+            ui.small(format!("· {}",pair.label));
+            // Choosing a new tileset must NEVER reinterpret an existing
+            // painted map's metatile IDs. It sets the source for *new* maps.
+            ui.menu_button("Map source",|ui|{
+                let painted=self.selected_map.and_then(|id|
+                    self.world.active_maps().find(|m|m.id==id))
+                    .is_some_and(|m|m.cells.iter().any(Option::is_some));
+                if painted{
+                    ui.small("Painted map locked · choose a source for the next map.");
+                }else{
+                    ui.small("Choose native Emerald art for an empty map.");
+                }
+                egui::ScrollArea::vertical().max_height(280.0)
+                    .show(ui,|ui|{
+                        for source in tiles::pairs().iter().filter(|p|p.collection=="Emerald"){
+                            if ui.selectable_label(self.preferred_pair==source.key,
+                                format!("{} · {}",source.category,source.label)).clicked(){
+                                if painted{
+                                    self.preferred_pair=source.key.into();
+                                    self.message=format!("Next new map will use {}",source.label);
+                                }else{
+                                    self.apply_pair(source.key);
                                 }
+                                ui.close();
                             }
-                            self.message=if let Some(index)=self.active_pack{
-                                if self.installed_packs.get(index)
-                                    .is_some_and(|p|p.embedded_archive.is_some()){
-                                    format!("Built-in {label}: preview only until native engine integration")
-                                }else{"Imported artwork preview; source validation needed for painting".into()}
-                            }else{format!("Built-in {label} source artwork")};
-                            ui.close();
                         }
-                        let _=key;
-                    }
-                });
-            ui.menu_button("Pack",|ui|{
-                if ui.button("Import artwork ZIP").clicked(){
-                    self.open_artwork_import_list();
-                    ui.close();
-                }
-                if ui.button("Export selected artwork").clicked(){
-                    self.try_export_artwork();
-                    ui.close();
-                }
+                    });
             });
         });
-        if self.active_pack.is_none(){
-            let current=self.browsing_pair();
-            // Horizontal category chips are naturally swipe-scrollable on
-            // mobile, independent from canvas drawing and sheet gestures.
-            egui::ScrollArea::horizontal().id_salt("artwork_categories")
-                .auto_shrink([false,true])
-                .show(ui,|ui|{
-                    ui.horizontal(|ui|{
-                        for category in tiles::SOURCE_CATEGORIES{
-                            let Some(first)=tiles::first_in_collection_category(current.collection,category)
-                                else{continue;};
-                            let active=current.category==category;
-                            if ui.add_sized(vec2((category.len() as f32*7.0+24.0).max(72.0),34.0),
-                                egui::Button::new(category).fill(
-                                    if active{Color32::from_rgb(184,218,247)}
-                                    else{Color32::from_gray(234)})).clicked(){
-                                self.request_tileset(first.key);
-                            }
-                        }
-                    });
-                });
-            let pair=self.browsing_pair();
-            let group:Vec<&'static tiles::TilePair>=tiles::pairs().iter()
-                .filter(|p|p.collection==pair.collection && p.category==pair.category).collect();
-            let pos=group.iter().position(|p|p.key==pair.key).unwrap_or(0);
-            ui.horizontal(|ui|{
-                if ui.add_sized(vec2(34.0,36.0),egui::Button::new("‹")).clicked()
-                    && !group.is_empty(){
-                    self.request_tileset(group[(pos+group.len()-1)%group.len()].key);
-                }
-                egui::ComboBox::from_id_salt("artwork_pair")
-                    .selected_text(self.browsing_pair().label)
-                    .width(ui.available_width().max(105.0)-45.0)
-                    .show_ui(ui,|ui|{
-                        egui::ScrollArea::vertical().max_height(300.0).show(ui,|ui|{
-                            for pair in &group{
-                                if ui.add_sized(vec2(ui.available_width().max(175.0),36.0),
-                                    egui::Button::new(pair.label)).clicked(){
-                                    self.request_tileset(pair.key);
-                                    ui.close();
-                                }
-                            }
-                        });
-                    });
-                if ui.add_sized(vec2(34.0,36.0),egui::Button::new("›")).clicked()
-                    && !group.is_empty(){
-                    self.request_tileset(group[(pos+1)%group.len()].key);
-                }
-            });
-        } else if let Some(index)=self.active_pack {
-            if let Some(current)=self.installed_packs.get(index){
-                let engine=current.manifest.engine.clone();
-                let source=current.manifest.collection.clone();
-                let category=current.manifest.category.clone();
-                let available:Vec<(usize,String)>=self.installed_packs.iter()
-                    .enumerate().filter(|(_,p)|
-                        p.manifest.engine==engine && p.manifest.collection==source)
-                    .map(|(i,p)|(i,p.manifest.category.clone())).collect();
-                let mut categories=Vec::new();
-                for (_,name) in &available{
-                    if !categories.contains(name){categories.push(name.clone());}
-                }
-                egui::ScrollArea::horizontal().id_salt("imported_artwork_categories")
-                    .show(ui,|ui|{
-                        ui.horizontal(|ui|{
-                            for name in &categories{
-                                let selected=category==*name;
-                                if ui.add_sized(vec2(96.0,34.0),
-                                    egui::Button::new(name).fill(
-                                        if selected{Color32::from_rgb(184,218,247)}
-                                        else{Color32::from_gray(234)})).clicked(){
-                                    self.active_pack=available.iter()
-                                        .find(|(_,cat)|cat==name).map(|(idx,_)|*idx);
-                                }
-                            }
-                        });
-                    });
-                let tilesets:Vec<(usize,String)>=self.installed_packs.iter().enumerate()
-                    .filter(|(_,p)|p.manifest.engine==engine && p.manifest.collection==source
-                        && p.manifest.category==category)
-                    .map(|(i,p)|(i,p.manifest.label.clone())).collect();
-                let label=current.manifest.label.clone();
-                ui.horizontal(|ui|{
-                    ui.label("Tileset");
-                    egui::ComboBox::from_id_salt("imported_artwork_pair")
-                        .selected_text(label)
-                        .width(ui.available_width().max(110.0))
-                        .show_ui(ui,|ui|{
-                            for (index,name) in &tilesets{
-                                if ui.add_sized(vec2(ui.available_width().max(150.0),36.0),
-                                    egui::Button::new(name)).clicked(){
-                                    self.active_pack=Some(*index);
-                                    self.selected_prefab=None;
-                                    ui.close();
-                                }
-                            }
-                        });
-                });
-                if let Some(pair)=current.native_pair(){
-                    if ui.small_button("Use matching Emerald source").clicked(){
-                        self.active_pack=None;
-                        self.request_tileset(pair.key);
-                    }
-                }else{
-                    ui.small("Imported package · preview until converted into native Emerald source.");
-                }
-            }
-        }
         ui.horizontal(|ui|{
-            if ui.selectable_label(self.artwork_view==ArtworkView::Metatiles,
-                "Metatiles").clicked(){self.artwork_view=ArtworkView::Metatiles;}
             if ui.selectable_label(self.artwork_view==ArtworkView::Prefabs,
-                "Prefabs").clicked(){self.artwork_view=ArtworkView::Prefabs;}
-            if let Some(pending)=self.pending_tileset.clone(){
-                if self.active_pack.is_none(){
-                    if let Some(pair)=tiles::pair(&pending){
-                        ui.small(format!("Preview: {}",pair.label));
-                        if ui.small_button("Use").clicked(){self.apply_pair(&pending);}
-                        if ui.small_button("Revert").clicked(){
-                            self.pending_tileset=None;
-                            self.selected_stamp=None;
-                            self.selected_prefab=None;
+                "Buildings").clicked(){
+                self.artwork_view=ArtworkView::Prefabs;
+            }
+            if ui.selectable_label(self.artwork_view==ArtworkView::Metatiles,
+                "Metatiles").clicked(){
+                self.artwork_view=ArtworkView::Metatiles;
+            }
+            if self.artwork_view==ArtworkView::Prefabs{
+                egui::ComboBox::from_id_salt("emerald_asset_group")
+                    .selected_text(self.prefab_group.name())
+                    .width(90.0)
+                    .show_ui(ui,|ui|{
+                        for group in emerald_library::Group::ALL{
+                            ui.selectable_value(&mut self.prefab_group,
+                                group,group.name());
                         }
-                    }
-                }
+                    });
             }
         });
     }
 
-    fn palette(&mut self, ui: &mut egui::Ui) {
-        // Keep the grab handle visible even in a very short freeform window.
-        // Too-tall pinned content previously pushed the sheet below screen.
-        let handle_height=if ui.available_height()<112.0{24.0}else{32.0};
+    /// Small one-hand dock. The grip and contextual selectors stay visible;
+    /// only the gallery scrolls. Double-tap the grip to cycle snap heights.
+    fn palette(&mut self,ui:&mut egui::Ui){
+        let handle_height=22.0f32.min(ui.available_height().max(10.0));
         let (handle,response)=ui.allocate_exact_size(
             vec2(ui.available_width(),handle_height),Sense::click_and_drag());
         let center=handle.center();
-        ui.painter().rect_filled(handle,0.0,Color32::from_gray(243));
+        ui.painter().rect_filled(handle,0.0,Color32::from_gray(245));
         ui.painter().rect_filled(Rect::from_center_size(
-            pos2(center.x,handle.top()+8.0),vec2(48.0,4.0)),
-            2.0,Color32::from_gray(144));
-        if handle_height>26.0 {
-            ui.painter().text(pos2(center.x,handle.bottom()-2.0),
-                Align2::CENTER_BOTTOM,"Drag to resize",
-                FontId::proportional(11.0),Color32::from_gray(110));
-        }
+            pos2(center.x,center.y),vec2(46.0,4.0)),
+            2.0,Color32::from_gray(142));
         if response.dragged(){
-            let available=ui.ctx().content_rect().height()*0.76;
-            let (minimum,maximum)=Self::dock_height_bounds(available);
+            let (minimum,maximum)=Self::dock_height_bounds(
+                ui.ctx().content_rect().height()*0.70);
             self.panel_height=(self.panel_height-response.drag_delta().y)
                 .clamp(minimum,maximum);
             ui.ctx().request_repaint();
         }
         if response.double_clicked(){
-            self.panel_height=if self.panel_height<205.0{330.0}else{132.0};
+            self.panel_height=if self.panel_height<100.0{184.0}
+                else if self.panel_height<245.0{340.0}else{64.0};
             ui.ctx().request_repaint();
         }
-        // With enough room, the pickers/tools stay pinned while art scrolls.
-        // In split-screen/freeform, all content except the grip scrolls in a
-        // bounded area. That ensures a huge picker cannot push the dock away.
-        let compact=ui.available_height()<340.0;
-        if compact{
-            egui::ScrollArea::vertical().id_salt("compact_dock_content")
+        if self.mode==Mode::Terrain && ui.available_height()>42.0{
+            self.artwork_selectors(ui);
+        }
+        if ui.available_height()>4.0{
+            egui::ScrollArea::vertical().id_salt("v2_asset_picker")
                 .auto_shrink([false,false])
-                .max_height(ui.available_height().max(1.0))
+                .max_height(ui.available_height())
                 .show(ui,|ui|{
                     if self.mode==Mode::Terrain{
-                        self.artwork_selectors(ui);
-                        self.terrain_toolbar(ui);
-                        ui.separator();
-                        self.terrain_sheet_content(ui);
-                    }else{
-                        self.palette_content(ui);
-                    }
-                });
-        }else{
-            if self.mode==Mode::Terrain{
-                self.artwork_selectors(ui);
-                self.terrain_toolbar(ui);
-            }
-            ui.separator();
-            egui::ScrollArea::vertical().id_salt("dock_content")
-                .auto_shrink([false,false])
-                .max_height(ui.available_height().max(1.0))
-                .show(ui,|ui|{
-                    if self.mode==Mode::Terrain{
+                        if self.artwork_view==ArtworkView::Metatiles{
+                            self.terrain_toolbar(ui);
+                        }
                         self.terrain_sheet_content(ui);
                     }else{
                         self.palette_content(ui);
@@ -1287,101 +1155,108 @@ impl MapStudioApp {
     }
 
     fn terrain_sheet_content(&mut self,ui:&mut egui::Ui){
-        if let Some(index)=self.active_pack{
-            if self.artwork_view==ArtworkView::Metatiles{
-                self.imported_artwork_sheet(ui,index);
-            }else{
-                self.prefab_gallery(ui,Some(index));
-            }
-        }else if self.artwork_view==ArtworkView::Prefabs{
+        if self.artwork_view==ArtworkView::Prefabs{
             self.prefab_gallery(ui,None);
         }else{
-            let pair=self.browsing_pair();
-            if self.pending_tileset.is_some(){
-                ui.small("Preview only — use the selected artwork before painting.");
-            }
-            self.metatile_sheet(ui,pair,0,pair.primary_count,"Shared metatiles");
-            self.metatile_sheet(ui,pair,512,pair.secondary_count,"Local metatiles");
+            let pair=self.current_pair();
+            self.metatile_sheet(ui,pair,0,pair.primary_count,"Shared source metatiles");
+            self.metatile_sheet(ui,pair,512,pair.secondary_count,"Local source metatiles");
             if let Some(stamp)=self.selected_stamp.as_ref(){
                 ui.small(format!("{} × {} selected",stamp.width,stamp.height));
             }else if let Some(tile)=self.tile_preview{
                 ui.small(format!("Selected: {}",tiles::source_label_in(pair,tile)
-                    .unwrap_or("source metatile")));
+                    .unwrap_or("native source metatile")));
             }
         }
-        ui.small(&self.message);
+        if !self.message.is_empty(){ui.small(&self.message);}
     }
 
-    fn prefab_gallery(&mut self,ui:&mut egui::Ui,imported:Option<usize>){
-        if let Some(index)=imported{
-            let Some(package)=self.installed_packs.get(index) else{return;};
-            let cache_key=format!("imported:{}",package.filename);
-            let texture=self.atlas_cache.get(&cache_key).unwrap_or(&self.atlas).id();
-            let displayed:Vec<(&prefabs::Prefab,bool)>=package.prefabs.iter()
-                .filter(|p|p.metatiles.iter().all(|t|package.valid(t.metatile_id)))
-                .map(|p|(p,false)).collect();
-            if displayed.is_empty(){
-                ui.small("No usable prefab definitions in this imported package.");
-            }
-            for (prefab,_) in displayed{
-                Self::prefab_card(ui,prefab,texture,false,false);
-            }
-            if package.embedded_archive.is_some(){
-                ui.small("Built-in source prefabs · preview until game-side conversion is verified.");
-            }else{
-                ui.small("Imported prefab previews are read-only until native conversion.");
-            }
+    /// Unified gallery: compatible Emerald assets first, all others directly
+    /// below. Every thumbnail comes from the original source-pair atlas.
+    fn prefab_gallery(&mut self,ui:&mut egui::Ui,_imported:Option<usize>){
+        let current=self.current_pair();
+        let entries=emerald_library::list(current,self.prefab_group);
+        let ready=entries.iter().filter(|e|e.compatible).count();
+        ui.small(format!("{ready} ready · {} Emerald assets · source: {}",
+            entries.len(),current.label));
+        if entries.is_empty(){
+            ui.small("No objects in this category.");
             return;
         }
-        let pair=self.browsing_pair();
-        let library=prefabs::by_collection(pair.collection);
-        let indices=prefabs::compatible_indices(pair);
-        let texture=self.atlas_cache.get(pair.key).unwrap_or(&self.atlas).id();
-        ui.small(format!("{} compatible of {} {} prefabs · Porymap",
-            indices.len(),library.len(),pair.collection));
-        if indices.is_empty(){
-            ui.small("No prefab fits this tileset. Choose another below to preview its correct artwork.");
-        }
-        for &index in &indices{
-            let prefab=&library[index];
-            let selected=self.selected_prefab==Some(index);
-            if Self::prefab_card(ui,prefab,texture,selected,true).clicked(){
-                if self.pending_tileset.is_some(){
-                    self.message="Use the previewed artwork first, then choose a prefab.".into();
-                    continue;
-                }
-                self.selected_prefab=Some(index);
-                self.selected_stamp=None;
-                self.tile_preview=None;
-                self.bucket_tool=false;
-                self.erase_tool=false;
-                self.tool_active=true;
-                self.message=format!("Selected prefab: {} · {} × {}",
-                    prefab.name,prefab.width,prefab.height);
-            }
-        }
-        // Prefabs are defined per source pair. Always expose the whole
-        // built-in catalog; hiding incompatible entries made the tab look empty.
-        let alternatives:Vec<(usize,&'static tiles::TilePair)>=library.iter()
-            .enumerate().filter(|(i,_)|!indices.contains(i))
-            .filter_map(|(i,prefab)|{
-                tiles::pairs().iter().find(|candidate|
-                    candidate.collection==pair.collection
-                        && prefabs::compatible(prefab,candidate))
-                    .map(|candidate|(i,candidate))
-            }).collect();
-        if !alternatives.is_empty(){
-            ui.collapsing(format!("Browse {} more prefabs",alternatives.len()),|ui|{
-                for (index,source_pair) in &alternatives{
-                    ui.horizontal(|ui|{
-                        ui.label(format!("{} · {}",library[*index].name,source_pair.label));
-                        if ui.button("View").clicked(){
-                            self.request_tileset(source_pair.key);
+        let cols=if ui.available_width()>=470.0{4}
+            else if ui.available_width()>=305.0{3}else{2};
+        let gap=6.0;
+        let card_w=((ui.available_width()-(cols as f32-1.0)*gap)
+            / cols as f32).max(75.0);
+        let rows=(prefabs::emerald().len()+emerald_library::THUMB_COLS-1)
+            /emerald_library::THUMB_COLS;
+        egui::Grid::new("v2_emerald_prefab_grid")
+            .num_columns(cols).spacing(vec2(gap,gap))
+            .show(ui,|ui|{
+                for (n,item) in entries.iter().enumerate(){
+                    let prefab=&prefabs::emerald()[item.index];
+                    let selected=self.selected_prefab==Some(item.index);
+                    let height=card_w.min(102.0)+34.0;
+                    let (rect,response)=ui.allocate_exact_size(
+                        vec2(card_w,height),Sense::click());
+                    if rect.intersects(ui.clip_rect()){
+                        let painter=ui.painter_at(rect);
+                        painter.rect_filled(rect,5.0,if selected{
+                            Color32::from_rgb(199,226,246)
+                        }else{Color32::from_gray(242)});
+                        if selected{
+                            painter.rect_stroke(rect,5.0,Stroke::new(1.7,
+                                Color32::from_rgb(37,116,181)),StrokeKind::Inside);
                         }
-                    });
+                        let thumb_side=(card_w-8.0).min(height-34.0);
+                        let thumb_rect=Rect::from_center_size(
+                            pos2(rect.center().x,rect.top()+4.0+thumb_side*0.5),
+                            vec2(thumb_side,thumb_side));
+                        let ix=item.index%emerald_library::THUMB_COLS;
+                        let iy=item.index/emerald_library::THUMB_COLS;
+                        let uv=Rect::from_min_max(
+                            pos2(ix as f32/emerald_library::THUMB_COLS as f32,
+                                iy as f32/rows as f32),
+                            pos2((ix+1) as f32/emerald_library::THUMB_COLS as f32,
+                                (iy+1) as f32/rows as f32));
+                        painter.image(self.prefab_atlas.id(),thumb_rect,uv,
+                            if item.compatible{Color32::WHITE}
+                            else{Color32::from_white_alpha(160)});
+                        let title:String=prefab.name.chars().take(16).collect();
+                        painter.text(pos2(rect.center().x,rect.bottom()-23.0),
+                            Align2::CENTER_CENTER,title,
+                            FontId::proportional(11.0),Color32::from_gray(40));
+                        painter.text(pos2(rect.center().x,rect.bottom()-9.0),
+                            Align2::CENTER_CENTER,
+                            if item.compatible{"Ready"}
+                            else if item.source_pair.is_some(){"Other source"}
+                            else{"Unavailable"},
+                            FontId::proportional(9.0),
+                            if item.compatible{Color32::from_rgb(34,93,63)}
+                            else{Color32::DARK_GRAY});
+                    }
+                    if response.clicked(){
+                        if item.compatible {
+                            self.selected_prefab=Some(item.index);
+                            self.selected_stamp=None;
+                            self.tile_preview=None;
+                            self.bucket_tool=false;
+                            self.erase_tool=false;
+                            self.tool_active=true;
+                            self.message=format!("{} selected · tap a clear area on the map",
+                                prefab.name);
+                        }else{
+                            self.selected_prefab=None;
+                            self.message=if let Some(source)=item.source_pair{
+                                format!("{} belongs to source {}. Create a compatible map; existing map tiles stay unchanged.",
+                                    prefab.name,source.label)
+                            }else{format!("{} has no compatible native Emerald source asset",
+                                prefab.name)};
+                        }
+                    }
+                    if (n+1)%cols==0{ui.end_row();}
                 }
             });
-        }
     }
 
     fn prefab_card(ui:&mut egui::Ui,prefab:&prefabs::Prefab,
