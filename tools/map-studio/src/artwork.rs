@@ -32,6 +32,8 @@ pub struct Package {
     pub manifest:Manifest,
     pub atlas:Vec<u8>,
     pub prefabs:Vec<Prefab>,
+    /// Generated at compile time and shipped inside the APK, not downloaded.
+    pub embedded_archive:Option<&'static [u8]>,
 }
 impl Package{
     /// Imported byte-perfect copies of built-in pairs can reuse the native
@@ -107,7 +109,7 @@ pub fn decode(bytes:&[u8])->Result<Package,String>{
             || tile.metatile_id>=1024 || tile.collision>3 || tile.elevation>15)) {
         return Err("Artwork package contains oversized prefabs".into());
     }
-    Ok(Package{filename:String::new(),manifest,atlas,prefabs})
+    Ok(Package{filename:String::new(),manifest,atlas,prefabs,embedded_archive:None})
 }
 pub fn filename_for(collection:&str,key:&str)->String{
     let slug=format!("{collection}-{key}").chars()
@@ -207,6 +209,22 @@ pub fn load_installed(dir:&Path)->Vec<Package>{
     packages.sort_by(|a,b|a.filename.cmp(&b.filename));
     packages
 }
+/// Genuine source resources compiled into the editor. These packs do not
+/// claim that a different game's metatile IDs are safe to paint in Emerald.
+pub fn builtin_reference_packs()->Vec<Package>{
+    let archives:&[(&str,&'static [u8])]=&[
+        ("ruby_petalburg",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/ruby_petalburg.zip"))),
+        ("ruby_mauville",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/ruby_mauville.zip"))),
+        ("ruby_rustboro",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/ruby_rustboro.zip"))),
+    ];
+    archives.iter().map(|(name,bytes)|{
+        let mut package=decode(bytes).expect("Built-in Ruby art archive must decode");
+        package.filename=format!("MapStudio-artwork-builtin-{name}.zip");
+        package.embedded_archive=Some(bytes);
+        package
+    }).collect()
+}
+
 pub fn default_dir(save_path:Option<&Path>)->Option<PathBuf>{
     save_path.and_then(Path::parent).map(|p|p.join("artwork-packages"))
 }
@@ -225,6 +243,18 @@ mod tests{
         assert!(!pack.prefabs.is_empty());
         assert_eq!(pack.manifest.primary_symbol,pair.primary_symbol);
         let _=fs::remove_file(&path);
+    }
+    #[test]
+    fn original_ruby_builtins_have_real_tiles_and_prefabs(){
+        let packs=builtin_reference_packs();
+        assert_eq!(packs.len(),3);
+        assert!(packs.iter().all(|p|p.manifest.collection=="Ruby"
+            && p.manifest.engine=="pokeruby"
+            && !p.atlas.is_empty()
+            && p.manifest.valid_mask.iter().any(|x|*x!=0)
+            && p.embedded_archive.is_some()
+            && p.native_pair().is_none()));
+        assert!(packs.iter().any(|p|!p.prefabs.is_empty()));
     }
     #[test]
     fn zip_bomb_or_unrelated_zip_cannot_be_imported(){
