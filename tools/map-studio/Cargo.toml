@@ -1,6 +1,6 @@
 [package]
 name = "map-studio"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 publish = false
 description = "Native Rust Android map editor for pokeemerald-expansion"
@@ -35,15 +35,15 @@ winit = { version = "0.30", default-features = false, features = ["android-nativ
 
 [package.metadata.android]
 strip = "strip"
-package = "dev.despairarc.mapstudio.smartterrainpreview"
-apk_name = "map-studio-smart-terrain-preview"
+package = "dev.despairarc.mapstudio.prefabmatrixpreview"
+apk_name = "map-studio-prefab-matrix-preview"
 build_targets = ["aarch64-linux-android"]
 
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
 [package.metadata.android.application]
-label = "Map Studio Smart Terrain Preview"
+label = "Map Studio Prefab Matrix Preview"
 
 # Explicitly support split-screen and freeform Android activities.
 # NativeActivity receives surface/config changes without a forced restart.
