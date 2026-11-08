@@ -9,6 +9,53 @@ pub fn set_app(app: winit::platform::android::activity::AndroidApp) {
     let _ = ANDROID_APP.set(app);
 }
 
+/// Real Android status/gesture/cutout insets in egui logical points.
+/// The egui Android backend sometimes reports zero safe_area_insets even
+/// while Android 15 draws behind system bars. Use native WindowInsets and
+/// let the UI subtract whichever portion egui already accounted for.
+pub fn safe_insets_logical(pixels_per_point:f32)->Option<(f32,f32)>{
+    let app=ANDROID_APP.get()?;
+    let vm=unsafe {JavaVM::from_raw(app.vm_as_ptr().cast())}.ok()?;
+    let mut env=vm.attach_current_thread().ok()?;
+    let activity=unsafe {JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject)};
+    let result=(|| -> jni::errors::Result<(i32,i32)> {
+        let window=env.call_method(&activity,"getWindow",
+            "()Landroid/view/Window;",&[])?.l()?;
+        let decor=env.call_method(&window,"getDecorView",
+            "()Landroid/view/View;",&[])?.l()?;
+        let insets=env.call_method(&decor,"getRootWindowInsets",
+            "()Landroid/view/WindowInsets;",&[])?.l()?;
+        if insets.is_null() {
+            return Err(jni::errors::Error::NullPtr("RootWindowInsets not ready"));
+        }
+        let sdk=env.get_static_field("android/os/Build$VERSION","SDK_INT","I")?.i()?;
+        if sdk>=30 {
+            let bar=env.call_static_method("android/view/WindowInsets$Type",
+                "systemBars","()I",&[])?.i()?;
+            let cutout=env.call_static_method("android/view/WindowInsets$Type",
+                "displayCutout","()I",&[])?.i()?;
+            let gesture=env.call_static_method("android/view/WindowInsets$Type",
+                "systemGestures","()I",&[])?.i()?;
+            let types=bar | cutout | gesture;
+            let rect=env.call_method(&insets,"getInsets",
+                "(I)Landroid/graphics/Insets;",&[JValue::Int(types)])?.l()?;
+            let top=env.get_field(&rect,"top","I")?.i()?;
+            let bottom=env.get_field(&rect,"bottom","I")?.i()?;
+            Ok((top,bottom))
+        }else{
+            let top=env.call_method(&insets,"getSystemWindowInsetTop","()I",&[])?.i()?;
+            let bottom=env.call_method(&insets,"getSystemWindowInsetBottom","()I",&[])?.i()?;
+            Ok((top,bottom))
+        }
+    })();
+    let Ok((top,bottom))=result else{
+        let _=env.exception_clear();
+        return None;
+    };
+    let scale=pixels_per_point.max(1.0);
+    Some((top.max(0) as f32/scale,bottom.max(0) as f32/scale))
+}
+
 fn put_string(env: &mut JNIEnv<'_>, values: &JObject<'_>, key: &str, value: &str)
     -> jni::errors::Result<()> {
     let k = JObject::from(env.new_string(key)?);
