@@ -14,8 +14,13 @@ Editor/
 ```
 
 The Android app creates the same relative structure in its private storage.
-It does **not** automatically synchronize private Android files with GitHub.
-An explicitly authorized GitHub transport is needed for remote synchronization.
+GitHub synchronization is **optional and explicit**: open **Project → GitHub
+sync**, set a target repository and branch, then publish the current project.
+The client reads/writes only that UUID's manifest and project files using
+GitHub's Contents API. Automatic checking works while the app is open, but
+an authorized token must be entered again after restart for private
+repositories. Both-side edits are rejected as conflicts, not merged.
+See [the V1 protocol](../tools/map-studio/docs/GITHUB_SYNC_V1.md).
 
 ## Identity and target safety
 
