@@ -58,6 +58,20 @@ fn main() {
     let result=Command::new("python3").arg(catalog).arg(&root).arg(&atlas_folder)
         .status().expect("Python atlas catalog builder unavailable");
     assert!(result.success(),"Cannot build real tileset atlas catalog");
+    // Curated environmental snippets are extracted from native Emerald
+    // map.bin cells during the build, retaining the exact source-pair,
+    // collision and elevation rather than inventing metatile arrangements.
+    let environment_script=root.join("tools/map-studio/scripts/build_environment_prefabs.py");
+    let environment_specs=root.join("tools/map-studio/assets/emerald-environment-regions.json");
+    println!("cargo:rerun-if-changed={}",environment_script.display());
+    println!("cargo:rerun-if-changed={}",environment_specs.display());
+    println!("cargo:rerun-if-changed={}",root.join("data/layouts").display());
+    let environment_output=PathBuf::from(env::var("OUT_DIR").unwrap())
+        .join("emerald_environment_prefabs.json");
+    let verify=Command::new("python3").arg(environment_script)
+        .arg(&root).arg(&atlas_folder).arg(&environment_output)
+        .status().expect("Emerald environment source extractor unavailable");
+    assert!(verify.success(),"Invalid native Emerald environmental recipe");
     // Build one compact, source-faithful Emerald prefab sheet. A preview
     // tile occupies the same index as its original Porymap prefab.
     let thumb_script=root.join("tools/map-studio/scripts/build_emerald_thumbnails.py");
@@ -67,6 +81,7 @@ fn main() {
     let thumbs=PathBuf::from(env::var("OUT_DIR").unwrap()).join("emerald_prefabs.png");
     let preview_status=Command::new("python3").arg(thumb_script)
         .arg(&root).arg(&atlas_folder).arg(&thumbs)
+        .arg(&environment_output)
         .status().expect("Native Emerald prefab renderer unavailable");
     assert!(preview_status.success(),"Cannot create Emerald prefab thumbnail catalog");
     let sprite_script=root.join("tools/map-studio/scripts/build_sprites.py");
