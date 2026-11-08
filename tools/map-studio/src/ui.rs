@@ -1,7 +1,7 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
-use crate::{storage, export, tiles, choices, artwork, prefabs};
+use crate::{storage, export, tiles, choices, artwork, prefabs, projects};
 use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,6 +95,8 @@ pub struct MapStudioApp {
     tile_preview: Option<u16>,
     save_path: Option<PathBuf>,
     export_dir: Option<PathBuf>,
+    workspace: Option<projects::Workspace>,
+    active_project: Option<projects::ProjectManifest>,
     dirty_since: Option<Instant>,
     history: Vec<World>,
     redo: Vec<World>,
@@ -129,6 +131,8 @@ pub struct MapStudioApp {
     available_backups: Vec<(String,String)>,
     selected_backup: Option<String>,
     new_project_confirm: bool,
+    new_project_name: String,
+    new_project_target: projects::GameTarget,
 }
 
 impl MapStudioApp {
@@ -161,20 +165,25 @@ impl MapStudioApp {
             egui::ColorImage::from_rgba_unmultiplied(item_size,item_image.as_raw()),
             egui::TextureOptions::NEAREST);
 
-        // Never silently overwrite an incompatible/corrupt project with demo maps.
-        let (world, load_error)=match save_path.as_deref() {
-            Some(path) if path.exists() => match storage::load(path) {
-                Ok(world)=>(world,None),
-                Err(err)=>(World::new(),Some(err)),
-            },
-            _=>(World::new(),None),
-        };
+        // Projects have independent private autosaves. On first launch copy
+        // the legacy single-file project without ever deleting the original.
+        // A corrupt legacy or active project blocks autosave, not data recovery.
+        let (world,load_error,workspace,active_project,save_path)=
+            if let Some(legacy)=save_path.as_deref(){
+                match projects::Workspace::open(legacy){
+                    Ok((store,manifest,world))=>{
+                        let path=store.project_path(&manifest.project_id)
+                            .expect("validated project UUID");
+                        (world,None,Some(store),Some(manifest),Some(path))
+                    }
+                    Err(err)=>(World::new(),Some(err),None,None,None),
+                }
+            }else{(World::new(),None,None,None,None)};
         let message=if let Some(err)=&load_error {
-            format!("Saved project cannot be loaded; autosave disabled: {err}")
-        } else {
+            format!("Project cannot be loaded; autosave disabled: {err}")
+        }else{
             "Hold empty grid to draw a map · hold a map to move".to_string()
         };
-        let save_path=if load_error.is_some(){None}else{save_path};
         Self {
             world,
             mode: Mode::Terrain,
@@ -220,6 +229,8 @@ impl MapStudioApp {
             tile_preview: None,
             save_path,
             export_dir,
+            workspace,
+            active_project,
             dirty_since: None,
             history: Vec::new(),
             redo: Vec::new(),
@@ -254,6 +265,8 @@ impl MapStudioApp {
             available_backups: Vec::new(),
             selected_backup: None,
             new_project_confirm: false,
+            new_project_name: "New World".into(),
+            new_project_target: projects::GameTarget::EmeraldExpansion,
         }
     }
 
@@ -271,10 +284,28 @@ impl MapStudioApp {
         ui.spacing_mut().item_spacing=vec2(6.0,3.0);
         ui.horizontal(|ui|{
             ui.strong("Map Studio");
+            if let Some(project)=&self.active_project{
+                ui.small(format!("· {}",project.name));
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{
                 ui.menu_button("Project",|ui|{
-                    if ui.button("New").clicked(){
+                    if ui.button("New project").clicked(){
+                        self.new_project_name="New World".into();
                         self.new_project_confirm=true;ui.close();
+                    }
+                    let list=self.workspace.as_ref().map(|store|store.list());
+                    if let Some(Ok(projects))=list{
+                        ui.menu_button("Switch project",|ui|{
+                            for project in projects{
+                                let selected=self.active_project.as_ref()
+                                    .is_some_and(|active|active.project_id==project.project_id);
+                                let title=format!("{} · {}",project.name,project.target.label());
+                                if ui.selectable_label(selected,title).clicked(){
+                                    self.switch_workspace_project(&project.project_id);
+                                    ui.close();
+                                }
+                            }
+                        });
                     }
                     if ui.button("Backup JSON").clicked(){
                         self.try_backup();ui.close();
@@ -2276,12 +2307,88 @@ impl MapStudioApp {
         self.import_artwork_open&=open;
     }
 
+    fn reset_for_project_switch(&mut self){
+        self.dirty_since=None;
+        self.history.clear();
+        self.redo.clear();
+        self.before_gesture=None;
+        self.gesture=CanvasGesture::Idle;
+        self.preview_error=None;
+        self.selected_map=None;
+        self.selected_event=None;
+        self.selected_cell=None;
+        self.event_editor_open=false;
+        self.confirm_delete=None;
+        self.size_panel_open=false;
+        self.pending_tileset=None;
+        self.tile_preview=None;
+        self.selected_prefab=None;
+        self.selected_stamp=None;
+        self.active_pack=None;
+        self.preferred_pair=tiles::DEFAULT_PAIR.into();
+        self.tileset_group="Towns".into();
+        self.import_artwork_open=false;
+        self.artwork_view=ArtworkView::Metatiles;
+        let mut packages=artwork::builtin_reference_packs();
+        packages.extend(artwork::default_dir(self.save_path.as_deref())
+            .map(|path|artwork::load_installed(&path)).unwrap_or_default());
+        self.installed_packs=packages;
+        self.fit_world();
+    }
+
+    fn switch_workspace_project(&mut self,id:&str){
+        if self.active_project.as_ref().is_some_and(|p|p.project_id==id){return;}
+        self.commit_edit();
+        let result=(||->Result<(projects::ProjectManifest,World,PathBuf),String>{
+            let store=self.workspace.as_ref().ok_or("No project workspace available")?;
+            // Read and validate destination BEFORE touching the current save.
+            let manifest=store.load_manifest(id)?;
+            let world=store.load_world(id)?;
+            let new_path=store.project_path(id)?;
+            let current=self.save_path.as_ref().ok_or("Current project cannot be saved")?;
+            storage::save(current,&self.world)?;
+            store.activate(id)?;
+            Ok((manifest,world,new_path))
+        })();
+        match result{
+            Ok((manifest,world,path))=>{
+                self.world=world;
+                self.save_path=Some(path);
+                self.active_project=Some(manifest.clone());
+                self.reset_for_project_switch();
+                self.message=if manifest.target.can_export(){
+                    format!("Opened {}",manifest.name)
+                }else{
+                    format!("Opened {} · FireRed game-source export is not supported yet",manifest.name)
+                };
+            }
+            Err(err)=>self.message=format!("Project switch blocked: {err}"),
+        }
+    }
+
     fn start_new_project(&mut self){
-        match self.install_world(World::new()){
-            Ok(())=>self.message="New blank project created. Recovery copy saved.".into(),
+        self.commit_edit();
+        let result=(||->Result<(projects::ProjectManifest,PathBuf),String>{
+            let store=self.workspace.as_ref().ok_or("No project workspace available")?;
+            let current=self.save_path.as_ref().ok_or("Current project cannot be saved")?;
+            storage::save(current,&self.world)?;
+            let manifest=store.create(&self.new_project_name,self.new_project_target,&World::new())?;
+            store.activate(&manifest.project_id)?;
+            let path=store.project_path(&manifest.project_id)?;
+            Ok((manifest,path))
+        })();
+        match result{
+            Ok((manifest,path))=>{
+                self.world=World::new();
+                self.save_path=Some(path);
+                self.active_project=Some(manifest.clone());
+                self.reset_for_project_switch();
+                self.message=format!("Created separate {} project: {}",
+                    manifest.target.label(),manifest.name);
+                self.new_project_confirm=false;
+            }
             Err(err)=>self.message=format!("New project blocked: {err}"),
         }
-        self.new_project_confirm=false;
     }
 
     fn project_dialogs(&mut self,ctx:&egui::Context) {
@@ -2291,11 +2398,19 @@ impl MapStudioApp {
                 .collapsible(false).resizable(false).open(&mut open)
                 .anchor(Align2::CENTER_CENTER,[0.0,0.0])
                 .show(ctx,|ui|{
-                    ui.label("Create a blank canvas? A recovery copy is saved first.");
+                    ui.label("Create a separate project. Your current world is preserved.");
+                    ui.label("Project name");
+                    ui.text_edit_singleline(&mut self.new_project_name);
+                    ui.label("Target GBA game");
+                    ui.radio_value(&mut self.new_project_target,
+                        projects::GameTarget::EmeraldExpansion,"Emerald Expansion");
+                    ui.radio_value(&mut self.new_project_target,
+                        projects::GameTarget::FireRed,"FireRed (source export not supported yet)");
                     ui.horizontal(|ui|{
-                        if ui.button("Create new").clicked(){self.start_new_project();}
+                        if ui.button("Create project").clicked(){self.start_new_project();}
                         if ui.button("Cancel").clicked(){self.new_project_confirm=false;}
                     });
+                    ui.small(&self.message);
                 });
             if !open {self.new_project_confirm=false;}
         }
