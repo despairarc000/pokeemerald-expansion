@@ -15,6 +15,8 @@ const HELP:&str = "Map Studio CLI
   add-map <project.json> <name> <x> <y> <width> <height>
   place-map <project.json> <name> <fixed-x> <fixed-y> <width> <height> <direction>
   paint <project.json> <x> <y> <metatile-id>
+  tilesets <project.json>
+  set-tileset <project.json> <map-id> <native-pair-key>
   assets <project.json> <map-id>
   place-prefab <project.json> <map-id> <source-prefab-index> <local-x> <local-y>
   objects <project.json> <map-id>
@@ -182,6 +184,23 @@ fn run(args:&[String])->Result<(),String> {
             }
         }
     }
+    if matches!(action,"set-tileset"|"assets"|"place-prefab"|"objects"
+        |"move-prefab"|"remove-prefab"|"walkway"){
+        if project.file_name().is_some_and(|name|name=="project.json"){
+            let manifest_path=project.with_file_name("manifest.json");
+            if manifest_path.exists(){
+                let manifest:ProjectManifest=serde_json::from_slice(
+                    &std::fs::read(&manifest_path).map_err(|e|e.to_string())?)
+                    .map_err(|e|format!("Invalid project target manifest: {e}"))?;
+                manifest.validate()?;
+                let folder=project.parent().and_then(|p|p.file_name())
+                    .and_then(|n|n.to_str()).ok_or("Invalid project directory")?;
+                if folder!=manifest.project_id || !manifest.target.can_export(){
+                    return Err("Emerald source tools cannot edit a different GBA target".into());
+                }
+            }
+        }
+    }
     let mut world=storage::load(project)?;
     let mut changed=false;
     match action {
@@ -220,6 +239,23 @@ fn run(args:&[String])->Result<(),String> {
             let tile=int(args,5,"metatile-id")?;
             if !world.paint_metatile(p,tile){return Err("No change: outside map or invalid metatile ID".into());}
             changed=true;
+        }
+        "tilesets" => {
+            for pair in tiles::pairs().iter().filter(|p|p.collection=="Emerald"){
+                println!("{} | {} | {} | {}",pair.key,
+                    pair.label,pair.primary_symbol,pair.secondary_symbol);
+            }
+        }
+        "set-tileset" => {
+            let id:u32=int(args,3,"map-id")?;
+            let pair=field(args,4,"native tileset pair")?;
+            let target=tiles::pair(pair).ok_or("Unknown source pair")?;
+            if target.collection!="Emerald"{
+                return Err("Only source-verified Emerald tilesets are editable".into());
+            }
+            world.set_map_tileset(id,pair)?;
+            changed=true;
+            println!("Map #{id} now uses source tileset {pair}");
         }
         "assets" => {
             let id:u32=int(args,3,"map-id")?;
@@ -403,6 +439,26 @@ mod tests {
         let args=vec!["bin".into(),"paint".into(),"p".into(),"-7".into(),"12".into(),"0x170".into()];
         assert_eq!(coord(&args,3,"x").unwrap(),-7);
         assert_eq!(int::<u16>(&args,5,"tile").unwrap(),0x170);
+    }
+    #[test]
+    fn set_tileset_and_native_paving_are_safe_ai_operations(){
+        let path=std::env::temp_dir().join(format!(
+            "mapstudio-cli-native-road-{}.json",uuid::Uuid::new_v4()));
+        let mut world=World::new();
+        let id=world.add_map("New Town",GridPoint::new(0,0),40,40).unwrap();
+        storage::save(&path,&world).unwrap();
+        let p=path.to_string_lossy().into_owned();
+        run(&["bin".into(),"set-tileset".into(),p.clone(),id.to_string(),
+            "general/lilycove".into()]).unwrap();
+        run(&["bin".into(),"walkway".into(),p.clone(),id.to_string(),
+            "8".into(),"12".into(),"24".into(),"12".into()]).unwrap();
+        let w=storage::load(&path).unwrap();
+        assert_eq!(w.maps[0].cell(8,12).unwrap().metatile_id,0x233);
+        assert_eq!(w.maps[0].cell(7,11).unwrap().metatile_id,0x22A);
+        assert!(run(&["bin".into(),"set-tileset".into(),p.clone(),id.to_string(),
+            "general/petalburg".into()]).is_err());
+        assert_eq!(storage::load(&path).unwrap(),w);
+        let _=std::fs::remove_file(path);
     }
     #[test]
     fn prefab_cli_move_and_remove_preserve_original_map_data(){
