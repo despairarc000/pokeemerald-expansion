@@ -542,6 +542,22 @@ impl World {
         self.prefab_instances.retain(|object|!object.stamps.is_empty());
     }
 
+    /// Upgrade v0.19 projects containing stale snapshots left by manual edits.
+    /// Never overwrite native cells while repairing their optional references.
+    pub fn reconcile_prefab_snapshots(&mut self)->usize{
+        let (maps,objects)=(&self.maps,&mut self.prefab_instances);
+        let mut removed=0;
+        for object in objects.iter_mut(){
+            let map=maps.iter().find(|m|m.id==object.map_id);
+            let old=object.stamps.len();
+            object.stamps.retain(|stamp|map.is_some_and(|m|
+                m.cell(object.x+stamp.x,object.y+stamp.y)==Some(stamp.painted)));
+            removed+=old-object.stamps.len();
+        }
+        objects.retain(|obj|!obj.stamps.is_empty());
+        removed
+    }
+
     /// One canonical entry point for brush, property, and eraser edits.
     /// Object metadata is never left occupying an erased cell.
     fn edit_cell(&mut self,p:GridPoint,change:impl FnOnce(Option<Cell>)->Option<Cell>)->bool{
