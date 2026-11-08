@@ -28,8 +28,12 @@ pub fn decode(bytes:&[u8]) -> Result<World,String> {
         return Err(format!("Project version {} is not supported (expected {})",
             version,SCHEMA_VERSION));
     }
-    let project:Project=serde_json::from_value(envelope)
+    let mut project:Project=serde_json::from_value(envelope)
         .map_err(|e|format!("Parse project: {e}"))?;
+    project.world.check_integrity()?;
+    // Old previews allowed deleting a building's native cells without
+    // updating its prefab record. Fix only metadata on import; never repaint.
+    project.world.reconcile_prefab_snapshots();
     project.world.check_integrity()?;
     Ok(project.world)
 }
@@ -133,6 +137,26 @@ mod tests {
         save(&p,&w).unwrap();
         assert_eq!(load(&p).unwrap(),w);
         let _=fs::remove_file(p);
+    }
+    #[test]
+    fn legacy_erased_building_cells_are_detached_without_repainting(){
+        let mut world=World::new();
+        let id=world.add_map("Legacy",crate::model::GridPoint::new(0,0),24,24).unwrap();
+        let pair=crate::tiles::pair(crate::tiles::DEFAULT_PAIR).unwrap();
+        world.set_map_tileset(id,pair.key).unwrap();
+        let prefab=&crate::prefabs::emerald()[crate::prefabs::compatible_indices(pair)[0]];
+        world.try_paint_prefab(crate::model::GridPoint::new(3,3),prefab).unwrap();
+        let original_stamps=world.prefab_instances[0].stamps.len();
+        let stamp=world.prefab_instances[0].stamps[0].clone();
+        // Simulate the old APK bypassing reference synchronization.
+        let map=&mut world.maps[0];
+        let index=map.index(3+stamp.x,3+stamp.y).unwrap();
+        map.cells[index]=None;
+        let bytes=serde_json::to_vec(&Project::new(world)).unwrap();
+        let loaded=decode(&bytes).unwrap();
+        assert_eq!(loaded.prefab_instances[0].stamps.len(),original_stamps-1);
+        assert!(loaded.maps[0].cell(3+stamp.x,3+stamp.y).is_none());
+        loaded.check_integrity().unwrap();
     }
     #[test]
     fn mismatched_schema_is_not_silently_replaced() {
