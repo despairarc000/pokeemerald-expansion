@@ -16,7 +16,10 @@ ATLAS_DIR = Path(sys.argv[2])
 OUTPUT = Path(sys.argv[3])
 THUMB = 96
 COLS = 8
-SOURCE = json.loads((ROOT / "tools/map-studio/assets/porymap-emerald-prefabs.json").read_text())
+ORIGINAL = json.loads((ROOT / "tools/map-studio/assets/porymap-emerald-prefabs.json").read_text())
+assert len(ORIGINAL) == 71
+ENVIRONMENT = json.loads(Path(sys.argv[4]).read_text())
+SOURCE = ORIGINAL + ENVIRONMENT
 CATALOG = json.loads((ATLAS_DIR / "catalog.json").read_text())["pairs"]
 available = {item["key"]: item for item in CATALOG}
 
@@ -71,12 +74,15 @@ for index, prefab in enumerate(SOURCE):
             x=(index%COLS)*THUMB+(THUMB-w)//2
             y=(index//COLS)*THUMB+(THUMB-h)//2
             output.alpha_composite(art,(x,y))
-    entries.append({"index":index,"name":prefab["name"],"pair_key":key,
+    entries.append({"index":index,"name":prefab["name"],"asset_id":prefab.get("asset_id",f"emerald:porymap:{index:03d}"),"pair_key":key,
                     "preview_ready":bool(ready)})
 OUTPUT.parent.mkdir(parents=True,exist_ok=True)
 output.save(OUTPUT,optimize=True)
 manifest=OUTPUT.with_suffix(".json")
 manifest.write_text(json.dumps({"source":"Porymap Emerald","entries":entries},indent=2))
-if len(entries)!=71:
-    raise SystemExit("Expected 71 upstream Porymap Emerald prefabs")
-print(f"Built native Emerald prefab thumbnails: {sum(x['preview_ready'] for x in entries)}/{len(entries)}")
+if len(entries) != len(ORIGINAL) + len(ENVIRONMENT):
+    raise SystemExit("Missing source-backed environmental thumbnails")
+if len(ENVIRONMENT) < 10:
+    raise SystemExit("Expected native environmental source recipes")
+print(f"Built native Emerald prefab thumbnails: {sum(x['preview_ready'] for x in entries)}/{len(entries)} "
+      f"(71 upstream + {len(ENVIRONMENT)} native environment regions)")
