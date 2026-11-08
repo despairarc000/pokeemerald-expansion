@@ -2694,6 +2694,19 @@ impl MapStudioApp {
             }
         }
     }
+    /// Android's native egui window does not reliably expose a long-press
+    /// text-selection menu. Keep paste a direct, deliberate user action.
+    #[cfg(target_os="android")]
+    fn paste_android_field(target:&mut String,status:&mut String){
+        match crate::android_export::read_clipboard_text(){
+            Ok(text)=>{
+                *target=text;
+                *status="Text pasted from Android clipboard".into();
+            }
+            Err(err)=>*status=format!("Paste unavailable: {err}"),
+        }
+    }
+
     fn github_sync_dialog(&mut self,ctx:&egui::Context){
         if !self.github_window_open{return;}
         let mut open=true;
@@ -2706,10 +2719,41 @@ impl MapStudioApp {
                         &project.project_id[..8]));
                 }else{ui.label("No project available");}
                 ui.label("Project repository (owner/repo)");
+                #[cfg(target_os="android")]
+                ui.horizontal(|ui|{
+                    let width=(ui.available_width()-65.0).max(85.0);
+                    ui.add(egui::TextEdit::singleline(&mut self.github_repository)
+                        .desired_width(width));
+                    if ui.small_button("Paste").clicked(){
+                        Self::paste_android_field(&mut self.github_repository,&mut self.message);
+                    }
+                });
+                #[cfg(not(target_os="android"))]
                 ui.text_edit_singleline(&mut self.github_repository);
                 ui.label("Branch");
+                #[cfg(target_os="android")]
+                ui.horizontal(|ui|{
+                    let width=(ui.available_width()-65.0).max(85.0);
+                    ui.add(egui::TextEdit::singleline(&mut self.github_branch)
+                        .desired_width(width));
+                    if ui.small_button("Paste").clicked(){
+                        Self::paste_android_field(&mut self.github_branch,&mut self.message);
+                    }
+                });
+                #[cfg(not(target_os="android"))]
                 ui.text_edit_singleline(&mut self.github_branch);
                 ui.label("Fine-grained GitHub token (only needed for private pull or publish)");
+                #[cfg(target_os="android")]
+                ui.horizontal(|ui|{
+                    let width=(ui.available_width()-65.0).max(85.0);
+                    ui.add(egui::TextEdit::singleline(&mut self.github_token)
+                        .password(true).hint_text("Token is never saved")
+                        .desired_width(width));
+                    if ui.small_button("Paste").clicked(){
+                        Self::paste_android_field(&mut self.github_token,&mut self.message);
+                    }
+                });
+                #[cfg(not(target_os="android"))]
                 ui.add(egui::TextEdit::singleline(&mut self.github_token)
                     .password(true).hint_text("Token is never saved"));
                 ui.checkbox(&mut self.github_auto_pull,
@@ -2732,6 +2776,16 @@ impl MapStudioApp {
                 });
                 ui.separator();
                 ui.label("Open a project that is already on GitHub");
+                #[cfg(target_os="android")]
+                ui.horizontal(|ui|{
+                    let width=(ui.available_width()-65.0).max(85.0);
+                    ui.add(egui::TextEdit::singleline(&mut self.github_clone_id)
+                        .hint_text("Existing project UUID").desired_width(width));
+                    if ui.small_button("Paste").clicked(){
+                        Self::paste_android_field(&mut self.github_clone_id,&mut self.message);
+                    }
+                });
+                #[cfg(not(target_os="android"))]
                 ui.add(egui::TextEdit::singleline(&mut self.github_clone_id)
                     .hint_text("Existing project UUID"));
                 if ui.add_enabled(self.github_clone_receiver.is_none()
