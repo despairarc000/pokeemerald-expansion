@@ -2184,7 +2184,8 @@ impl MapStudioApp {
             let folder=artwork::default_dir(self.save_path.as_deref())
                 .ok_or("No private artwork library directory available")?;
             let package=artwork::install(&folder,&bytes)?;
-            let packs=artwork::load_installed(&folder);
+            let mut packs=artwork::builtin_reference_packs();
+            packs.extend(artwork::load_installed(&folder));
             let index=packs.iter().position(|p|p.filename==package.filename)
                 .ok_or("Imported ZIP could not be reopened")?;
             Ok((packs,index,package.manifest.collection))
