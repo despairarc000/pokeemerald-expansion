@@ -892,7 +892,7 @@ impl MapStudioApp {
     fn artwork_selectors(&mut self,ui:&mut egui::Ui){
         let collection=if let Some(index)=self.active_pack {
             self.installed_packs.get(index).map(|p|
-                format!("{} · {}",p.manifest.engine,p.manifest.collection))
+                p.manifest.collection.clone())
                 .unwrap_or_else(||self.browsing_pair().collection.to_string())
         }else{self.browsing_pair().collection.to_string()};
         let mut choices=vec![
@@ -923,8 +923,11 @@ impl MapStudioApp {
                                     self.request_tileset(first.key);
                                 }
                             }
-                            self.message=if self.active_pack.is_some(){
-                                "Imported artwork preview; only verified native source is paintable".into()
+                            self.message=if let Some(index)=self.active_pack{
+                                if self.installed_packs.get(index)
+                                    .is_some_and(|p|p.embedded_archive.is_some()){
+                                    format!("Built-in {label}: preview only until native engine integration")
+                                }else{"Imported artwork preview; source validation needed for painting".into()}
                             }else{format!("Built-in {label} source artwork")};
                             ui.close();
                         }
@@ -1269,7 +1272,11 @@ impl MapStudioApp {
             for (prefab,_) in displayed{
                 Self::prefab_card(ui,prefab,texture,false,false);
             }
-            ui.small("Imported prefab previews are read-only until native conversion.");
+            if package.embedded_archive.is_some(){
+                ui.small("Built-in source prefabs · preview until game-side conversion is verified.");
+            }else{
+                ui.small("Imported prefab previews are read-only until native conversion.");
+            }
             return;
         }
         let pair=self.browsing_pair();
