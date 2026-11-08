@@ -456,3 +456,18 @@ not cargo-apk's unaligned intermediate.
 - See [artwork library architecture and provenance](docs/ARTWORK_LIBRARY_V1.md)
   for compatibility guarantees, all researched external sources, and work
   remaining before FireRed/Unbound artwork can be inserted into Emerald.
+
+## Additional built-in art after v0.17
+
+The current development branch now bundles **Emerald**, **FireRed/LeafGreen**,
+**Ruby** and **ORAS Style** in the APK. The latter two are source-complete,
+offline, browseable and exportable source packs, not user-imported placeholders:
+Ruby contains Petalburg/Mauville/Rustboro reference pairs with verified source
+IDs and Porymap prefab data; ORAS contains the same three towns using LeoB's
+credited artwork from Team Aqua's Asset Repo. Native painting remains available
+only for this fork's actual Emerald and FRLG tileset pairs. Do not silently
+paint Ruby/ORAS IDs into an Emerald map before game-side integration is proven.
+
+Do not describe a passing APK build as a full ROM export or physical-device
+test. Full extra-collection conversion and third-party tileset license checks
+are tracked in `docs/ARTWORK_LIBRARY_V1.md`.
