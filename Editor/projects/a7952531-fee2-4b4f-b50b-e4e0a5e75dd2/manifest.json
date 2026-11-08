@@ -1,0 +1,8 @@
+{
+  "manifest_version": 1,
+  "project_id": "a7952531-fee2-4b4f-b50b-e4e0a5e75dd2",
+  "name": "Untitled World",
+  "target": "emerald_expansion",
+  "target_repository": "despairarc000/pokeemerald-expansion",
+  "target_commit": null
+}
