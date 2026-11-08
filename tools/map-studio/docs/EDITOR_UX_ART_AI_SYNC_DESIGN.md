@@ -1,5 +1,114 @@
 # Map Studio: UX, source artwork, semantic editing and GitHub sync design
 
+
+## 2026-11-08 follow-up: AI mapping + live updates (current over earlier snapshot)
+
+This section supersedes the historical measurements and outdated "research only"
+status in sections below. The historical analysis remains for provenance.
+
+**Code audited:** \`tools/map-studio/src/{model,prefabs,emerald_library,tiles,ui,github_sync,android_export}.rs\`,
+\`tools/map-studio/src/bin/cli.rs\`, bundled 71 source Emerald Porymap prefabs,
+\`tools/map-studio/Cargo.toml\`, and the Android workflow.
+
+**Current facts:** v0.20 introduced synchronized prefab references and replaceable
+source-backed matrices; GitHub Sync is a whole-\`project.json\` snapshot transport
+using GitHub Contents API, SHA and ETag checks. Authenticated foreground polling
+is 15 seconds, anonymous polling 300 seconds, and remote edits cannot stream
+before they are published to GitHub. The CLI lists assets and can place/move/
+remove indexed source prefabs, but does not yet provide one structured
+discover-preview-validate-commit transaction protocol. Do not call this live
+collaboration. v0.20.1 adds *explicit Android Paste buttons* for repository,
+branch, token and clone UUID; phone verification is still pending.
+
+### Priorities and design choices
+
+1. **Real source artwork first.** The existing 71 Porymap Emerald default
+   prefabs are not a comprehensive environment library. Build a pair-specific
+   semantic catalog from native source tiles, attributes and layouts:
+   background (grass/sand/path), macro terrain (water/shore/river/cliff/tree
+   formation), structures (house/cave/gate), and micro assets (rock/lamp/
+   flowers/sign). These are *metadata categories*, not assumptions about a
+   metatile's native engine behavior. A category never substitutes a made-up
+   graphic or grants an invalid tileset conversion.
+2. **Verified matrix recipes.** A \`recipe\` references an exact native primary
+   and secondary tileset, stable asset ID, sparse \`(x,y,id,collision,elevation)\`
+   cells, optional required neighbor rules, anchors, exits and source revision.
+   Transparent/absent cells are no-op; unrecognized existing cells remain
+   unchanged. The editor should support extracting candidate repeated patterns
+   from native source maps but every bundled recipe is reviewed visually and
+   checked against the real atlas. Do not bundle ROM-hack content without
+   demonstrated source compatibility and reuse permission.
+3. **Topology for real roads and water.** Road/pond/shoreline editing should
+   operate on a semantic area or path and derive *only* source-verified corner,
+   side, junction and inner-corner tiles using a neighbor mask. When a required
+   transition is missing, say which transition is unsupported rather than
+   drawing a bogus rectangle. Preserve manual raw metatile mode as advanced.
+4. **One editing engine for AI and touch.** Each operation begins with
+   \`project_id\`, \`map_id\`, \`base_revision\`, and either a stable asset ID or
+   explicit native-pair tile data. Provide \`inspect_region\`,
+   \`search_assets\`, \`preview_transaction\`, \`apply_transaction\`,
+   \`draw_terrain\`, \`place_object\`, \`edit_object\`, \`place_event\`,
+   \`validate_map\`, \`undo_transaction\`, and \`export_project\`.
+   The same Rust validators must serve the UI, CLI and network layer.
+   Multi-step transactions are atomic, deterministic and return a machine-
+   readable diff + warnings. Agents shouldn't need to reverse-engineer UI
+   controls or guess raw ID numbers.
+5. **Live collaboration is not GitHub polling.** Split transmission into:
+   **(a)** immediate, authorized operations delivered to online devices on
+   a private WebSocket channel, with a durable per-project revision journal
+   and snapshots to recover missed messages; **(b)** GitHub checkpoints
+   written after completed transactions, using existing SHA conflict checks.
+   A GitHub push webhook -> relay -> device notification can accelerate
+   *checkpoint detection* first, but it cannot stream uncommitted AI edits.
+   Never put a GitHub token in a broadcast payload or a publicly reachable
+   client. Use a dedicated authenticated relay/project isolated from the
+   unrelated game and business backends.
+6. **Sync conflict policy:** every operation has unique \`op_id\`, map
+   revision, touched tile/object set, source pair, inverse patch and author.
+   The receiver applies idempotently and in revision order. Missing
+   revisions require resync from durable history; overlapping concurrent
+   edits require explicit conflict handling (or scoped map/region locking).
+   Offline Android edits queue locally and replay only after revision
+   validation. No silent last-writer-wins and no unreviewed remote scripts.
+7. **Simple phone UX:** fewer gallery steps; first compatible, verified,
+   useful assets; a compact native preview/ghost; one tap to place; select
+   object to move/edit/remove; explicit, reversible transitions; a small
+   connection indicator with Synced, Receiving, Pending, Offline, Conflict.
+   One project/pair is visible; no ghost placeholders or unsupported assets
+   pretending to be usable.
+
+### Acceptance simulation before declaring finished
+
+- Create a 32×32 town using a background, native paths, a *verified*
+  shoreline/pond, a house, cave access, and micro decorations; check that
+  the visual result actually resembles an Emerald location.
+- Test 71 source prefabs and all sparse holes; compare atlas render with
+  source preview and check all collision/elevation values.
+- Place, edit a roof tile, replace, move, remove and undo a prefab; verify
+  *no ghost occupancy*, stable IDs and exact underlying cell restoration.
+- Run AI commands to discover, select, preview and commit without requiring
+  magic prefab indexes or manually constructing a source-pair table.
+- While the phone is viewing the town, run 100 AI operations and record
+  operation-to-visible-pixel latency, revision ordering, frame rate, losses,
+  conflicts, duplicated events, and recovery after a disconnected session.
+  Use **measured** latency; a sub-3-second connected P95 is a desired target,
+  never a claim until proven on device and network.
+- Verify an actual GitHub-backed session, a rejected unsafe edit, an
+  intentional simultaneous user/AI conflict, a rollback, project import,
+  APK reinstall, and a game compiler/emulator export smoke test.
+- On Android specifically, test Paste on all four GitHub fields, the native
+  keyboard, small-screen split mode, closing/reopening the dialog, and ensure
+  the token stays masked and is not serialized or logged.
+
+**Recommended build order:** verify clipboard APK on phone; record asset
+inventory and renderer gaps; complete one fully usable natural terrain family
+and prefab selection flow; add structured Rust agent transactions and
+simulation fixtures; add fast webhook notification for GitHub checkpoints;
+then introduce durable WebSocket operation streams for true live map work.
+Avoid adding a separate UI for agents.
+
+
+
 **Status:** Research/design only. No APK or project data is changed by this file.
 **Evidence:** Android 15 / Samsung A06 5G screenshots supplied 2026-11-08; source audited on
 \`feature/map-studio-v0-17-artwork-library\` at map editing commit \`dd2a0c643\`.
