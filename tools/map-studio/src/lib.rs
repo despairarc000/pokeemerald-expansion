@@ -7,6 +7,7 @@ pub mod compiled;
 pub mod github_sync;
 pub mod tiles;
 pub mod prefabs;
+pub mod emerald_library;
 pub mod artwork;
 pub mod choices;
 #[cfg(target_os = "android")]
