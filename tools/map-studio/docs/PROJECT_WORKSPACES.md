@@ -43,12 +43,38 @@ FireRed export. GitHub Actions checks build the Android and desktop targets.
 
 ## Scope not yet delivered
 
-- GitHub credential pairing or a phone-to-GitHub transport: the repository
-  folders and CLI are ready, but the phone is not remotely connected.
-- Optimistic GitHub file-blob SHA conflict handling, automatically pulling
-  project revisions, secure GitHub writeback, collaboration.
+- GitHub account OAuth/device flow or fully automatic private-repo access.
+  The app currently supports **manual, in-memory fine-grained GitHub token**
+  entry. It intentionally does not save tokens on the phone, so private-repo
+  access must be authorized after each restart.
+- Actual end-to-end Android/device networking verification on both Wi-Fi and
+  mobile data and a remote GitHub integration test.
+- Live collaboration or webhook push; the app currently checks project
+  revisions periodically, using GitHub's Contents API and SHA guards.
 - FireRed-native game-source compiler, additional event types and a verified
   ROM-build/emulator smoke test.
 
 Do not report local project switching as live GitHub sync. Do not report
 generated native files as a successfully built Pokémon ROM.
+
+## GitHub sync V1 implementation
+
+In **Project → GitHub sync**, set the repository (owner/repo) and branch.
+Use a fine-grained GitHub token restricted to that repository with **Contents
+Read and Write** to publish, or **Contents Read** to pull a private repo.
+Public repos can be read anonymously at reduced rate limits; project data
+in a public repo is public too. The access token lives only in process memory
+and is never included in the project manifest, GitHub link file or sync cursor.
+
+The app publishes *only* `Editor/projects/<uuid>/manifest.json` and
+`Editor/projects/<uuid>/project.json`. The project manifest must match the
+active local project exactly before syncing. Existing file SHA is supplied
+to GitHub during update, and locally the last synced SHA-256 content hash is
+checked before applying any downloaded revision. On remote conflicts, no
+project is overwritten. Incoming valid changes are backed up before install,
+and can be auto-checked while Map Studio is open. A remote project must first
+be initialized from the phone (Publish) or have matching UUID/content.
+
+This is **not** a streaming session or direct ChatGPT-to-phone API; AI agents
+with authorized GitHub access can update the same GitHub project folder.
+Map Studio will then find the new project revision on its next check.
