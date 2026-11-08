@@ -1,5 +1,40 @@
 # Map Studio — Native Rust Android editor
 
+
+## v0.20 Editable prefab matrices (preview)
+
+This iteration makes native Emerald prefabs replaceable and fixes the v0.19
+ghost-footprint bug. Saved \`schema_version: 1\` JSON projects, source IDs,
+collision/elevation, source tileset pairs, and native map export remain unchanged.
+
+- **Place/re-place:** one prefab placement may replace another building, a
+  hand-painted tile, or a partially erased building. The complete source-backed
+  sparse matrix is checked before changing cells. Native event protection,
+  out-of-map bounds and tileset-pair compatibility remain enforced. Empty
+  matrix slots are transparent, never invented filler terrain.
+- **Ownership follows edits:** brush, stamp, eraser, bucket, collision and
+  elevation changes update optional prefab references. Fully erased or
+  replaced prefab cells no longer occupy hidden positions.
+- **Reversible replacement:** when replacing one object with another, removal
+  reveals the original underlying native cells rather than resurrecting a
+  discarded building. Customized prefab cells can move with their object.
+- **Old projects:** on JSON import, stale v0.19 prefab stamps are reconciled
+  against the actual map without repainting it. Flattened historical artwork
+  without object metadata remains native cells; identity is never guessed.
+- **Simulation:** all 71 bundled Porymap Emerald definitions were checked as
+  sparse matrices, including the transparent gaps. Regression tests cover
+  replacement, moving changed buildings, erasing, preserving events, and
+  stale-project restoration.
+
+**Unverified:** Android touchscreen behavior, CI-signed APK packaging, true
+end-to-end source export in the game compiler/emulator, shoreline autotiling,
+and fully automatic adoption of old flattened houses.
+
+This preview uses a different Android package name from v0.19 because the
+CI test-signing certificate varies. Keep the previous APK installed and
+back up/clone projects before trying this preview.
+
+
 ## v0.19 Smart Terrain and Building Objects (preview)
 
 **Emerald-only milestone; saved native metatile IDs and the existing JSON
