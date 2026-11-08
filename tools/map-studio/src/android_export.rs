@@ -56,6 +56,56 @@ pub fn safe_insets_logical(pixels_per_point:f32)->Option<(f32,f32)>{
     Some((top.max(0) as f32/scale,bottom.max(0) as f32/scale))
 }
 
+/// Explicit, user-initiated native clipboard read for egui's Android forms.
+/// The clipboard is NEVER read automatically or written to app storage.
+/// Android 12+ may display its standard "pasted from clipboard" notice.
+pub fn read_clipboard_text()->Result<String,String>{
+    let app=ANDROID_APP.get().ok_or("Android Activity unavailable")?;
+    let vm=unsafe {JavaVM::from_raw(app.vm_as_ptr().cast())}
+        .map_err(|_|"Android clipboard Java VM unavailable")?;
+    let mut env=vm.attach_current_thread()
+        .map_err(|_|"Cannot access Android clipboard thread")?;
+    // AndroidApp owns the Activity reference, as for MediaStore and insets.
+    let activity=unsafe {JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject)};
+    let result=(||->jni::errors::Result<Option<String>>{
+        let name=JObject::from(env.new_string("clipboard")?);
+        let manager=env.call_method(&activity,"getSystemService",
+            "(Ljava/lang/String;)Ljava/lang/Object;",
+            &[JValue::Object(&name)])?.l()?;
+        if manager.is_null(){return Ok(None);}
+        let clip=env.call_method(&manager,"getPrimaryClip",
+            "()Landroid/content/ClipData;",&[])?.l()?;
+        if clip.is_null(){return Ok(None);}
+        let count=env.call_method(&clip,"getItemCount","()I",&[])?.i()?;
+        if count<1{return Ok(None);}
+        let item=env.call_method(&clip,"getItemAt",
+            "(I)Landroid/content/ClipData$Item;",&[JValue::Int(0)])?.l()?;
+        let text=env.call_method(&item,"coerceToText",
+            "(Landroid/content/Context;)Ljava/lang/CharSequence;",
+            &[JValue::Object(&activity)])?.l()?;
+        if text.is_null(){return Ok(None);}
+        let java=env.call_method(&text,"toString",
+            "()Ljava/lang/String;",&[])?.l()?;
+        if java.is_null(){return Ok(None);}
+        let value:String=env.get_string(&JString::from(java))?.into();
+        Ok(Some(value))
+    })();
+    match result{
+        Ok(Some(value))=>{
+            let trimmed=value.trim();
+            if trimmed.is_empty(){return Err("Clipboard has no text".into());}
+            // A GitHub field never needs a megabyte clipboard payload.
+            if trimmed.len()>4096{return Err("Clipboard text is too long".into());}
+            Ok(trimmed.into())
+        }
+        Ok(None)=>Err("Clipboard is empty or unavailable; focus Map Studio first".into()),
+        Err(_)=>{
+            let _=env.exception_clear();
+            Err("Android denied clipboard access; keep Map Studio in the foreground".into())
+        }
+    }
+}
+
 fn put_string(env: &mut JNIEnv<'_>, values: &JObject<'_>, key: &str, value: &str)
     -> jni::errors::Result<()> {
     let k = JObject::from(env.new_string(key)?);
