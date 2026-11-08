@@ -47,6 +47,8 @@ pub struct SyncCursor {
     pub remote_sha:String,
     /// SHA-256 of the complete local project.json at last successful sync.
     pub local_hash:String,
+    #[serde(default)]
+    pub remote_etag:Option<String>,
 }
 impl SyncCursor {
     fn matches(&self,project:&ProjectManifest,link:&GithubLink)->bool{
@@ -74,7 +76,8 @@ pub struct SyncReply{
     pub local_hash:String,
     pub outcome:Result<SyncOutcome,String>,
 }
-struct RemoteFile{sha:String,bytes:Vec<u8>}
+struct RemoteFile{sha:String,bytes:Vec<u8>,etag:Option<String>}
+enum RemoteResponse{File(RemoteFile),Missing,NotModified}
 fn digest(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
 /// Hash normalized world data, not the indentation used by an AI editor.
 pub fn hash_project(bytes:&[u8])->String{
@@ -163,15 +166,24 @@ fn decode_content(v:&Value,max:usize)->Result<Vec<u8>,String>{
     if data.len()>max{return Err("Downloaded project exceeds the allowed size".into());}
     Ok(data)
 }
-fn get_file(client:&Client,link:&GithubLink,token:&str,path:&str,max:usize)
-    ->Result<Option<RemoteFile>,String>{
+fn get_file(client:&Client,link:&GithubLink,token:&str,path:&str,
+    max:usize,conditional_etag:Option<&str>)->Result<RemoteResponse,String>{
     let url=url_for(link,path)?;
-    let response=request(client,token,&url).send()
-        .map_err(|e|format!("GitHub request failed: {e}"))?;
-    if response.status()==StatusCode::NOT_FOUND{return Ok(None);}
+    let mut req=request(client,token,&url);
+    if let Some(etag)=conditional_etag{
+        if !etag.is_empty() && etag.len()<200 && !etag.contains('\n'){
+            req=req.header(reqwest::header::IF_NONE_MATCH,etag);
+        }
+    }
+    let response=req.send().map_err(|e|format!("GitHub request failed: {e}"))?;
+    if response.status()==StatusCode::NOT_MODIFIED{return Ok(RemoteResponse::NotModified);}
+    if response.status()==StatusCode::NOT_FOUND{return Ok(RemoteResponse::Missing);}
     if !response.status().is_success(){
         return Err(format!("GitHub request failed with HTTP {}",response.status()));
     }
+    let etag=response.headers().get(reqwest::header::ETAG)
+        .and_then(|v|v.to_str().ok()).filter(|e|e.len()<200)
+        .map(str::to_string);
     let v:Value=response.json().map_err(|e|format!("Parse GitHub reply: {e}"))?;
     if v["type"].as_str()!=Some("file"){return Err("GitHub path is not a regular file".into());}
     let sha=v["sha"].as_str().ok_or("GitHub file lacks SHA")?.to_string();
@@ -179,14 +191,13 @@ fn get_file(client:&Client,link:&GithubLink,token:&str,path:&str,max:usize)
         return Err("GitHub returned an invalid file SHA".into());
     }
     let size=v["size"].as_u64().ok_or("GitHub file lacks byte size")?;
-    if size>max as u64 {return Err("GitHub file exceeds Map Studio limit".into());}
+    if size>max as u64{return Err("GitHub file exceeds Map Studio limit".into());}
     let data=if v["encoding"].as_str()==Some("base64"){
         decode_content(&v,max)?
     }else{
-        // GitHub's Contents API omits inline Base64 for large files.
         fetch_blob(client,link,token,&sha,max)?
     };
-    Ok(Some(RemoteFile{sha,bytes:data}))
+    Ok(RemoteResponse::File(RemoteFile{sha,bytes:data,etag}))
 }
 fn put_file(client:&Client,link:&GithubLink,token:&str,path:&str,
     contents:&[u8],old_sha:Option<&str>)->Result<String,String>{
@@ -216,11 +227,11 @@ fn put_file(client:&Client,link:&GithubLink,token:&str,path:&str,
         .ok_or("GitHub did not return the new file SHA")?;
     Ok(sha.into())
 }
-fn cursor(project:&ProjectManifest,link:&GithubLink,sha:String,hash:String)
-    ->SyncCursor{
+fn cursor(project:&ProjectManifest,link:&GithubLink,sha:String,hash:String,
+    remote_etag:Option<String>)->SyncCursor{
     SyncCursor{
         project_id:project.project_id.clone(),repository:link.repository.clone(),
-        branch:link.branch.clone(),remote_sha:sha,local_hash:hash,
+        branch:link.branch.clone(),remote_sha:sha,local_hash:hash,remote_etag
     }
 }
 
@@ -270,8 +281,12 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
     let client=Client::builder().timeout(Duration::from_secs(25))
         .build().map_err(|e|e.to_string())?;
     let prefix=format!("Editor/projects/{}",project.project_id);
-    let remote_manifest=get_file(&client,&link,&token,
-        &format!("{prefix}/manifest.json"),8192)?;
+    let remote_manifest=match get_file(&client,&link,&token,
+        &format!("{prefix}/manifest.json"),8192,None)?{
+        RemoteResponse::File(file)=>Some(file),
+        RemoteResponse::Missing=>None,
+        RemoteResponse::NotModified=>return Err("Unexpected cached manifest response".into()),
+    };
     if let Some(rm)=&remote_manifest{
         let remote_project:ProjectManifest=serde_json::from_slice(&rm.bytes)
             .map_err(|_|"Remote project manifest is invalid")?;
@@ -280,12 +295,24 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
             return Err("GitHub project ID, target or manifest differs. Refusing cross-project sync.".into());
         }
     }
-    let remote=get_file(&client,&link,&token,
-        &format!("{prefix}/project.json"),storage::MAX_PROJECT_BYTES)?;
+    let base=baseline.filter(|b|b.matches(&project,&link));
+    let conditional=if action==SyncAction::Pull{
+        base.as_ref().and_then(|b|b.remote_etag.as_deref())
+    }else{None};
+    let remote=match get_file(&client,&link,&token,
+        &format!("{prefix}/project.json"),storage::MAX_PROJECT_BYTES,conditional)?{
+        RemoteResponse::File(file)=>Some(file),
+        RemoteResponse::Missing=>None,
+        RemoteResponse::NotModified=>{
+            let pending=base.as_ref().is_some_and(|b|b.local_hash!=hash);
+            return Ok(SyncOutcome::Unchanged{cursor:None,message:
+                if pending{"Local changes are waiting to be published"}
+                else{"Already synchronized (no GitHub changes)"}.into()});
+        }
+    };
     if remote.is_some() && remote_manifest.is_none(){
         return Err("Remote project has no manifest; refusing to sync".into());
     }
-    let base=baseline.filter(|b|b.matches(&project,&link));
     match action {
         SyncAction::Pull=>{
             let Some(remote)=remote else{
@@ -297,7 +324,8 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
             let decision=assess_pull(base.as_ref(),&remote.sha,&hash,&remote_hash)?;
             match decision {
                 PullDecision::Current => return Ok(SyncOutcome::Unchanged{
-                    cursor:None,message:"Already synchronized".into()
+                    cursor:Some(cursor(&project,&link,remote.sha,remote_hash,remote.etag)),
+                    message:"Already synchronized".into()
                 }),
                 PullDecision::LocalPending => return Ok(SyncOutcome::Unchanged{
                     cursor:None,message:"Local edits are waiting to be published".into()
@@ -305,7 +333,7 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
                 PullDecision::ApplyRemote | PullDecision::Paired => {}
             }
             let _world=storage::decode(&remote.bytes)?;
-            let new_cursor=cursor(&project,&link,remote.sha,remote_hash);
+            let new_cursor=cursor(&project,&link,remote.sha,remote_hash,remote.etag);
             if decision==PullDecision::Paired{
                 return Ok(SyncOutcome::Unchanged{
                     cursor:Some(new_cursor),message:"Paired with matching GitHub project".into(),
@@ -327,19 +355,19 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
                     }
                     let sha=put_file(&client,&link,&token,
                         &format!("{prefix}/project.json"),&local_bytes,None)?;
-                    Ok(SyncOutcome::Published{cursor:cursor(&project,&link,sha,hash)})
+                    Ok(SyncOutcome::Published{cursor:cursor(&project,&link,sha,hash,None)})
                 }
                 Some(remote)=>{
                     let remote_hash=hash_project(&remote.bytes);
                     if !assess_publish(base.as_ref(),&remote.sha,&hash,&remote_hash)? {
                         return Ok(SyncOutcome::Unchanged{
-                            cursor:Some(cursor(&project,&link,remote.sha,hash)),
+                            cursor:Some(cursor(&project,&link,remote.sha,hash,remote.etag)),
                             message:"Already current on GitHub".into(),
                         });
                     }
                     let sha=put_file(&client,&link,&token,
                         &format!("{prefix}/project.json"),&local_bytes,Some(&remote.sha))?;
-                    Ok(SyncOutcome::Published{cursor:cursor(&project,&link,sha,hash)})
+                    Ok(SyncOutcome::Published{cursor:cursor(&project,&link,sha,hash,None)})
                 }
             }
         }
@@ -357,7 +385,7 @@ mod tests{
         let baseline=SyncCursor{
             project_id:uuid::Uuid::new_v4().to_string(),
             repository:"owner/repo".into(),branch:"main".into(),
-            remote_sha:"1".repeat(40),local_hash:hash_a.clone(),
+            remote_sha:"1".repeat(40),local_hash:hash_a.clone(),remote_etag:None,
         };
         assert_eq!(assess_pull(Some(&baseline),&baseline.remote_sha,
             &hash_a,&hash_a).unwrap(),PullDecision::Current);
@@ -432,7 +460,7 @@ mod tests{
         let link=GithubLink{
             repository:"example/map-projects".into(),branch:"main".into(),auto_pull:false,
         };
-        let c=cursor(&project,&link,"f".repeat(40),"a".repeat(64));
+        let c=cursor(&project,&link,"f".repeat(40),"a".repeat(64),None);
         assert!(c.matches(&project,&link));
         let mut different=link.clone();different.branch="other".into();
         assert!(!c.matches(&project,&different));
