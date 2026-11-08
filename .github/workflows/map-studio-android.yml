@@ -1,5 +1,11 @@
 name: Map Studio (Rust Android)
 
+# One build per branch: outdated commits must not exhaust CI or create
+# redundant preview APK artifacts while the editor is actively developed.
+concurrency:
+  group: map-studio-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
@@ -14,7 +20,12 @@ on:
       - feature/map-studio-v0-16-editor-controls-io-audit
       - feature/map-studio-v0-17-artwork-library
     paths:
-      - 'tools/map-studio/**'
+      - 'tools/map-studio/src/**'
+      - 'tools/map-studio/scripts/**'
+      - 'tools/map-studio/assets/**'
+      - 'tools/map-studio/tests/**'
+      - 'tools/map-studio/Cargo.toml'
+      - 'tools/map-studio/build.rs'
       - '.github/workflows/map-studio-android.yml'
   workflow_dispatch:
 
