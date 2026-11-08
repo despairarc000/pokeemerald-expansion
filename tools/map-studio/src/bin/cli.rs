@@ -1,7 +1,8 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
-use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles, emerald_terrain, emerald_library};
+use std::{env, fs::{self,OpenOptions}, path::{Path,PathBuf}};
+use serde::{Serialize,Deserialize};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles, emerald_terrain, emerald_library, transactions};
 
 const HELP:&str = "Map Studio CLI
   workspace-new <root> <name> <emerald|firered>
@@ -12,6 +13,11 @@ const HELP:&str = "Map Studio CLI
   workspace-publish <root> <project-uuid>
   new <project.json>
   inspect <project.json>
+  revision <project.json>             (native World sha256 revision)
+  inspect-region <project.json> <map-id> <x> <y> <width> <height>
+  preview-transaction <project.json> <request.json>
+  apply-transaction <project.json> <request.json>
+  undo-transaction <project.json>    (single guarded local Undo)
   add-map <project.json> <name> <x> <y> <width> <height>
   place-map <project.json> <name> <fixed-x> <fixed-y> <width> <height> <direction>
   paint <project.json> <x> <y> <metatile-id>
@@ -64,6 +70,65 @@ fn direction(raw:&str)->Result<ExpandDirection,String> {
         "lower-right"|"lr" => Ok(ExpandDirection::LowerRight),
         _ => Err("Direction must be upper-left, upper-right, lower-left or lower-right".into()),
     }
+}
+
+/// A local CLI lock prevents two independent headless agents from both
+/// committing to the same on-disk project revision at once. The GUI has its
+/// own native editing loop, so revision checks remain necessary.
+struct TransactionLock { path:PathBuf, file:Option<fs::File> }
+impl Drop for TransactionLock {
+    fn drop(&mut self) {
+        self.file.take(); // Close before unlink (also works on Windows).
+        let _=fs::remove_file(&self.path);
+    }
+}
+fn metadata_dir(path:&Path)->Result<PathBuf,String>{
+    let folder=path.parent().unwrap_or(Path::new(".")).join(".mapstudio");
+    fs::create_dir_all(&folder).map_err(|e|format!("Create transaction metadata folder: {e}"))?;
+    Ok(folder)
+}
+fn transaction_filename(path:&Path,extension:&str)->String{
+    let name=path.file_name().unwrap_or_default().to_string_lossy();
+    format!("{name}.{extension}")
+}
+fn lock_transaction(path:&Path)->Result<TransactionLock,String>{
+    let folder=metadata_dir(path)?;
+    let lockfile=folder.join(transaction_filename(path,"transaction.lock"));
+    let file=OpenOptions::new().write(true).create_new(true).open(&lockfile)
+        .map_err(|e|format!("Project transaction is already locked ({e}); never delete a live lock"))?;
+    Ok(TransactionLock{path:lockfile,file:Some(file)})
+}
+fn receipt_path(path:&Path)->Result<PathBuf,String>{
+    Ok(metadata_dir(path)?.join(transaction_filename(path,"last-transaction.json")))
+}
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LastTransaction {
+    transaction_id:String,
+    before_revision:String,
+    after_revision:String,
+    before_world:World,
+}
+fn read_request(path:&Path)->Result<transactions::TransactionRequest,String>{
+    let length=fs::metadata(path).map_err(|e|format!("Read transaction request: {e}"))?.len();
+    if length>1024*1024 {return Err("Transaction request exceeds 1 MiB".into());}
+    let bytes=fs::read(path).map_err(|e|format!("Read transaction request: {e}"))?;
+    serde_json::from_slice(&bytes).map_err(|e|format!("Parse transaction JSON: {e}"))
+}
+fn write_receipt(path:&Path,value:&LastTransaction)->Result<(),String>{
+    let receipt=receipt_path(path)?;
+    let temporary=receipt.with_extension("json.tmp");
+    let bytes=serde_json::to_vec(value)
+        .map_err(|e|format!("Encode transaction Undo: {e}"))?;
+    if bytes.len()>storage::MAX_PROJECT_BYTES {
+        return Err("Undo snapshot exceeds the project's safety limit".into());
+    }
+    fs::write(&temporary,&bytes).map_err(|e|format!("Write temporary Undo: {e}"))?;
+    if let Err(e)=fs::rename(&temporary,&receipt){
+        let _=fs::remove_file(&temporary);
+        return Err(format!("Commit Undo snapshot: {e}"));
+    }
+    Ok(())
 }
 
 fn run(args:&[String])->Result<(),String> {
@@ -187,7 +252,9 @@ fn run(args:&[String])->Result<(),String> {
             }
         }
     }
-    if matches!(action,"set-tileset"|"assets"|"assets-json"|"asset-json"|"place-asset"|"place-prefab"|"objects"
+    if matches!(action,"set-tileset"|"assets"|"assets-json"|"asset-json"|"place-asset"
+        |"preview-transaction"|"apply-transaction"|"undo-transaction"
+        |"place-prefab"|"objects"
         |"move-prefab"|"remove-prefab"|"walkway"){
         if project.file_name().is_some_and(|name|name=="project.json"){
             let manifest_path=project.with_file_name("manifest.json");
@@ -203,6 +270,85 @@ fn run(args:&[String])->Result<(),String> {
                 }
             }
         }
+    }
+    // Structured machine-readable protocol for AI agents. These commands
+    // never bypass the native World model: only prepare() may execute edits,
+    // and it works on a cloned draft until every step succeeds.
+    if matches!(action,"revision"|"inspect-region"|"preview-transaction"
+                       |"apply-transaction"|"undo-transaction") {
+        let _lock=if matches!(action,"apply-transaction"|"undo-transaction"){
+            Some(lock_transaction(project)?)
+        }else{None};
+        let original=storage::load(project)?;
+        match action {
+            "revision"=>{
+                println!("{}",serde_json::json!({
+                    "revision":transactions::revision(&original)?,
+                    "maps":original.maps.len(),
+                    "protocol_version":transactions::PROTOCOL_VERSION
+                }));
+            }
+            "inspect-region"=>{
+                let map_id:u32=int(args,3,"map-id")?;
+                let x:u32=int(args,4,"local-x")?;
+                let y:u32=int(args,5,"local-y")?;
+                let w:u32=int(args,6,"width")?;
+                let h:u32=int(args,7,"height")?;
+                let inspected=transactions::inspect_region(&original,map_id,x,y,w,h)?;
+                println!("{}",serde_json::to_string_pretty(&inspected)
+                    .map_err(|e|e.to_string())?);
+            }
+            "preview-transaction"|"apply-transaction"=>{
+                let request=read_request(Path::new(field(args,3,"transaction JSON file")?))?;
+                let prepared=transactions::prepare(&original,&request)?;
+                if action=="apply-transaction"{
+                    if prepared.report.result_revision==prepared.report.base_revision{
+                        return Err("Transaction made no changes; not writing an empty commit".into());
+                    }
+                    let undo=LastTransaction {
+                        transaction_id:request.transaction_id.clone(),
+                        before_revision:prepared.report.base_revision.clone(),
+                        after_revision:prepared.report.result_revision.clone(),
+                        before_world:original,
+                    };
+                    // Preserve the prior World before writing the new project.
+                    write_receipt(project,&undo)?;
+                    storage::save(project,&prepared.world)?;
+                }
+                let mut response=serde_json::to_value(&prepared.report)
+                    .map_err(|e|e.to_string())?;
+                response["status"]=serde_json::json!(
+                    if action=="apply-transaction"{"committed"}else{"preview_only"});
+                println!("{}",serde_json::to_string_pretty(&response)
+                    .map_err(|e|e.to_string())?);
+            }
+            "undo-transaction"=>{
+                let receipt=receipt_path(project)?;
+                let meta=fs::metadata(&receipt)
+                    .map_err(|_|"No saved local transaction Undo exists")?;
+                if meta.len()>storage::MAX_PROJECT_BYTES as u64 {
+                    return Err("Undo snapshot exceeds safe size".into());
+                }
+                let data=fs::read(&receipt).map_err(|e|format!("Read Undo: {e}"))?;
+                let undo:LastTransaction=serde_json::from_slice(&data)
+                    .map_err(|e|format!("Parse Undo: {e}"))?;
+                if transactions::revision(&original)?!=undo.after_revision {
+                    return Err("STALE_REVISION: project changed since that transaction; Undo refused".into());
+                }
+                if transactions::revision(&undo.before_world)?!=undo.before_revision {
+                    return Err("Undo snapshot failed integrity/revision verification".into());
+                }
+                storage::save(project,&undo.before_world)?;
+                fs::remove_file(&receipt).map_err(|e|format!("Remove used Undo: {e}"))?;
+                println!("{}",serde_json::json!({
+                    "status":"undone",
+                    "transaction_id":undo.transaction_id,
+                    "revision":undo.before_revision
+                }));
+            }
+            _=>unreachable!(),
+        }
+        return Ok(());
     }
     let mut world=storage::load(project)?;
     let mut changed=false;
@@ -498,6 +644,41 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transaction_preview_apply_undo_and_stale_revision_are_safe(){
+        let work=std::env::temp_dir().join(format!(
+            "mapstudio-transactions-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&work).unwrap();
+        let project=work.join("project.json");
+        let request_file=work.join("transaction.json");
+        let mut initial=World::new();
+        let id=initial.add_map("Town",GridPoint::new(0,0),20,20).unwrap();
+        initial.set_map_tileset(id,"general/lilycove").unwrap();
+        storage::save(&project,&initial).unwrap();
+        let rev=transactions::revision(&initial).unwrap();
+        let request=transactions::TransactionRequest{
+            protocol_version:transactions::PROTOCOL_VERSION,
+            transaction_id:uuid::Uuid::new_v4().to_string(),
+            base_revision:rev,
+            operations:vec![transactions::MapOperation::FillRect{
+                map_id:id,x:1,y:1,width:3,height:4,metatile_id:1
+            }],
+        };
+        fs::write(&request_file,serde_json::to_vec(&request).unwrap()).unwrap();
+        let p=project.to_string_lossy().to_string();
+        let t=request_file.to_string_lossy().to_string();
+        run(&["bin".into(),"preview-transaction".into(),p.clone(),t.clone()]).unwrap();
+        assert_eq!(storage::load(&project).unwrap(),initial);
+        run(&["bin".into(),"apply-transaction".into(),p.clone(),t.clone()]).unwrap();
+        let after=storage::load(&project).unwrap();
+        assert_ne!(after,initial);
+        assert!(run(&["bin".into(),"apply-transaction".into(),p.clone(),t]).is_err());
+        assert_eq!(storage::load(&project).unwrap(),after);
+        run(&["bin".into(),"undo-transaction".into(),p]).unwrap();
+        assert_eq!(storage::load(&project).unwrap(),initial);
+        let _=fs::remove_dir_all(&work);
+    }
+
     #[test]
     fn number_decoder_supports_hex_and_signed_positions() {
         let args=vec!["bin".into(),"paint".into(),"p".into(),"-7".into(),"12".into(),"0x170".into()];
