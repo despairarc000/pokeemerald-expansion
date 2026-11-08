@@ -145,6 +145,8 @@ pub struct MapStudioApp {
     github_retry_after:Duration,
     github_last_checked:Option<Instant>,
     github_receiver:Option<std::sync::mpsc::Receiver<github_sync::SyncReply>>,
+    github_clone_id:String,
+    github_clone_receiver:Option<std::sync::mpsc::Receiver<Result<github_sync::CloneData,String>>>,
 }
 
 impl MapStudioApp {
@@ -307,6 +309,8 @@ impl MapStudioApp {
             github_retry_after:Duration::ZERO,
             github_last_checked:None,
             github_receiver:None,
+            github_clone_id:String::new(),
+            github_clone_receiver:None,
         }
     }
 
@@ -2089,7 +2093,7 @@ impl MapStudioApp {
     }
 
     fn import_selected_as_project(&mut self){
-        if self.github_receiver.is_some(){
+        if self.github_receiver.is_some() || self.github_clone_receiver.is_some(){
             self.message="Finish the GitHub request before importing a different project".into();
             return;
         }
@@ -2122,7 +2126,7 @@ impl MapStudioApp {
     }
 
     fn restore_selected_backup(&mut self) {
-        if self.github_receiver.is_some(){
+        if self.github_receiver.is_some() || self.github_clone_receiver.is_some(){
             self.message="Finish the GitHub request before replacing the active project".into();
             return;
         }
@@ -2276,6 +2280,7 @@ impl MapStudioApp {
         self.installed_packs=packages;
         self.fit_world();
         self.github_receiver=None;
+        self.github_clone_receiver=None;
         self.github_token.clear();
         self.github_last_checked=None;
         let link=self.save_path.as_deref().and_then(|path|
@@ -2291,7 +2296,7 @@ impl MapStudioApp {
 
     fn switch_workspace_project(&mut self,id:&str){
         if self.active_project.as_ref().is_some_and(|p|p.project_id==id){return;}
-        if self.github_receiver.is_some(){
+        if self.github_receiver.is_some() || self.github_clone_receiver.is_some(){
             self.message="Finish the current GitHub request before switching projects".into();
             return;
         }
@@ -2324,7 +2329,7 @@ impl MapStudioApp {
     }
 
     fn start_new_project(&mut self){
-        if self.github_receiver.is_some(){
+        if self.github_receiver.is_some() || self.github_clone_receiver.is_some(){
             self.message="Finish the GitHub request before creating a different project".into();
             return;
         }
@@ -2420,6 +2425,79 @@ impl MapStudioApp {
             Err(err)=>self.message=format!("GitHub sync unavailable: {err}"),
         }
     }
+    fn start_github_clone(&mut self,ctx:&egui::Context){
+        if self.github_receiver.is_some() || self.github_clone_receiver.is_some(){
+            self.message="Finish current GitHub request first".into();
+            return;
+        }
+        if self.workspace.is_none(){
+            self.message="No local project workspace".into();
+            return;
+        }
+        let link=self.github_link();
+        if let Err(err)=link.validate(){
+            self.message=format!("GitHub: {err}");
+            return;
+        }
+        let target=self.github_clone_id.trim().to_string();
+        let token=self.github_token.clone();
+        let (tx,rx)=std::sync::mpsc::channel();
+        let context=ctx.clone();
+        std::thread::spawn(move||{
+            let result=github_sync::clone_remote(link,token,target);
+            let _=tx.send(result);
+            context.request_repaint();
+        });
+        self.github_clone_receiver=Some(rx);
+        self.message="Opening existing GitHub project…".into();
+    }
+    fn poll_github_clone_result(&mut self){
+        let response=self.github_clone_receiver.as_ref().map(|rx|rx.try_recv());
+        if let Some(reply)=response{
+            match reply{
+                Ok(result)=>{
+                    self.github_clone_receiver=None;
+                    let complete=(||->Result<(projects::ProjectManifest,World,PathBuf),String>{
+                        let data=result?;
+                        let store=self.workspace.as_ref().ok_or("No local workspace")?;
+                        let current=self.save_path.as_ref().ok_or("No saved active project")?;
+                        let world=storage::decode(&data.world_bytes)?;
+                        // Save current work first. Remote clone is create-only
+                        // and never replaces an existing local UUID.
+                        storage::save(current,&self.world)?;
+                        store.import_existing(&data.manifest,&world)?;
+                        let path=store.project_path(&data.manifest.project_id)?;
+                        github_sync::save_link(&path,&self.github_link())?;
+                        github_sync::save_cursor(&path,&data.cursor)?;
+                        store.activate(&data.manifest.project_id)?;
+                        Ok((data.manifest,world,path))
+                    })();
+                    match complete{
+                        Ok((manifest,world,path))=>{
+                            let token=self.github_token.clone();
+                            self.world=world;
+                            self.save_path=Some(path);
+                            self.active_project=Some(manifest.clone());
+                            self.reset_for_project_switch();
+                            self.github_token=token;
+                            self.github_clone_id.clear();
+                            self.github_window_open=false;
+                            self.message=format!(
+                                "Cloned {} from GitHub. The original project is untouched.",
+                                manifest.name);
+                        }
+                        Err(err)=>self.message=format!("GitHub clone blocked: {err}"),
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>{
+                    self.github_clone_receiver=None;
+                    self.message="GitHub clone request was interrupted".into();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty)=>{}
+            }
+        }
+    }
+
     fn poll_github_result(&mut self,ctx:&egui::Context){
         let response=self.github_receiver.as_ref().map(|rx|rx.try_recv());
         if let Some(result)=response{
@@ -2567,6 +2645,16 @@ impl MapStudioApp {
                         self.start_github_request(github_sync::SyncAction::Publish,ctx);
                     }
                 });
+                ui.separator();
+                ui.label("Open a project that is already on GitHub");
+                ui.add(egui::TextEdit::singleline(&mut self.github_clone_id)
+                    .hint_text("Existing project UUID"));
+                if ui.add_enabled(self.github_clone_receiver.is_none()
+                    && self.github_receiver.is_none(),
+                    egui::Button::new("Clone existing project")).clicked(){
+                    self.start_github_clone(ctx);
+                }
+                ui.small("Cloning creates a separate local copy with its original UUID.");
                 ui.small("Only Editor/projects/<this project's UUID>/ is synced.");
                 ui.small("Conflicting phone/GitHub changes are never silently overwritten.");
                 ui.small("Project content may be public if the selected GitHub repository is public.");
@@ -3771,6 +3859,7 @@ impl eframe::App for MapStudioApp {
         self.artwork_import_dialog(root.ctx());
         self.maybe_autosave(root.ctx());
         self.poll_github_result(root.ctx());
+        self.poll_github_clone_result();
     }
 }
 
