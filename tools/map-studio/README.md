@@ -41,6 +41,12 @@ loadable. This is a new interaction layer, not a destructive migration.
   tile attributes before any road/pond auto-tiling rules are promoted
   into the editor.
 
+**Existing project migration:** use **Project → GitHub sync → Clone existing
+project** and paste the project UUID from your previous app's
+`Editor/projects/<uuid>/` on GitHub. The new preview validates the
+remote manifest and map and creates a local copy with the **same** UUID,
+without replacing the old APK or its private saves.
+
 **Current limits:** smart road and shoreline painting, persistent
 building-as-object moves, secure one-tap GitHub device authorization,
 and a webhook-to-WebSocket live notification relay remain unfinished.
@@ -123,7 +129,7 @@ UUID project. Publishing and pulling use the GitHub Contents API with
 optimistic revision checks, local backups and 45-second authenticated
 auto-checks (5 minutes unauthenticated). Tokens remain only in memory.
 Phone-to-GitHub network behavior still needs real-device acceptance testing;
-the app cannot clone an unknown existing UUID from GitHub on first install.
+the app clones an existing UUID by explicit ID; automatic remote project discovery is not yet implemented.
 See [GitHub Sync V1](docs/GITHUB_SYNC_V1.md).
 
 ## What's implemented
