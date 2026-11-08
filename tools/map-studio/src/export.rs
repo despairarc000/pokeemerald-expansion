@@ -232,7 +232,7 @@ pub fn map_json(map:&MapFrame, world:&World) -> Value {
 }
 
 
-fn script_text(map:&MapFrame,world:&World) -> String {
+pub(crate) fn script_text(map:&MapFrame,world:&World) -> String {
     let name=map_name(map);
     let mut out=format!("{name}_MapScripts::\n\t.byte 0\n");
     for (index,e) in map.events.iter().enumerate() {
