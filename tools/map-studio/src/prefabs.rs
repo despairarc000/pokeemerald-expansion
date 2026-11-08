@@ -23,15 +23,45 @@ pub struct Prefab {
     #[serde(default)]
     pub secondary_tileset:String,
     pub metatiles:Vec<PrefabTile>,
+    /// Stable semantic ID. Legacy Porymap prefabs use their preserved index.
+    #[serde(default)]
+    pub asset_id:String,
+    #[serde(default)]
+    pub semantic_class:String,
+    /// Exact original Emerald source map and source-region coordinates.
+    #[serde(default)]
+    pub source_map:String,
 }
 
 /// Original vanilla Emerald prefabs from huderlem/porymap, LGPL-3.0.
 pub fn emerald()->&'static [Prefab]{
     static PREFABS:OnceLock<Vec<Prefab>>=OnceLock::new();
     PREFABS.get_or_init(||{
-        serde_json::from_str(include_str!("../assets/porymap-emerald-prefabs.json"))
-            .expect("Bundled Porymap prefabs must parse")
+        let mut original:Vec<Prefab>=serde_json::from_str(
+            include_str!("../assets/porymap-emerald-prefabs.json"))
+            .expect("Bundled Porymap prefabs must parse");
+        assert_eq!(original.len(),71,"Preserve every upstream Emerald index");
+        let extra:Vec<Prefab>=serde_json::from_str(include_str!(
+            concat!(env!("OUT_DIR"),"/emerald_environment_prefabs.json")))
+            .expect("Native Emerald environment matrices must parse");
+        assert!(extra.len()>=10,"Environment assets must not be empty");
+        original.extend(extra);
+        original
     })
+}
+
+/// A stable machine-readable source ID for AI agents and project manifests.
+/// The first 71 indexes remain identical to the upstream Porymap inventory.
+pub fn asset_id(index:usize)->Option<String>{
+    emerald().get(index).map(|p|if p.asset_id.is_empty(){
+        format!("emerald:porymap:{index:03}")
+    }else{p.asset_id.clone()})
+}
+pub fn by_asset_id(id:&str)->Option<(usize,&'static Prefab)>{
+    emerald().iter().enumerate()
+        .find(|(index,p)|p.asset_id==id && !id.is_empty()
+            || (p.asset_id.is_empty()
+                && format!("emerald:porymap:{index:03}")==id))
 }
 
 /// Original vanilla FireRed prefab definitions from huderlem/porymap, LGPL-3.0.
@@ -403,9 +433,30 @@ mod tests{
     }
         #[test]
     fn seventy_one_original_emerald_prefabs_are_parsed(){
-        assert_eq!(emerald().len(),71);
+        assert_eq!(emerald().len(),85);
+        assert_eq!(emerald()[0].name,"Mart");
         assert!(emerald().iter().any(|p|p.name=="Mart"));
         assert!(emerald().iter().any(|p|p.name=="Player House"));
+    }
+    #[test]
+    fn native_environment_recipes_are_pair_exact_and_keep_source_ids(){
+        let originals=emerald();
+        assert_eq!(originals.len(),85);
+        let mut ids=std::collections::HashSet::new();
+        for (i,prefab) in originals.iter().enumerate(){
+            let asset_id=asset_id(i).unwrap();
+            assert!(ids.insert(asset_id.clone()),"Duplicate stable asset ID");
+            assert_eq!(by_asset_id(&asset_id).unwrap().0,i);
+            if i>=71{
+                assert!(prefab.asset_id.starts_with("emerald:environment:"));
+                assert!(!prefab.source_map.is_empty());
+                assert!(matches!(prefab.semantic_class.as_str(),"background"|"macro"|"micro"));
+                let valid=tiles::pairs().iter().filter(|pair|
+                    pair.collection=="Emerald" && compatible(prefab,pair)).count();
+                assert!(valid>0,"Native environment recipe has no usable Emerald source: {}",prefab.name);
+                assert_eq!(prefab.metatiles.len(),(prefab.width*prefab.height) as usize);
+            }
+        }
     }
     #[test]
     fn firered_definitions_are_bundled_and_source_scoped(){
