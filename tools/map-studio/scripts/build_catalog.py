@@ -108,15 +108,14 @@ def generate(main,local,output):
             continue
         valid.append(mid)
         x=(mid%16)*16;y=(mid//16)*16
-        # Compose a static approximation of the GBA's three BG layers.
-        # All indexed zeros are transparent, but the GBA has an opaque
-        # backdrop (BG palette 0, entry 0). NORMAL metatiles also draw
-        # primary tile 0x14, palette 3, on BG3 behind the other layers.
-        # This prevents apparently missing scenery in the picker without
-        # treating arbitrary palette-bank zeros as painted pixels.
+        # V2: transparency is NOT palette-zero painted opaque.
+        # Pixel index 0 means transparent in every BG layer; the old code
+        # painted palette[0][0] opaque (magenta on many native palettes).
+        # Keep the atlas transparent so the renderer can composite the
+        # real underlying scene. NORMAL BG3 still uses the source 0x3014
+        # filler tile where its actual pixels are nontransparent.
         if 0 not in palettes or 3 not in palettes:
             raise ValueError("Primary backdrop palette missing")
-        atlas.paste((*palettes[0][0],255),(x,y,x+16,y+16))
         layer_type=(struct.unpack_from("<H",attrs[src],sub*2)[0]>>12)&15
         if layer_type==0:
             filler_index=0x14
