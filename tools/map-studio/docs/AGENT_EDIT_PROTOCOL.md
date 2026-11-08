@@ -24,6 +24,12 @@ From tools/map-studio:
     cargo run --bin map-studio-cli -- inspect-region Editor/projects/<id>/project.json 1 0 0 12 12
     cargo run --bin map-studio-cli -- render-region Editor/projects/<id>/project.json 1 0 0 12 12 preview.png
 
+The `asset-json` command returns an actual **row-major matrix**:
+`matrix[y][x]` is `null` for a transparent/unowned position or a cell
+with `metatile_id`, `collision`, and `elevation`. The asset's original
+primary/secondary tileset symbols are included separately; the selected
+map's resolved `native_pair` is shown by `inspect-region`.
+
 The origin in inspect/render commands is **map-local**, not the merged editor
 world coordinate. Inspect returns each cell's exact numeric ID, collision,
 elevation, verified named source label (if one exists), true source behavior,
@@ -57,6 +63,32 @@ request. Do not replace the "base_revision" with a Git commit SHA.
     cargo run --bin map-studio-cli -- apply-transaction project.json plan.json
     cargo run --bin map-studio-cli -- undo-transaction project.json
 
+An AI can also paint a complete rectangular region as one sparse matrix,
+without constructing hundreds of separate `paint_tile` operations:
+
+```json
+{
+  "op": "paint_matrix",
+  "map_id": 1,
+  "native_pair": "general/lilycove",
+  "x": 8,
+  "y": 10,
+  "matrix": [
+    [{"metatile_id": 1, "collision": 0, "elevation": 3}, null],
+    [{"metatile_id": 1, "collision": 0, "elevation": 3},
+     {"metatile_id": 1, "collision": 0, "elevation": 3}]
+  ]
+}
+```
+
+This operation belongs inside the transaction's `operations` array.
+Each matrix must be rectangular, up to 64 × 64 cells, and fit within
+its target map. `null` **preserves** the underlying map cell (including its
+native properties); it does not erase or invent grass. IDs and properties
+are checked against the exact native pair before any cells are painted.
+Use `preview-transaction ... after-preview.png` to see the result before
+applying it.
+
 **Preview does not save project.json.** The optional PNG is rendered from the
 proposed *draft* World, not the prior committed map. A preview report includes
 cell before/after samples, total changed-cell count, object identity changes,
@@ -86,6 +118,7 @@ a stale lock after a crashed process with human supervision.
 | create_map | name, space_id, x, y, width, height, native_pair |
 | fill_rect | map_id, x, y, width, height, metatile_id |
 | paint_tile | map_id, x, y, metatile_id; optional collision, elevation |
+| paint_matrix | map_id, native_pair, x, y, matrix: rectangular rows of null or native cell objects |
 | erase_tile | map_id, x, y |
 | set_collision | map_id, x, y, collision (0–3) |
 | set_elevation | map_id, x, y, elevation (0–15) |
