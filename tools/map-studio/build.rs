@@ -58,6 +58,17 @@ fn main() {
     let result=Command::new("python3").arg(catalog).arg(&root).arg(&atlas_folder)
         .status().expect("Python atlas catalog builder unavailable");
     assert!(result.success(),"Cannot build real tileset atlas catalog");
+    // Build one compact, source-faithful Emerald prefab sheet. A preview
+    // tile occupies the same index as its original Porymap prefab.
+    let thumb_script=root.join("tools/map-studio/scripts/build_emerald_thumbnails.py");
+    let thumb_source=root.join("tools/map-studio/assets/porymap-emerald-prefabs.json");
+    println!("cargo:rerun-if-changed={}",thumb_script.display());
+    println!("cargo:rerun-if-changed={}",thumb_source.display());
+    let thumbs=PathBuf::from(env::var("OUT_DIR").unwrap()).join("emerald_prefabs.png");
+    let preview_status=Command::new("python3").arg(thumb_script)
+        .arg(&root).arg(&atlas_folder).arg(&thumbs)
+        .status().expect("Native Emerald prefab renderer unavailable");
+    assert!(preview_status.success(),"Cannot create Emerald prefab thumbnail catalog");
     let sprite_script=root.join("tools/map-studio/scripts/build_sprites.py");
     println!("cargo:rerun-if-changed={}",sprite_script.display());
     for source in [
