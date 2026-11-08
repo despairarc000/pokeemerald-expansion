@@ -70,11 +70,9 @@ for metatile in range(COUNT):
     entries=struct.unpack_from("<8H",raw,local*16)
     x=(metatile%COLS)*16
     y=(metatile//COLS)*16
-    # Use the actual GBA backdrop and layer-type-specific NORMAL BG3
-    # filler, not palette-bank zero pixels as fake opaque scenery.
-    for py in range(y,y+16):
-        for px in range(x,x+16):
-            pix[px,py]=(*palettes[0][0],255)
+    # Source palette index zero is transparent on GBA background layers.
+    # The previous opaque palette-zero fill created bright magenta patches.
+    # Leave unset pixels transparent and draw only genuine source subtiles.
     attrs_path=(PRIMARY if metatile<512 else SECONDARY)/"metatile_attributes.bin"
     # Attributes stay in the checked-in source, parallel to metatiles.bin.
     attrs=attrs_path.read_bytes()
