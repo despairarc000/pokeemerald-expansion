@@ -542,6 +542,28 @@ impl World {
         self.prefab_instances.retain(|object|!object.stamps.is_empty());
     }
 
+    /// Batch reconciliation is important for large bucket fills. One
+    /// ownership scan handles the entire painted matrix (rather than
+    /// scanning every prefab for each individual terrain cell).
+    fn sync_prefab_painted_cells(&mut self,map_id:u32,updated:&[(u32,u32,Cell)]){
+        let changes:std::collections::HashMap<(u32,u32),Cell>=updated.iter()
+            .map(|(x,y,cell)|((*x,*y),*cell)).collect();
+        for object in &mut self.prefab_instances{
+            if object.map_id!=map_id{continue;}
+            let (ox,oy)=(object.x,object.y);
+            object.stamps.retain_mut(|stamp|{
+                if let Some(cell)=changes.get(&(ox+stamp.x,oy+stamp.y)){
+                    if stamp.before==Some(*cell){
+                        return false;
+                    }
+                    stamp.painted=*cell;
+                }
+                true
+            });
+        }
+        self.prefab_instances.retain(|object|!object.stamps.is_empty());
+    }
+
     /// Upgrade v0.19 projects containing stale snapshots left by manual edits.
     /// Never overwrite native cells while repairing their optional references.
     pub fn reconcile_prefab_snapshots(&mut self)->usize{
@@ -550,8 +572,9 @@ impl World {
         for object in objects.iter_mut(){
             let map=maps.iter().find(|m|m.id==object.map_id);
             let old=object.stamps.len();
+            let (ox,oy)=(object.x,object.y);
             object.stamps.retain(|stamp|map.is_some_and(|m|
-                m.cell(object.x+stamp.x,object.y+stamp.y)==Some(stamp.painted)));
+                m.cell(ox+stamp.x,oy+stamp.y)==Some(stamp.painted)));
             removed+=old-object.stamps.len();
         }
         objects.retain(|obj|!obj.stamps.is_empty());
@@ -585,7 +608,7 @@ impl World {
         }))
     }
 
-        pub fn assign_hidden_slot(&mut self,map_id:u32,index:usize)->Result<(),String>{
+    pub fn assign_hidden_slot(&mut self,map_id:u32,index:usize)->Result<(),String>{
         let used:Vec<String>=self.maps.iter().flat_map(|m|m.events.iter())
             .filter(|e|e.kind==EventKind::HiddenItem && !e.hidden_flag.is_empty())
             .map(|e|e.hidden_flag.clone()).collect();
@@ -894,9 +917,7 @@ impl World {
             if y+1<height{pending.push_back((x,y+1));}
         }
         let map_id=frame.id;
-        for (x,y,new) in &updated{
-            self.sync_prefab_cell(map_id,*x,*y,Some(*new));
-        }
+        self.sync_prefab_painted_cells(map_id,&updated);
         updated.len()
     }
 
