@@ -15,6 +15,7 @@ const HELP:&str = "Map Studio CLI
   inspect <project.json>
   revision <project.json>             (native World sha256 revision)
   inspect-region <project.json> <map-id> <x> <y> <width> <height>
+  render-region <project.json> <map-id> <x> <y> <width> <height> <image.png>
   preview-transaction <project.json> <request.json>
   apply-transaction <project.json> <request.json>
   undo-transaction <project.json>    (single guarded local Undo)
@@ -274,7 +275,7 @@ fn run(args:&[String])->Result<(),String> {
     // Structured machine-readable protocol for AI agents. These commands
     // never bypass the native World model: only prepare() may execute edits,
     // and it works on a cloned draft until every step succeeds.
-    if matches!(action,"revision"|"inspect-region"|"preview-transaction"
+    if matches!(action,"revision"|"inspect-region"|"render-region"|"preview-transaction"
                        |"apply-transaction"|"undo-transaction") {
         let _lock=if matches!(action,"apply-transaction"|"undo-transaction"){
             Some(lock_transaction(project)?)
@@ -298,8 +299,29 @@ fn run(args:&[String])->Result<(),String> {
                 println!("{}",serde_json::to_string_pretty(&inspected)
                     .map_err(|e|e.to_string())?);
             }
+            "render-region"=>{
+                let map_id:u32=int(args,3,"map-id")?;
+                let x:u32=int(args,4,"local-x")?;
+                let y:u32=int(args,5,"local-y")?;
+                let w:u32=int(args,6,"width")?;
+                let h:u32=int(args,7,"height")?;
+                let out=Path::new(field(args,8,"output PNG path")?);
+                let image=transactions::render_region_png(&original,map_id,x,y,w,h)?;
+                fs::write(out,&image).map_err(|e|format!("Write native map PNG: {e}"))?;
+                println!("{}",serde_json::json!({
+                    "status":"rendered","revision":transactions::revision(&original)?,
+                    "path":out.display().to_string(),"bytes":image.len(),
+                    "map_id":map_id,"origin":[x,y],"size":[w,h]
+                }));
+            }
             "preview-transaction"|"apply-transaction"=>{
                 let request=read_request(Path::new(field(args,3,"transaction JSON file")?))?;
+                if action=="apply-transaction" && args.len()!=4 {
+                    return Err("Commit takes exactly one transaction file; render separately".into());
+                }
+                if action=="preview-transaction" && args.len()!=4 && args.len()!=10 {
+                    return Err("Preview optional PNG: <map-id> <x> <y> <width> <height> <out.png>".into());
+                }
                 let prepared=transactions::prepare(&original,&request)?;
                 if action=="apply-transaction"{
                     if prepared.report.result_revision==prepared.report.base_revision{
@@ -319,6 +341,22 @@ fn run(args:&[String])->Result<(),String> {
                     .map_err(|e|e.to_string())?;
                 response["status"]=serde_json::json!(
                     if action=="apply-transaction"{"committed"}else{"preview_only"});
+                if action=="preview-transaction" && args.len()==10 {
+                    let map_id:u32=int(args,4,"map-id")?;
+                    let x:u32=int(args,5,"local-x")?;
+                    let y:u32=int(args,6,"local-y")?;
+                    let w:u32=int(args,7,"width")?;
+                    let h:u32=int(args,8,"height")?;
+                    let out=Path::new(field(args,9,"output PNG path")?);
+                    let image=transactions::render_region_png(
+                        &prepared.world,map_id,x,y,w,h)?;
+                    fs::write(out,&image)
+                        .map_err(|e|format!("Write uncommitted preview PNG: {e}"))?;
+                    response["rendered_preview"]=serde_json::json!({
+                        "path":out.display().to_string(),"bytes":image.len(),
+                        "map_id":map_id,"origin":[x,y],"size":[w,h]
+                    });
+                }
                 println!("{}",serde_json::to_string_pretty(&response)
                     .map_err(|e|e.to_string())?);
             }
@@ -651,6 +689,7 @@ mod tests {
         fs::create_dir_all(&work).unwrap();
         let project=work.join("project.json");
         let request_file=work.join("transaction.json");
+        let preview_png=work.join("preview.png");
         let mut initial=World::new();
         let id=initial.add_map("Town",GridPoint::new(0,0),20,20).unwrap();
         initial.set_map_tileset(id,"general/lilycove").unwrap();
@@ -668,6 +707,11 @@ mod tests {
         let p=project.to_string_lossy().to_string();
         let t=request_file.to_string_lossy().to_string();
         run(&["bin".into(),"preview-transaction".into(),p.clone(),t.clone()]).unwrap();
+        assert_eq!(storage::load(&project).unwrap(),initial);
+        run(&["bin".into(),"preview-transaction".into(),p.clone(),t.clone(),
+            id.to_string(),"0".into(),"0".into(),"8".into(),"8".into(),
+            preview_png.to_string_lossy().to_string()]).unwrap();
+        assert!(fs::read(&preview_png).unwrap().starts_with(b"\x89PNG"));
         assert_eq!(storage::load(&project).unwrap(),initial);
         run(&["bin".into(),"apply-transaction".into(),p.clone(),t.clone()]).unwrap();
         let after=storage::load(&project).unwrap();
