@@ -32,12 +32,12 @@ winit = { version = "0.30", default-features = false, features = ["android-nativ
 
 [package.metadata.android]
 strip = "strip"
-package = "dev.despairarc.mapstudio.artlibrarypreview"
-apk_name = "map-studio-art-library-preview"
+package = "dev.despairarc.mapstudio.projectspreview"
+apk_name = "map-studio-projects-preview"
 build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.application]
-label = "Map Studio Art Library Preview"
+label = "Map Studio Projects Preview"
 
 # Explicitly support split-screen and freeform Android activities.
 # NativeActivity receives surface/config changes without a forced restart.
