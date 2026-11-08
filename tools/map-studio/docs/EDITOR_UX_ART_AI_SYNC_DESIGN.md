@@ -308,3 +308,217 @@ not the Compiled/ map-source directory.
 - GitHub webhooks: https://docs.github.com/en/webhooks/about-webhooks
 - GitHub webhook signature verification: https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries
 - Cloudflare WebSocket Hibernation: https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/
+
+
+---
+
+## Verified implementation decisions — deeper source and packaged-APK audit
+
+**2026-11-08 second review. This section is the implementation baseline, not a completed code change.**
+
+### A. Root-cause evidence for broken atlas thumbnails (stronger than screenshots)
+
+The existing \`MapStudio-Projects-GitHub-Sync-v0.17.apk\` contains native
+\`libmap_studio.so\` with embedded, already-generated 256x1024 atlases.
+Inspecting the PNG byte streams (valid PNG chunks through IEND) produces:
+
+- 130 valid 256x1024 PNG atlases
+- 82 with **opaque** \`RGBA(255,0,255,255)\` pixels (not screenshot compression)
+- 39 with an opaque magenta pixel at atlas coordinate (0,0)
+- all 130 with transparent unpopulated source slots
+- 321,544 total opaque exact-magenta pixels among those atlases
+
+The existing \`build_catalog.py\` explicitly does:
+
+\`\`\`py
+atlas.paste((*palettes[0][0],255),(x,y,x+16,y+16))
+\`\`\`
+
+That makes palette-zero, often a magenta placeholder, an *opaque backdrop*
+before drawing subtiles. The game's \`field_camera.c\` has three layer modes;
+NORMAL uses tile \`0x3014\` in BG3, COVERED and SPLIT route the eight
+source subtiles differently. A one-image per-metatile approximation loses
+the distinction between transparent layer pixels, opaque backdrop, missing
+source graphics, and intentionally unoccupied ID slots.
+
+**Concrete fix:** preserve native atlas/tileset data but revise generation to
+emit separately testable bottom/middle/top alpha layers, a source-faithful
+composite, and an editor-friendly context preview. Never simply repaint
+all magenta to green: any magenta truly visible under the game's real
+layer composition must be flagged as a broken or incomplete source
+metatile, not covered up. The editor's guided picker must not present
+empty slots as ready-to-paint tiles. The advanced raw sheet may preserve
+the original ID positions and explicitly show holes.
+
+Run a deterministic pixel-level comparison against the fork's native
+\`DrawMetatile\` algorithm for NORMAL, COVERED and SPLIT with a handful
+of known General/Lilycove, cave and indoor IDs, including transparency
+cases and the \`0x3014\` fallback. Snapshot output at 1x and scaled nearest
+neighbor on Android. **Pass:** no unintended opaque placeholder color,
+no hidden invalid layers, real native metatile IDs unchanged.
+
+### B. A workable prefab solution that doesn't violate GBA tilesets
+
+Porymap's native prefab workflow intentionally binds prefab data to its
+primary and secondary tileset symbols (see the Porymap manual). The user
+experience can be made single-click **without pretending incompatibility
+doesn't exist**.
+
+**Default asset view:** a compact row/grid of compatible prefabs from
+the selected map, categorized by Home/Service/Civic/Nature/Paths,
+single tap selects. A unified gallery shows all other prefab entries
+immediately by scrolling, with colored-less textual source tags and an
+explicit disabled/select-other-map action. No expandable “Browse 60 more”
+and no “Load/Use” on the normal compatible path.
+
+Changing the **browser selection** is not the same as changing a painted
+map's **source tileset**. If a chosen prefab requires a different native
+pair, the editor can show its full preview and offer:
+(a) choose an existing compatible map;
+(b) make a new adjacent map with that pair;
+(c) view-only until a reviewed lossless conversion exists.
+Do not silently remap the map's existing IDs.
+
+Prefab placement must first check the complete nonempty footprint,
+map boundary, existing protected footprints, type/engine, and
+any invalid metatiles or elevation/collision. Apply all cells in a
+single transaction or apply none. Porymap-style user prefab creation
+from a rectangular map selection is the next extension; it stores
+the exact native source pair and tile values, not pixels alone.
+
+**Source test:** placement near any of four map edges, touching a
+protected object, and across a map connection must leave both
+original maps byte-for-byte unchanged when rejected.
+
+### C. Concrete Android viewport layout
+
+The current app targets SDK 35 and uses fixed \`add_space(12.0)\` on
+tall Android viewports and \`Panel::bottom(...).exact_size(20.0)\` for
+gesture inset; these are not actual OS insets. Native \`WindowInsets\`
+should be forwarded into \`egui::RawInput.safe_area_insets\` (or first
+verify the specific eframe/winit 0.37/0.30 Android backend supplies them).
+Do not both pad the native view and pad egui: one source of truth for
+safe-area measurement and density conversion (px -> egui logical points).
+Consider caption bar and display cutout in freeform mode.
+
+Top header: only two rows in the safe area. **Row 1** selected project
+menu + Undo/Redo + overflow, **row 2** Terrain/Properties/Events + Pan
+and one contextual filter control. The selected Space/map appears
+contextually rather than as a persistent third header row.
+
+Bottom palette snapped states:
+- **Peek**: only drag handle and current selected tile/prefab, about
+  52–64 logical points.
+- **Browse**: asset-type chips + a single gallery row, about
+  145–190 logical points on a standard portrait viewport.
+- **Expanded**: large, virtualized asset grid capped by available safe
+  content area, never overlaps system gestures.
+
+Only *gallery content* scrolls; the grab handle, source-pair control
+and selected asset state remain reachable. Bounded scrolling on
+split-screen and short freeform viewports takes precedence over
+preserving a fixed 280-point panel. Touch hit targets should be at least
+44–48 logical points while visual chrome may be more compact.
+
+Prefabs: precompute thumbnail textures once per source-pair/build rather
+than drawing every subtile every frame; use lazy-loading and
+row virtualization, plus NEAREST sampling for pixel art.
+
+### D. Gameplay-quality scene creation rather than a tile-ID flood
+
+The existing Eastvale Gardens map is a textbook test: it is a 32x32
+fully painted grid with ten prefab buildings and a pond, but it has no
+authored connected street system; the path “design” was green grass
+rather than validated road family. Fix via a reviewed **Lilycove Walkway
+v1** terrain brush and **Pond/shore v1** family, not by guessing paths
+from any tile with “grass” in its name.
+
+A terrain-family definition has explicit native IDs for center, 4 edges,
+4 corners, inner corners, T junctions and cross junction if available;
+each case has a source screenshot and tests against real target native
+palettes. If a required transition is missing, reject that shape or
+offer a human-reviewed alternative. No fictitious edges.
+
+A building prefab \`asset_id\` must be unique and derived from
+collection+target pair+source prefab index+source content hash, not
+the ambiguous name “House”. Store entrance/interaction tile metadata
+only after verifying each game's actual event/warp definitions.
+Maintain optional provenance against flattened \`World.maps[].cells\`;
+manual edits can invalidate/remove provenance without destroying the
+canonical tile content.
+
+Put \`plan\`, \`preview\`, \`apply\` and \`undo\` on one Rust transaction path.
+Examples: \`place_prefab\`, \`draw_road\`, \`build_pond\`,
+\`add_map_east_of\`, \`place_event\`. A transaction references
+project UUID, map ID, asset ID and base revision, validates all proposed
+tiles and constraints before mutation and gives a deterministic
+per-map cell diff. Applying one proposal must create exactly one undo
+step. No arbitrary direct JSON mutation in the AI-facing API.
+
+Quality acceptance is stricter than \`check_integrity\`: all intended
+entrances have reachable walkable paths to the town center and the
+neighboring map transition, no unplanned clipping, accurate shoreline,
+no inaccessible building entrances, correct engine target, and
+no runtime-silent unsupported scripts.
+
+### E. GitHub connectivity: concrete minimum and upgrade route
+
+**First:** leave the existing Contents API transport in place and
+improve it before deploying a server. Add per-selected-project
+\`ETag\`/conditional requests for stable files, prevent duplicate
+inflight requests and preserve SHA-constrained uploads. Show a tiny
+fixed state icon: checking/synced/local pending/conflict/auth/offline.
+Automatic publishing is opt-in after a successful atomic autosave;
+debounce strokes; never publish half-painted gestures.
+
+**Authentication:** replace repeatedly pasting a long-lived PAT with
+GitHub App **device flow**, which is compatible with a headless or
+limited-input device and supports expiring user access tokens and
+refresh-token rotation. Protect refresh credentials using Android
+Keystore-backed authenticated encryption and exclude them from
+Android backup. Keep existing manual fine-grained PAT as an optional
+advanced escape hatch, not the default UX.
+
+**Then:** if an open phone must react faster than 45-second polling,
+deploy *one* HTTPS webhook receiver + one authenticated WebSocket
+notification channel (Cloudflare Worker + Durable Object is a concrete
+candidate). Validate GitHub \`X-Hub-Signature-256\` using HMAC-SHA256,
+verify owner/repo/branch and an exact
+\`Editor/projects/<uuid>/project.json\` changed path, scope channel to
+paired project, and send only \`{project_id,commit_sha}\` signal. Phone
+pulls from GitHub and runs the same validation/conflict logic; the
+relay never stores or rewrites project JSON.
+
+**Acceptance:** verify a phone update is visible after an AI commit
+while foreground and online; no guaranteed absolute delay due GitHub
+webhook/network delivery. On connection loss, foreground resume, or
+restart, a single GitHub revision check catches missed updates; no
+permanent event subscription is required when the app is closed.
+
+### F. Release gate and scope
+
+1. **Fix the preview pipeline + atomic prefab preflight** with
+   reproducible pixel/hash fixtures. This is non-negotiable before
+   another ambitious AI town generation.
+2. **Fix insets and strip the dock** while preserving touch gestures.
+3. **Implement native Lilycove road and shoreline families** only
+   after every source-tile transition is independently inspected.
+4. **Add one transaction engine** shared by human/AI controls.
+5. **Upgrade GitHub**: reliable conditional polling and device
+   login first, optional near-real-time signal transport later.
+6. Test with the existing project JSON as read-only reference and
+   snapshot every existing map. No destructive migration or
+   cross-package uninstall. Build a separately installable preview
+   APK, publish Actions artifact and both direct/GitHub links.
+
+**Research sources**
+
+- https://grunt-lucas.github.io/porytiles-user-docs/gba-decomp-tileset-system.html
+- https://github.com/rh-hideout/pokeemerald-expansion/blob/master/src/field_camera.c
+- https://huderlem.github.io/porymap/manual/editing-map-tiles.html
+- https://developer.android.com/develop/ui/views/layout/edge-to-edge
+- https://docs.rs/egui/latest/egui/struct.InputState.html
+- https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app
+- https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api
+- https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries
+- https://developers.cloudflare.com/durable-objects/best-practices/websockets/
