@@ -426,6 +426,44 @@ pub fn inspect_region(world:&World,map_id:u32,x:u32,y:u32,width:u32,height:u32)
     })
 }
 
+/// Native source-atlas render of the requested map-local rectangle.
+/// Never infer imagery from behavior labels or use another tileset's palette.
+/// Used for committed maps AND for proposed, uncommitted transaction drafts.
+pub fn render_region_png(world:&World,map_id:u32,x:u32,y:u32,width:u32,height:u32)
+    ->Result<Vec<u8>,String>{
+    if width>128||height>128 {
+        return Err("Rendered region width and height must each be at most 128 tiles".into());
+    }
+    let _=inspect_region(world,map_id,x,y,width,height)?;
+    let map=world.maps.iter().find(|m|m.id==map_id).ok_or("Map not found")?;
+    let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+        .ok_or("Native map source pair is missing")?;
+    let atlas=image::load_from_memory(pair.atlas)
+        .map_err(|e|format!("Decode source metatile atlas: {e}"))?.to_rgba8();
+    if atlas.width()!=256||atlas.height()!=1024 {
+        return Err("Native source atlas has unexpected dimensions".into());
+    }
+    let mut out=image::RgbaImage::new(width*16,height*16);
+    for yy in 0..height {for xx in 0..width {
+        let Some(cell)=map.cell(x+xx,y+yy) else {continue;};
+        if !tiles::valid_in(pair,cell.metatile_id){
+            return Err(format!("Map {map_id} tile {},{} has no valid source art",
+                x+xx,y+yy));
+        }
+        let mid=u32::from(cell.metatile_id);
+        let sx=(mid%16)*16;
+        let sy=(mid/16)*16;
+        for py in 0..16 {for px in 0..16 {
+            let pixel=atlas.get_pixel(sx+px,sy+py);
+            if pixel[3]!=0 {out.put_pixel(xx*16+px,yy*16+py,*pixel);}
+        }}
+    }}
+    let mut bytes=std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(out).write_to(&mut bytes,image::ImageFormat::Png)
+        .map_err(|e|format!("Encode map image: {e}"))?;
+    Ok(bytes.into_inner())
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
