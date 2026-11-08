@@ -1,6 +1,42 @@
 # Map Studio — Native Rust Android editor
 
 
+## v0.22 Shared AI + human editing engine (preview)
+
+**This adds a versioned structured transaction interface to the existing
+native Rust World model; it does not create a second map format.**
+
+- AI agents can inspect any map region as exact source cells or a rendered
+  native tileset PNG. Supported commands: revision, inspect-region and
+  render-region. Source art and prefab discovery from v0.21 are retained.
+- An agent can write one JSON plan with several create-map, fill, paint,
+  erase, collision, elevation, place-asset, move/remove-object, Lilycove
+  walkway and basic sign/NPC operations.
+- preview-transaction applies the plan **only to an in-memory draft**,
+  validates it, reports changed cells and objects, and can render the
+  uncommitted result to PNG.
+- apply-transaction checks the project revision again, validates every
+  operation using existing World methods, saves atomically, and preserves
+  the previous state for a **single locally guarded Undo**. Invalid or
+  stale requests do not partially alter the original project.
+- Prefab instance UUIDs created by a transaction are deterministic
+  for the transaction ID and operation index: preview and commit have
+  the same object references and resulting revision.
+- No JSON migration. Old Emerald project cells and original Porymap
+  indexes remain intact. v0.21 environment assets remain available.
+
+See [Agent editing protocol](docs/AGENT_EDIT_PROTOCOL.md) for JSON schemas,
+exact CLI commands, supported operations, and safety limits.
+
+**Boundary:** The touchscreen UI and headless transaction layer invoke
+the same World primitives, but Android does not yet accept incoming
+remote operation messages. Live synchronization and multi-editor
+cross-device conflict resolution are the next, separate milestone.
+Native phone touch testing and full ROM/emulator verification remain.
+
+
+
+
 ## v0.21 Native Emerald environments (preview)
 
 **Artwork milestone, not a claim of full autotiling or gameplay-ready maps.**
