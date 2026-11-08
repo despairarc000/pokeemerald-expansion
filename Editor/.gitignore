@@ -1,0 +1,3 @@
+# Local device/CLI selection must not become a shared GitHub command.
+/active-project.txt
+**/*.pending
