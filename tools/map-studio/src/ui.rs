@@ -2376,7 +2376,7 @@ impl MapStudioApp {
         };
     }
     fn start_github_request(&mut self,action:github_sync::SyncAction,ctx:&egui::Context){
-        if self.github_receiver.is_some(){return;}
+        if self.github_receiver.is_some() || self.github_clone_receiver.is_some(){return;}
         // Throttle failed attempts too: a partially entered/invalid link
         // must never retrigger HTTP/validation on every egui repaint.
         self.github_last_checked=Some(Instant::now());
@@ -2574,7 +2574,7 @@ impl MapStudioApp {
         // AI changes from being overwritten. Anonymous polling remains slow
         // to respect the unauthenticated API budget.
         if (self.github_auto_pull || self.github_auto_publish)
-            && self.github_receiver.is_none()
+            && self.github_receiver.is_none() && self.github_clone_receiver.is_none()
             && self.active_project.is_some() && self.dirty_since.is_none()
             && self.before_gesture.is_none()
             && !self.github_repository.trim().is_empty(){
