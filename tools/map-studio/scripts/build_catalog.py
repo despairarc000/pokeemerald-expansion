@@ -307,3 +307,53 @@ def build_ruby_builtins():
         print(f"Ruby built-in {label}: {valid_count} metatiles and {len(compatible)} compatible prefabs")
 
 build_ruby_builtins()
+
+
+# LeoB's actual ORAS-inspired native indexed artwork, with complete
+# metatiles and palettes from Team Aqua's Asset Repo. Reference-only until
+# its IDs and game side compiler integration have passed ROM tests.
+def build_oras_builtins():
+    import zipfile
+    assets = root / "tools/map-studio/assets"
+    oras = assets / "builtin-sources/oras"
+    main = oras / "primary/general"
+    output = out.parent / "builtin_packs"
+    output.mkdir(exist_ok=True)
+    for secondary_name, label in (
+        ("petalburg", "Petalburg"),
+        ("mauville", "Mauville"),
+        ("rustboro", "Rustboro"),
+    ):
+        local = oras / "secondary" / secondary_name
+        atlas = output / f"oras_{secondary_name}.png"
+        primary_count, secondary_count, mask, valid_count = generate(main, local, atlas)
+        if valid_count < 40:
+            raise ValueError(f"ORAS {secondary_name}: only {valid_count} rendered tiles")
+        manifest = {
+            "format": "mapstudio-artwork-pack", "version": 1,
+            "collection": "ORAS Style", "engine": "pokeemerald-oras",
+            "source": "TeamAquasHideout/Team-Aquas-Asset-Repo; LeoB ORAS full tilesets",
+            "attribution": "Original ORAS-style tile art by leob0505, inspired by TheDeadHeroAlistair and Omega Ruby/Alpha Sapphire; credit maintained in CREDITS.md.",
+            "label": label, "category": "Towns",
+            "pair_key": f"oras/general/{secondary_name}",
+            "primary_symbol": "gTileset_General",
+            "secondary_symbol": "gTileset_" + "".join(part.capitalize() for part in secondary_name.split("_")),
+            "primary_count": primary_count, "secondary_count": secondary_count,
+            "valid_mask": list(mask),
+        }
+        package = output / f"oras_{secondary_name}.zip"
+        with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=True))
+            # No unverifiable prefab assembly: a tile palette is not a prefab.
+            z.writestr("prefabs.json", "[]")
+            z.write(atlas, "atlas.png")
+            for kind, folder in (("primary", main), ("secondary", local)):
+                for filename in ("tiles.png", "metatiles.bin", "metatile_attributes.bin"):
+                    z.write(folder / filename, f"{kind}/{filename}")
+                for pal in sorted((folder / "palettes").glob("*.pal")):
+                    z.write(pal, f"{kind}/palettes/{pal.name}")
+            z.write(oras / "CREDITS.md", "CREDITS.md")
+        assert len(zipfile.ZipFile(package).namelist()) <= 90
+        print(f"ORAS built-in {label}: {valid_count} actual source metatiles, source credits included")
+
+build_oras_builtins()
