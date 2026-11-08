@@ -130,3 +130,30 @@ Exchange, LeoB's ORAS-inspired art, Ruby original assets, and Johto packs.
 Those require provenance checks and complete palette/metatile conversion.
 Unbound has no verified redistributable full source collection and must not
 appear as a fake built-in.
+
+## Subsequent offline built-in source collections
+
+The app now compiles these genuine source assets **into the APK** from files
+vendored inside `tools/map-studio/assets/builtin-sources`:
+
+| Collection | Built-in scope | Prefabs | Can paint native maps? |
+| --- | --- | --- | --- |
+| Emerald | All source-resolvable Emerald layout pairs | Porymap 71 definitions; per-pair validity checked | Yes |
+| FireRed/LeafGreen | All source-resolvable FRLG layout pairs in this expansion fork | Porymap FireRed 45 definitions; per-pair validity checked | Yes |
+| Ruby | Original `pret/pokeruby` general primary + Petalburg, Mauville, Rustboro secondaries, original palettes and attributes | Porymap Ruby 55 definitions available in source; only compatible ones are embedded in each of three source packages | **Browse/export only** pending native source integration |
+| ORAS Style | LeoB/Team Aqua General primary + Petalburg, Mauville, Rustboro secondaries, original indexed assets and palettes | No authored cross-project prefabs bundled; do not label a random rectangle as one | **Browse/export only** pending native source integration |
+
+Imported art remains supported. Every built-in reference package contains real
+`atlas.png`, original `tiles.png`, original metatile binaries, native
+attributes, palettes, source credit and any verified prefab definitions.
+No network, Downloads import or installation is required to view them.
+
+The remaining Team Aqua Exchange artwork contains independently authored packs
+that need asset-by-asset review. Many rely on triple-layer or expanded metatile
+limits and cannot safely be loaded into the current two-layer Emerald game
+compiler. Pokémon Unbound is not included without source and redistribution
+permission. Do not add placeholder collection names.
+
+The editor must not reinterpret an Emerald map's native metatile IDs as Ruby
+or ORAS IDs. Reference collections intentionally reject painting until a
+corresponding game-source compiler, export and emulator smoke test exists.
