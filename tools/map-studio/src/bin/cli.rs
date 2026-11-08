@@ -155,6 +155,27 @@ fn run(args:&[String])->Result<(),String> {
         println!("Imported {} maps to {}",incoming.maps.len(),project.display());
         return Ok(());
     }
+    // Project-scoped native source operations must respect the declared GBA
+    // target. A FireRed project must never produce Emerald-layout source.
+    if matches!(action,"validate"|"export")
+        && project.file_name().is_some_and(|name|name=="project.json") {
+        let manifest_path=project.with_file_name("manifest.json");
+        if manifest_path.exists(){
+            let data=std::fs::read(&manifest_path).map_err(|e|e.to_string())?;
+            let manifest:ProjectManifest=serde_json::from_slice(&data)
+                .map_err(|e|format!("Invalid project manifest: {e}"))?;
+            manifest.validate()?;
+            let folder=project.parent().and_then(|p|p.file_name())
+                .and_then(|n|n.to_str()).ok_or("Project directory is invalid")?;
+            if manifest.project_id!=folder{
+                return Err("Project UUID and manifest identity differ".into());
+            }
+            if !manifest.target.can_export(){
+                return Err(format!("{} game-source export is not implemented",
+                    manifest.target.label()));
+            }
+        }
+    }
     let mut world=storage::load(project)?;
     let mut changed=false;
     match action {
