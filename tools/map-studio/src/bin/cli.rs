@@ -496,7 +496,9 @@ fn run(args:&[String])->Result<(),String> {
                 "name":asset.name,"width":asset.width,"height":asset.height,
                 "primary_tileset":asset.primary_tileset,
                 "secondary_tileset":asset.secondary_tileset,
-                "matrix":asset.metatiles,
+                // Rows are indexed [y][x]. Null is a transparent/untouched
+                // cell; collision/elevation are kept with every native ID.
+                "matrix":asset.matrix()?,
             }));
         }
         "place-asset" => {
