@@ -1,7 +1,7 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
 use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles, emerald_terrain};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles, emerald_terrain, emerald_library};
 
 const HELP:&str = "Map Studio CLI
   workspace-new <root> <name> <emerald|firered>
@@ -18,6 +18,9 @@ const HELP:&str = "Map Studio CLI
   tilesets <project.json>
   set-tileset <project.json> <map-id> <native-pair-key>
   assets <project.json> <map-id>
+  assets-json <project.json> <map-id>     (machine-readable compatible artwork)
+  asset-json <project.json> <asset-id>   (full native metatile matrix)
+  place-asset <project.json> <map-id> <asset-id> <local-x> <local-y>
   place-prefab <project.json> <map-id> <source-prefab-index> <local-x> <local-y>
   objects <project.json> <map-id>
   move-prefab <project.json> <map-id> <instance-uuid> <local-x> <local-y>
@@ -184,7 +187,7 @@ fn run(args:&[String])->Result<(),String> {
             }
         }
     }
-    if matches!(action,"set-tileset"|"assets"|"place-prefab"|"objects"
+    if matches!(action,"set-tileset"|"assets"|"assets-json"|"asset-json"|"place-asset"|"place-prefab"|"objects"
         |"move-prefab"|"remove-prefab"|"walkway"){
         if project.file_name().is_some_and(|name|name=="project.json"){
             let manifest_path=project.with_file_name("manifest.json");
@@ -273,6 +276,67 @@ fn run(args:&[String])->Result<(),String> {
                         prefab.primary_tileset,prefab.secondary_tileset);
                 }
             }
+        }
+        "assets-json" => {
+            let id:u32=int(args,3,"map-id")?;
+            let map=world.maps.iter().find(|m|m.id==id).ok_or("Map ID not found")?;
+            let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+                .ok_or("Unrecognized native tileset pair")?;
+            let entries=emerald_library::list(pair,emerald_library::Group::All);
+            let assets:Vec<_>=entries.into_iter().filter(|item|item.compatible)
+                .map(|item|{
+                    let asset=&prefabs::emerald()[item.index];
+                    serde_json::json!({
+                        "asset_id":prefabs::asset_id(item.index).unwrap(),
+                        "name":asset.name,
+                        "category":item.category.name(),
+                        "width":asset.width,
+                        "height":asset.height,
+                        "source_pair":pair.key,
+                        "source_map":asset.source_map,
+                        "metatile_count":asset.metatiles.len(),
+                    })
+                }).collect();
+            println!("{}",serde_json::json!({
+                "map_id":id,"native_source":pair.key,"assets":assets
+            }));
+        }
+        "asset-json" => {
+            let id=field(args,3,"stable asset ID")?;
+            let (index,asset)=prefabs::by_asset_id(id)
+                .ok_or("Unknown Emerald source-backed asset ID")?;
+            println!("{}",serde_json::json!({
+                "asset_id":id,"legacy_index":index,
+                "source_map":asset.source_map,"semantic_class":
+                    emerald_library::group_for(asset).name(),
+                "name":asset.name,"width":asset.width,"height":asset.height,
+                "primary_tileset":asset.primary_tileset,
+                "secondary_tileset":asset.secondary_tileset,
+                "matrix":asset.metatiles,
+            }));
+        }
+        "place-asset" => {
+            let id:u32=int(args,3,"map-id")?;
+            let asset_id=field(args,4,"stable asset ID")?;
+            let (index,asset)=prefabs::by_asset_id(asset_id)
+                .ok_or("Unknown Emerald source-backed asset ID")?;
+            let x:i32=coord(args,5,"local-x")?;
+            let y:i32=coord(args,6,"local-y")?;
+            let map=world.maps.iter().find(|m|m.id==id)
+                .ok_or("Map ID not found")?;
+            let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+                .ok_or("Unknown map source pair")?;
+            if pair.collection!="Emerald" || !prefabs::compatible(asset,pair){
+                return Err(format!("Asset {asset_id} is incompatible with {}",
+                    pair.key));
+            }
+            let pos=GridPoint::new(map.origin.x.checked_add(x)
+                .ok_or("Asset X coordinate overflow")?,
+                map.origin.y.checked_add(y).ok_or("Asset Y coordinate overflow")?);
+            world.active_space_id=map.space_id;
+            let n=world.try_paint_prefab(pos,asset)?;
+            changed=true;
+            println!("Placed {asset_id} (source index {index}) at map {id} ({x},{y}), {n} native cells");
         }
         "objects" => {
             let id:u32=int(args,3,"map-id")?;
@@ -485,6 +549,28 @@ mod tests {
         assert_eq!(moved.prefab_instances[0].x,20);
         run(&["bin".into(),"remove-prefab".into(),p.clone(),id.to_string(),
             uuid]).unwrap();
+        assert_eq!(storage::load(&path).unwrap(),original);
+        let _=std::fs::remove_file(path);
+    }
+    #[test]
+    fn ai_can_place_source_verified_environment_by_stable_id(){
+        let path=std::env::temp_dir().join(format!(
+            "mapstudio-assetid-{}.json",uuid::Uuid::new_v4()));
+        let mut world=World::new();
+        let id=world.add_map("Route",GridPoint::new(0,0),36,36).unwrap();
+        world.set_map_tileset(id,"general/rustboro").unwrap();
+        storage::save(&path,&world).unwrap();
+        let source=path.to_string_lossy().to_string();
+        let asset_id="emerald:environment:pond-bank-route104";
+        let args=vec!["bin".into(),"place-asset".into(),source.clone(),
+            id.to_string(),asset_id.into(),"5".into(),"6".into()];
+        run(&args).unwrap();
+        let after=storage::load(&path).unwrap();
+        assert_eq!(after.prefab_instances.len(),1);
+        assert_eq!(after.prefab_instances[0].prefab_index,73);
+        let original=after.clone();
+        assert!(run(&["bin".into(),"place-asset".into(),source.clone(),
+            id.to_string(),"unknown:asset".into(),"9".into(),"9".into()]).is_err());
         assert_eq!(storage::load(&path).unwrap(),original);
         let _=std::fs::remove_file(path);
     }
