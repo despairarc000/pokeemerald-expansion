@@ -455,6 +455,9 @@ pub struct RegionInspection {
     pub origin:[u32;2],
     pub size:[u32;2],
     pub cells:Vec<RegionCell>,
+    /// Exact row-major native cells, reusable as a paint_matrix input.
+    /// Legacy flat cells remain for existing callers and source annotations.
+    pub matrix:Vec<Vec<Option<prefabs::MatrixCell>>>,
 }
 
 pub fn inspect_region(world:&World,map_id:u32,x:u32,y:u32,width:u32,height:u32)
@@ -468,8 +471,15 @@ pub fn inspect_region(world:&World,map_id:u32,x:u32,y:u32,width:u32,height:u32)
     let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
         .ok_or("Map has unknown source pair")?;
     let mut cells=Vec::with_capacity((width*height) as usize);
+    let mut matrix=vec![vec![None;width as usize];height as usize];
     for row in y..y+height {for col in x..x+width{
         let cell=map.cell(col,row);
+        matrix[(row-y) as usize][(col-x) as usize]=cell.map(|cell|
+            prefabs::MatrixCell{
+                metatile_id:cell.metatile_id,
+                collision:cell.collision,
+                elevation:cell.elevation,
+            });
         let metatile=cell.map(|c|c.metatile_id);
         let source_label=metatile.and_then(|id|tiles::source_label_in(pair,id));
         let source_behavior=metatile.and_then(|id|tiles::behavior_name_in(pair,id));
@@ -489,7 +499,7 @@ pub fn inspect_region(world:&World,map_id:u32,x:u32,y:u32,width:u32,height:u32)
     }}
     Ok(RegionInspection{
         map_id,map_name:map.name.clone(),native_pair:pair.key.to_owned(),
-        revision:revision(world)?,origin:[x,y],size:[width,height],cells,
+        revision:revision(world)?,origin:[x,y],size:[width,height],cells,matrix,
     })
 }
 
@@ -605,6 +615,32 @@ mod tests{
             "Null must preserve preexisting background/collision");
         assert_eq!(preview.world.maps[0].cell(3,4).unwrap().metatile_id,1);
         assert_eq!(preview.world.maps[0].cell(4,5).unwrap().elevation,3);
+    }
+
+    #[test]
+    fn inspection_matrix_can_be_reused_without_slicing_native_ids(){
+        let (mut w,id)=world("general/lilycove");
+        let at=GridPoint::new(12,23);
+        assert!(w.paint_metatile(at,1));
+        assert!(w.set_collision(at,1));
+        let inspection=inspect_region(&w,id,2,3,3,2).unwrap();
+        assert_eq!(inspection.native_pair,"general/lilycove");
+        assert_eq!(inspection.matrix.len(),2);
+        assert_eq!(inspection.matrix[0].len(),3);
+        let copied=inspection.matrix[0][0].unwrap();
+        assert_eq!(copied.metatile_id,1);
+        assert_eq!(copied.collision,1);
+        assert_eq!(inspection.matrix[0][1],None);
+        let request=tx(&w,vec![MapOperation::PaintMatrix{
+            map_id:id,native_pair:inspection.native_pair,
+            x:8,y:8,matrix:inspection.matrix,
+        }]);
+        let preview=prepare(&w,&request).unwrap();
+        assert_eq!(preview.world.maps[0].cell(8,8).unwrap().metatile_id,1);
+        assert_eq!(preview.world.maps[0].cell(8,8).unwrap().collision,1);
+        assert!(preview.world.maps[0].cell(9,8).is_none(),
+            "Transparent source matrix cell must not invent a background tile");
+        assert_eq!(w.maps[0].cell(8,8),None,"Preview must be read-only");
     }
 
     #[test]
