@@ -1,5 +1,52 @@
 # Map Studio — Native Rust Android editor
 
+## v0.19 Smart Terrain and Building Objects (preview)
+
+**Emerald-only milestone; saved native metatile IDs and the existing JSON
+project schema remain usable.** The last verified APK for this milestone
+is available from the GitHub Actions artifact after CI passes.
+
+- **Source-accurate paved roads:** \`Paths\` now paints a **three-tile-wide**
+  Lilycove path with automatically chosen 3x3 native top/middle/bottom,
+  corners and joins. All nine \`0x22A–0x23C\` source tiles exist in
+  LilycoveCity and were visually checked against the actual source atlas.
+  The painter preflights the **entire** edited region, protects events,
+  buildings, cliffs and water, and can replace ordinary source grass and
+  long grass. No partial path when an obstacle blocks a stroke.
+- **Tracked Emerald buildings:** newly placed original Porymap Emerald
+  prefabs now have a stable instance UUID and saved underlay. On the
+  phone, open **Terrain → Buildings → Select placed**, tap the building,
+  then choose **Move** (tap destination top-left) or **Remove**. The
+  editor highlights the selection and the pending move footprint. Actions
+  are atomic and undoable. If you manually edit a building tile, its
+  move/removal is blocked rather than deleting the new artwork.
+- **Old maps still work:** existing \`project.json\` files have no tracked
+  prefab metadata and load as before. Previous hand-painted buildings
+  and v0.18 stamps are **not automatically adopted as movable objects**.
+  New tracked objects are stored in an optional, backwards-readable
+  world field; older APK versions may discard this field if they resave
+  that same synchronized project.
+- **Agent CLI:** \`tilesets\`, \`set-tileset\`, \`assets\`, \`place-prefab\`,
+  \`objects\`, \`move-prefab\`, \`remove-prefab\`, and \`walkway\` expose the
+  native source rules to AI agents. Numeric map tiles remain canonical,
+  while extra source provenance allows precise object operations.
+  After a map has any painted cells, switching native tileset sources
+  is blocked to prevent visual reinterpretation of identical IDs.
+- **Sync:** the existing opt-in 15-second authenticated GitHub polling,
+  ETag conditional reads and SHA conflict checks remain; no webhook
+  relay was deployed and true push is still a separate milestone.
+- **Safe preview installation:** package
+  \`dev.despairarc.mapstudio.smartterrainpreview\` is separate from
+  v0.18 because CI-signed APKs cannot be reliably installed as upgrades.
+  Clone an existing project via GitHub Sync using its original UUID.
+  Never uninstall the old preview before verifying backups and cloning.
+
+**Not implemented yet:** source-verified pond/shoreline autotiling,
+independent AI transaction previews / full planned-diff API,
+automatic adoption of previously hand-stamped buildings, full drag-to-move
+building gesture, and WebSocket notifications. Native map output still
+requires verification by the Pokémon game compiler/emulator.
+
 ## v0.18 Emerald-first rebuild (active development)
 
 The artwork picker has been **rebuilt for Emerald**, with the old
