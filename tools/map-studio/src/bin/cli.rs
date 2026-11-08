@@ -17,6 +17,9 @@ const HELP:&str = "Map Studio CLI
   paint <project.json> <x> <y> <metatile-id>
   assets <project.json> <map-id>
   place-prefab <project.json> <map-id> <source-prefab-index> <local-x> <local-y>
+  objects <project.json> <map-id>
+  move-prefab <project.json> <map-id> <instance-uuid> <local-x> <local-y>
+  remove-prefab <project.json> <map-id> <instance-uuid>
   walkway <project.json> <map-id> <local-x1> <local-y1> <local-x2> <local-y2>
   erase <project.json> <x> <y>
   fill <project.json> <map-id> <metatile-id>
@@ -188,6 +191,8 @@ fn run(args:&[String])->Result<(),String> {
                 println!("  ID={} {} at ({},{}) {}x{} painted={}/{} events={}",
                     map.id,map.name,map.origin.x,map.origin.y,map.width,map.height,
                     map.cells.iter().filter(|c|c.is_some()).count(),map.cells.len(),map.events.len());
+                let count=world.prefab_instances.iter().filter(|o|o.map_id==map.id).count();
+                println!("    Tracked source prefab objects: {count}");
             }
         }
         "add-map" => {
@@ -232,6 +237,45 @@ fn run(args:&[String])->Result<(),String> {
                         prefab.primary_tileset,prefab.secondary_tileset);
                 }
             }
+        }
+        "objects" => {
+            let id:u32=int(args,3,"map-id")?;
+            if !world.maps.iter().any(|m|m.id==id){
+                return Err("Map ID not found".into());
+            }
+            for obj in world.prefab_instances.iter().filter(|o|o.map_id==id){
+                let name=prefabs::emerald().get(obj.prefab_index)
+                    .map(|p|p.name.as_str()).unwrap_or("Source asset missing");
+                println!("{} | #{} {} | ({},{}) {}x{} | source={}/{}",
+                    obj.instance_id,obj.prefab_index,name,obj.x,obj.y,
+                    obj.width,obj.height,obj.primary_tileset,obj.secondary_tileset);
+            }
+        }
+        "move-prefab" => {
+            let id:u32=int(args,3,"map-id")?;
+            let uuid=field(args,4,"source prefab instance UUID")?;
+            let x:i32=int(args,5,"local-x")?;
+            let y:i32=int(args,6,"local-y")?;
+            let obj=world.prefab_instances.iter()
+                .find(|p|p.instance_id==uuid && p.map_id==id)
+                .ok_or("Tracked prefab instance not found in requested map")?;
+            let map=world.maps.iter().find(|m|m.id==obj.map_id).ok_or("Map not found")?;
+            let pos=GridPoint::new(map.origin.x.checked_add(x)
+                .ok_or("X coordinate overflow")?,
+                map.origin.y.checked_add(y).ok_or("Y coordinate overflow")?);
+            let count=world.move_prefab_instance(uuid,pos)?;
+            changed=true;
+            println!("Moved prefab {uuid} to ({x},{y}) · {count} native tiles");
+        }
+        "remove-prefab" => {
+            let id:u32=int(args,3,"map-id")?;
+            let uuid=field(args,4,"source prefab instance UUID")?;
+            if !world.prefab_instances.iter().any(|p|p.instance_id==uuid&&p.map_id==id){
+                return Err("Prefab instance not found in requested map".into());
+            }
+            let count=world.remove_prefab_instance(uuid)?;
+            changed=true;
+            println!("Removed prefab {uuid}, restored {count} original native tiles");
         }
         "place-prefab" => {
             let id:u32=int(args,3,"map-id")?;
@@ -359,6 +403,34 @@ mod tests {
         let args=vec!["bin".into(),"paint".into(),"p".into(),"-7".into(),"12".into(),"0x170".into()];
         assert_eq!(coord(&args,3,"x").unwrap(),-7);
         assert_eq!(int::<u16>(&args,5,"tile").unwrap(),0x170);
+    }
+    #[test]
+    fn prefab_cli_move_and_remove_preserve_original_map_data(){
+        let path=std::env::temp_dir().join(format!(
+            "mapstudio-cli-objects-{}.json",uuid::Uuid::new_v4()));
+        let mut world=World::new();
+        let id=world.add_map("Estate",GridPoint::new(0,0),40,40).unwrap();
+        world.set_map_tileset(id,"general/lilycove").unwrap();
+        storage::save(&path,&world).unwrap();
+        let original=world.clone();
+        let p=path.to_string_lossy().into_owned();
+        let pair=tiles::pair("general/lilycove").unwrap();
+        let asset_index=prefabs::compatible_indices(pair)[0];
+        let place=vec!["bin".into(),"place-prefab".into(),p.clone(),
+            id.to_string(),asset_index.to_string(),"4".into(),"4".into()];
+        run(&place).unwrap();
+        let placed=storage::load(&path).unwrap();
+        assert_eq!(placed.prefab_instances.len(),1);
+        let uuid=placed.prefab_instances[0].instance_id.clone();
+        run(&["bin".into(),"move-prefab".into(),p.clone(),id.to_string(),
+            uuid.clone(),"20".into(),"20".into()]).unwrap();
+        let moved=storage::load(&path).unwrap();
+        assert_eq!(moved.prefab_instances.len(),1);
+        assert_eq!(moved.prefab_instances[0].x,20);
+        run(&["bin".into(),"remove-prefab".into(),p.clone(),id.to_string(),
+            uuid]).unwrap();
+        assert_eq!(storage::load(&path).unwrap(),original);
+        let _=std::fs::remove_file(path);
     }
     #[test]
     fn source_prefab_cli_uses_native_full_footprint_transaction(){
