@@ -2210,6 +2210,10 @@ impl MapStudioApp {
     }
 
     fn import_selected_as_project(&mut self){
+        if self.github_receiver.is_some(){
+            self.message="Finish the GitHub request before importing a different project".into();
+            return;
+        }
         self.commit_edit();
         let result=(||->Result<(projects::ProjectManifest,World,PathBuf),String>{
             let key=self.selected_backup.as_deref().ok_or("Select a backup first")?;
@@ -2239,6 +2243,10 @@ impl MapStudioApp {
     }
 
     fn restore_selected_backup(&mut self) {
+        if self.github_receiver.is_some(){
+            self.message="Finish the GitHub request before replacing the active project".into();
+            return;
+        }
         let result=(||->Result<(),String>{
             let key=self.selected_backup.as_deref().ok_or("Select a backup first")?;
             let bytes=self.read_restore_entry(key)?;
@@ -2400,6 +2408,10 @@ impl MapStudioApp {
 
     fn switch_workspace_project(&mut self,id:&str){
         if self.active_project.as_ref().is_some_and(|p|p.project_id==id){return;}
+        if self.github_receiver.is_some(){
+            self.message="Finish the current GitHub request before switching projects".into();
+            return;
+        }
         self.commit_edit();
         let result=(||->Result<(projects::ProjectManifest,World,PathBuf),String>{
             let store=self.workspace.as_ref().ok_or("No project workspace available")?;
@@ -2429,6 +2441,10 @@ impl MapStudioApp {
     }
 
     fn start_new_project(&mut self){
+        if self.github_receiver.is_some(){
+            self.message="Finish the GitHub request before creating a different project".into();
+            return;
+        }
         self.commit_edit();
         let result=(||->Result<(projects::ProjectManifest,PathBuf),String>{
             let store=self.workspace.as_ref().ok_or("No project workspace available")?;
@@ -2542,7 +2558,13 @@ impl MapStudioApp {
                             }else{self.message=message;}
                         }
                         Ok(github_sync::SyncOutcome::Published{cursor})=>{
+                            let pending_changes=serde_json::to_vec(
+                                &storage::Project::new(self.world.clone()))
+                                .ok().is_some_and(|bytes|
+                                    github_sync::hash_project(&bytes)!=cursor.local_hash);
                             self.message=match github_sync::save_cursor(&path,&cursor){
+                                Ok(()) if pending_changes=>
+                                    "Previous snapshot published; newer phone changes still need publishing".into(),
                                 Ok(())=>"Published this project to GitHub".into(),
                                 Err(err)=>format!("Published, but local sync cursor failed: {err}"),
                             };
