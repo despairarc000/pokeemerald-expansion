@@ -2488,6 +2488,9 @@ impl MapStudioApp {
     }
     fn start_github_request(&mut self,action:github_sync::SyncAction,ctx:&egui::Context){
         if self.github_receiver.is_some(){return;}
+        // Throttle failed attempts too: a partially entered/invalid link
+        // must never retrigger HTTP/validation on every egui repaint.
+        self.github_last_checked=Some(Instant::now());
         self.commit_edit();
         let result=(||->Result<std::sync::mpsc::Receiver<github_sync::SyncReply>,String>{
             let path=self.save_path.as_ref().ok_or("No active saved project")?;
