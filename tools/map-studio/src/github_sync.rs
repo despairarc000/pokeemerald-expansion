@@ -308,8 +308,9 @@ pub fn clone_remote(link:GithubLink,token:String,project_id:String)
     let world=storage::decode(&file.bytes)?;
     world.check_integrity()?;
     let hash=hash_project(&file.bytes);
+    let remote_cursor=cursor(&manifest,&link,file.sha,hash,file.etag);
     Ok(CloneData{
-        manifest,cursor:cursor(&manifest,&link,file.sha,hash,file.etag),
+        manifest,cursor:remote_cursor,
         world_bytes:file.bytes,
     })
 }
