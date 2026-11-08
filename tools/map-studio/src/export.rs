@@ -16,7 +16,12 @@ pub fn validate(world:&World) -> Result<(), String> {
     let mut names=std::collections::HashSet::new();
     let mut pickup_slots=std::collections::HashSet::new();
     for m in &world.maps {
-        if !names.insert(map_name(m)) {return Err(format!("Duplicate Emerald map name: {}",map_name(m))); }
+        // Game map constants are uppercased; "Town" and "town" would
+        // otherwise generate the same MAP_* symbol in the GBA source.
+        let symbol=map_name(m).to_ascii_uppercase();
+        if !names.insert(symbol.clone()) {
+            return Err(format!("Duplicate native game map symbol: MAP_{symbol}"));
+        }
         let tileset=crate::tiles::pair_for(&m.primary_tileset,&m.secondary_tileset)
             .ok_or_else(||format!("{} uses an unsupported source tileset",m.name))?;
         if m.width == 0 || m.height == 0 ||
@@ -291,6 +296,15 @@ pub fn export_zip(world:&World, destination:&Path) -> Result<(),String> {
 mod tests {
     use super::*;
     use crate::model::{GridPoint,TileKind};
+    #[test]
+    fn rejects_case_insensitive_native_map_symbol_collisions(){
+        let mut world=World::new();
+        world.add_map("Town",GridPoint::new(0,0),8,8).unwrap();
+        world.add_map("town",GridPoint::new(20,0),8,8).unwrap();
+        // A case-sensitive folder name is not a distinct game map constant.
+        let err=validate(&world).unwrap_err();
+        assert!(err.contains("Duplicate native game map symbol"),"{err}");
+    }
     #[test]
     fn rejects_unpainted_and_unscripted_events() {
         let mut w=World::sample();
