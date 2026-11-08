@@ -89,6 +89,9 @@ pub struct MapStudioApp {
     prefab_atlas:egui::TextureHandle,
     prefab_group:emerald_library::Group,
     prefab_stamped_this_touch:bool,
+    prefab_select_mode:bool,
+    selected_prefab_instance:Option<String>,
+    prefab_move_target:Option<String>,
     item_atlas:egui::TextureHandle,
     atlas_cache: HashMap<String,egui::TextureHandle>,
     preferred_pair: String,
@@ -251,6 +254,9 @@ impl MapStudioApp {
             prefab_atlas,
             prefab_group:emerald_library::Group::All,
             prefab_stamped_this_touch:false,
+            prefab_select_mode:false,
+            selected_prefab_instance:None,
+            prefab_move_target:None,
             item_atlas,
             atlas_cache: HashMap::from([(tiles::DEFAULT_PAIR.to_string(),texture)]),
             preferred_pair:tiles::DEFAULT_PAIR.into(),
@@ -1211,6 +1217,50 @@ impl MapStudioApp {
     /// Unified gallery: compatible Emerald assets first, all others directly
     /// below. Every thumbnail comes from the original source-pair atlas.
     fn prefab_gallery(&mut self,ui:&mut egui::Ui,_imported:Option<usize>){
+        // Select an existing tracked prefab as one object, without touching
+        // the underlying metatiles. Moving and removal preserve originals.
+        ui.horizontal_wrapped(|ui|{
+            if ui.selectable_label(self.prefab_select_mode,"Select placed").clicked(){
+                self.prefab_select_mode=!self.prefab_select_mode;
+                self.prefab_move_target=None;
+                self.selected_prefab=None;
+                self.tool_active=!self.prefab_select_mode;
+                self.message=if self.prefab_select_mode{
+                    "Tap a newly placed building to select the whole object".into()
+                }else{"Building selection disabled".into()};
+            }
+            if let Some(obj)=self.selected_prefab_instance.clone().and_then(|id|
+                self.world.prefab_instances.iter().find(|p|p.instance_id==id)
+                    .map(|p|(id,p.prefab_index,p.x,p.y))) {
+                let (instance_id,index,x,y)=obj;
+                let name=prefabs::emerald().get(index).map(|p|p.name.as_str())
+                    .unwrap_or("Building");
+                ui.small(format!("{name} ({x},{y})"));
+                if ui.small_button("Move").clicked(){
+                    self.prefab_move_target=Some(instance_id.clone());
+                    self.prefab_select_mode=false;
+                    self.selected_prefab=None;
+                    self.message="Tap the new top-left tile of this building".into();
+                }
+                if ui.small_button("Remove").clicked(){
+                    self.begin_edit();
+                    let result=self.world.remove_prefab_instance(&instance_id);
+                    self.commit_edit();
+                    self.message=match result{
+                        Ok(_)=>"Building removed; original ground restored · Undo available".into(),
+                        Err(err)=>format!("Building unchanged: {err}"),
+                    };
+                    if self.world.prefab_instances.iter()
+                        .all(|p|p.instance_id!=instance_id){
+                        self.selected_prefab_instance=None;
+                    }
+                }
+            }
+            if self.prefab_move_target.is_some() && ui.small_button("Cancel move").clicked(){
+                self.prefab_move_target=None;
+                self.message="Building move cancelled".into();
+            }
+        });
         let current=self.current_pair();
         let entries=emerald_library::list(current,self.prefab_group);
         let ready=entries.iter().filter(|e|e.compatible).count();
@@ -1275,6 +1325,9 @@ impl MapStudioApp {
                     if response.clicked(){
                         if item.compatible {
                             self.selected_prefab=Some(item.index);
+                            self.prefab_select_mode=false;
+                            self.selected_prefab_instance=None;
+                            self.prefab_move_target=None;
                             self.selected_stamp=None;
                             self.tile_preview=None;
                             self.bucket_tool=false;
@@ -2303,6 +2356,9 @@ impl MapStudioApp {
         self.artwork_view=ArtworkView::Prefabs;
         self.prefab_group=emerald_library::Group::All;
         self.prefab_stamped_this_touch=false;
+        self.prefab_select_mode=false;
+        self.selected_prefab_instance=None;
+        self.prefab_move_target=None;
         let mut packages=artwork::builtin_reference_packs();
         packages.extend(artwork::default_dir(self.save_path.as_deref())
             .map(|path|artwork::load_installed(&path)).unwrap_or_default());
@@ -3011,6 +3067,36 @@ impl MapStudioApp {
             self.prefab_stamped_this_touch=false;
             if let Some(screen)=pointer.filter(|pos|rect.contains(*pos)) {
                 let at=self.grid_at(rect,screen);
+                if let Some(instance_id)=self.prefab_move_target.clone() {
+                    self.begin_edit();
+                    let result=self.world.move_prefab_instance(&instance_id,at);
+                    self.commit_edit();
+                    self.message=match result {
+                        Ok(_)=>{
+                            self.prefab_move_target=None;
+                            format!("Building moved to ({},{}) · Undo available",at.x,at.y)
+                        }
+                        Err(err)=>format!("Move blocked: {err} · tap another destination"),
+                    };
+                    self.gesture=CanvasGesture::Idle;
+                    return;
+                }
+                if self.prefab_select_mode && self.mode==Mode::Terrain {
+                    self.selected_cell=Some(at);
+                    self.selected_prefab_instance=self.world.map_at(at).and_then(|m|{
+                        let x=(at.x-m.origin.x) as u32;
+                        let y=(at.y-m.origin.y) as u32;
+                        self.world.tracked_prefab_at(m.id,x,y)
+                            .map(|p|p.instance_id.clone())
+                    });
+                    self.message=if self.selected_prefab_instance.is_some(){
+                        "Building selected; use Move or Remove in the prefab panel".into()
+                    }else{
+                        "No tracked building here; older tile stamps remain editable as tiles".into()
+                    };
+                    self.gesture=CanvasGesture::Idle;
+                    return;
+                }
                 self.warp_focus=None;
                 if self.warp_pick.is_some() {
                     self.gesture=CanvasGesture::PickWarp{at};
@@ -3812,6 +3898,21 @@ impl MapStudioApp {
                 }else{
                     painter.rect_stroke(frame_rect,0.0,
                         Stroke::new(1.7,col),StrokeKind::Inside);
+                }
+            }
+        }
+        if let Some(object)=self.selected_prefab_instance.as_ref().and_then(|id|
+            self.world.prefab_instances.iter().find(|p|&p.instance_id==id)){
+            if let Some(map)=self.world.maps.iter().find(|m|m.id==object.map_id){
+                let from=self.screen_at(rect,
+                    (map.origin.x as i64+object.x as i64) as f32,
+                    (map.origin.y as i64+object.y as i64) as f32);
+                let outline=Rect::from_min_size(from,
+                    vec2(object.width as f32*s,object.height as f32*s));
+                if rect.intersects(outline){
+                    painter.rect_stroke(outline,0.0,
+                        Stroke::new(2.2,Color32::from_rgb(238,166,37)),
+                        StrokeKind::Outside);
                 }
             }
         }
