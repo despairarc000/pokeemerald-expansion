@@ -33,6 +33,77 @@ pub struct Prefab {
     pub source_map:String,
 }
 
+/// A single position in an editable native metatile matrix. The tileset
+/// pair belongs to the prefab/map, not to each individual cell.
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Deserialize,Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MatrixCell {
+    pub metatile_id:u16,
+    pub collision:u8,
+    pub elevation:u8,
+}
+
+impl Prefab {
+    /// A JSON-ready row-major matrix: matrix[y][x] is a native metatile,
+    /// or null for an untouched/transparent position. No source tile is guessed.
+    pub fn matrix(&self)->Result<Vec<Vec<Option<MatrixCell>>>,String>{
+        if self.width==0 || self.height==0 || self.width>32 || self.height>32{
+            return Err("Prefab matrix dimensions must be between 1 and 32".into());
+        }
+        let mut rows=vec![vec![None;self.width as usize];self.height as usize];
+        if self.metatiles.is_empty(){
+            return Err("Prefab matrix has no authored metatiles".into());
+        }
+        for tile in &self.metatiles{
+            if tile.x>=self.width || tile.y>=self.height{
+                return Err("Prefab matrix cell exceeds its dimensions".into());
+            }
+            if tile.metatile_id>=1024 || tile.collision>3 || tile.elevation>15{
+                return Err("Prefab matrix contains invalid native tile properties".into());
+            }
+            let slot=&mut rows[tile.y as usize][tile.x as usize];
+            if slot.is_some(){
+                return Err("Prefab matrix has duplicate coordinates".into());
+            }
+            *slot=Some(MatrixCell{
+                metatile_id:tile.metatile_id,
+                collision:tile.collision,
+                elevation:tile.elevation,
+            });
+        }
+        Ok(rows)
+    }
+
+    /// Build a modified prefab from a sparse matrix while keeping its source
+    /// identity, native pair, category and provenance. Null means no tile.
+    pub fn with_matrix(&self,rows:&[Vec<Option<MatrixCell>>])->Result<Self,String>{
+        if rows.len()!=self.height as usize
+            || rows.iter().any(|r|r.len()!=self.width as usize){
+            return Err("Prefab matrix has missing or extra rows/columns".into());
+        }
+        let mut result=self.clone();
+        result.metatiles.clear();
+        for (y,row) in rows.iter().enumerate(){
+            for (x,cell) in row.iter().enumerate(){
+                let Some(cell)=cell else{continue};
+                if cell.metatile_id>=1024 || cell.collision>3 || cell.elevation>15{
+                    return Err("Prefab matrix contains invalid native tile properties".into());
+                }
+                result.metatiles.push(PrefabTile{
+                    x:x as u32,y:y as u32,
+                    metatile_id:cell.metatile_id,
+                    collision:cell.collision,
+                    elevation:cell.elevation,
+                });
+            }
+        }
+        if result.metatiles.is_empty(){
+            return Err("Prefab matrix must contain at least one metatile".into());
+        }
+        Ok(result)
+    }
+}
+
 /// Original vanilla Emerald prefabs from huderlem/porymap, LGPL-3.0.
 pub fn emerald()->&'static [Prefab]{
     static PREFABS:OnceLock<Vec<Prefab>>=OnceLock::new();
@@ -124,16 +195,17 @@ impl World {
             || local_y.checked_add(prefab.height).is_none_or(|y|y>map.height){
             return Err("The complete prefab must fit inside one map".into());
         }
-        let mut seen=std::collections::HashSet::new();
-        for tile in &prefab.metatiles{
-            if !seen.insert((tile.x,tile.y)){
-                return Err("Prefab source defines a duplicate footprint tile".into());
-            }
-            let x=local_x+tile.x;
-            let y=local_y+tile.y;
-            map.index(x,y).ok_or("Prefab tile is outside the map")?;
-            if map.events.iter().any(|e|e.x==x && e.y==y){
-                return Err("Prefab overlaps an existing event".into());
+        // A sparse matrix can contain holes. Only non-null authored cells
+        // participate in event checks and object replacement.
+        for (y,row) in prefab.matrix()?.iter().enumerate(){
+            for (x,cell) in row.iter().enumerate(){
+                if cell.is_none(){continue;}
+                let x=local_x+x as u32;
+                let y=local_y+y as u32;
+                map.index(x,y).ok_or("Prefab tile is outside the map")?;
+                if map.events.iter().any(|e|e.x==x && e.y==y){
+                    return Err("Prefab overlaps an existing event".into());
+                }
             }
         }
         Ok(())
@@ -168,21 +240,26 @@ impl World {
         let local_y=(at.y-map.origin.y) as u32;
         let mut stamps=Vec::with_capacity(prefab.metatiles.len());
         let mut changed=0;
-        for tile in &prefab.metatiles{
-            let x=local_x+tile.x;
-            let y=local_y+tile.y;
-            let previous=map.cell(x,y);
-            let mut painted=previous.unwrap_or_else(||
-                crate::model::Cell::new(crate::model::TileKind::Grass));
-            painted.metatile_id=tile.metatile_id;
-            painted.collision=tile.collision;
-            painted.elevation=tile.elevation;
-            if previous!=Some(painted){changed+=1;}
-            stamps.push(PrefabStamp{
-                x:tile.x,y:tile.y,
-                before:self.prefab_underlay(map_id,x,y),
-                painted,
-            });
+        for (y,row) in prefab.matrix()?.iter().enumerate(){
+            for (x,cell) in row.iter().enumerate(){
+                let Some(cell)=cell else{continue};
+                let tile_x=x as u32;
+                let tile_y=y as u32;
+                let x=local_x+tile_x;
+                let y=local_y+tile_y;
+                let previous=map.cell(x,y);
+                let mut painted=previous.unwrap_or_else(||
+                    crate::model::Cell::new(crate::model::TileKind::Grass));
+                painted.metatile_id=cell.metatile_id;
+                painted.collision=cell.collision;
+                painted.elevation=cell.elevation;
+                if previous!=Some(painted){changed+=1;}
+                stamps.push(PrefabStamp{
+                    x:tile_x,y:tile_y,
+                    before:self.prefab_underlay(map_id,x,y),
+                    painted,
+                });
+            }
         }
         // All checks and snapshot reads complete before changing any cell.
         // Release overlapping old references *without* painting their old
@@ -322,6 +399,46 @@ impl World {
 mod tests{
     use super::*;
     use crate::model::{GridPoint,World};
+
+    #[test]
+    fn every_native_emerald_asset_roundtrips_through_sparse_matrix(){
+        let mut transparent_positions=0usize;
+        for (index,asset) in emerald().iter().enumerate(){
+            let matrix=asset.matrix().unwrap_or_else(|err|
+                panic!("Invalid matrix for asset {index} {}: {err}",asset.name));
+            assert_eq!(matrix.len(),asset.height as usize);
+            assert!(matrix.iter().all(|row|row.len()==asset.width as usize));
+            transparent_positions+=matrix.iter().flatten().filter(|c|c.is_none()).count();
+            let json=serde_json::to_string(&matrix).unwrap();
+            let decoded:Vec<Vec<Option<MatrixCell>>>=serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded,matrix);
+            let rebuilt=asset.with_matrix(&decoded).unwrap();
+            let mut original=asset.metatiles.clone();
+            original.sort_by_key(|tile|(tile.y,tile.x));
+            assert_eq!(rebuilt.metatiles,original,
+                "Sparse roundtrip changed source artwork for asset {index}");
+        }
+        assert!(transparent_positions>0,
+            "At least one Emerald source asset must preserve transparent cells");
+    }
+
+    #[test]
+    fn matrix_edits_preserve_pair_and_reject_invalid_shapes(){
+        let source=&emerald()[1];
+        let mut rows=source.matrix().unwrap();
+        let y=rows.iter().position(|row|row.iter().any(Option::is_some)).unwrap();
+        let x=rows[y].iter().position(Option::is_some).unwrap();
+        rows[y][x]=None;
+        let edited=source.with_matrix(&rows).unwrap();
+        assert_eq!(edited.metatiles.len()+1,source.metatiles.len());
+        assert_eq!(edited.primary_tileset,source.primary_tileset);
+        assert_eq!(edited.secondary_tileset,source.secondary_tileset);
+        assert_eq!(edited.asset_id,source.asset_id);
+        assert_eq!(edited.matrix().unwrap(),rows);
+        assert!(source.with_matrix(&rows[..rows.len()-1]).is_err());
+        rows[y][x]=Some(MatrixCell{metatile_id:1024,collision:0,elevation:3});
+        assert!(source.with_matrix(&rows).is_err());
+    }
     #[test]
     fn movable_native_prefab_restores_original_ground_and_id(){
         let pair=tiles::pair("general/lilycove").unwrap();
