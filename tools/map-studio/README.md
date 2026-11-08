@@ -1,6 +1,49 @@
 # Map Studio — Native Rust Android editor
 
 
+## v0.21 Native Emerald environments (preview)
+
+**Artwork milestone, not a claim of full autotiling or gameplay-ready maps.**
+
+- The existing 71 Porymap Emerald prefabs keep their exact source indexes
+  for old project compatibility. Fourteen new native background, environment
+  and decoration **matrix recipes** are appended (85 total).
+- Recipes are extracted at build time from the fork's own Emerald map.bin
+  layouts, with the exact original primary/secondary tileset symbols,
+  metatile IDs, collision and elevation. Their source coordinates and
+  stable IDs live in \`assets/emerald-environment-regions.json\`.
+  The build verifies the expected source metatile/behavior is present.
+- Examples include genuine pond-bank sections from Routes 102 and 104,
+  a Lilycove coast and rock shelf, actual grass/tall-grass regions, trees,
+  and berry soil. They are **source-map selections**, not independently
+  complete terrain autotilers; source-neighbor transitions and game
+  movement still require visual/device tests.
+- One Android gallery combines native thumbnail previews with the original
+  buildings, organized as **Background, Environment, Buildings, Details**.
+  Incompatible assets stay visible but disabled, never remapped to another
+  source pair. A source recipe acts as one editable, replaceable prefab
+  without invisible occupancy restrictions.
+- AI/CLI: \`assets-json <project> <map-id>\` lists stable IDs and native
+  compatibility, \`asset-json <project> <asset-id>\` returns the original
+  native cell matrix, and \`place-asset <project> <map-id> <asset-id> <x> <y>\`
+  places it through the same Rust preflight as finger placement.
+  Numeric Porymap \`place-prefab\` commands remain supported.
+- GitHub Sync's explicit Android clipboard Paste buttons are retained
+  from v0.20.1. No new live synchronization service is part of this
+  artwork-focused release.
+
+**Verification:** source extraction, Rust tests, gallery generation,
+desktop compilation and APK signing are checked by GitHub Actions.
+The source gallery is published as a CI visual-audit artifact. A signed
+APK does not prove good appearance on a real phone or in the Pokémon ROM.
+
+**Compatibility:** this preview uses a separate Android package ID.
+Project schema remains \`1\`, but old previews do not understand new
+environment prefab indexes, so keep backups and do not roundtrip v0.21
+projects through an older APK.
+
+
+
 ## v0.20 Editable prefab matrices (preview)
 
 This iteration makes native Emerald prefabs replaceable and fixes the v0.19
