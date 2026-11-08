@@ -3083,12 +3083,14 @@ impl MapStudioApp {
                 }
                 if self.prefab_select_mode && self.mode==Mode::Terrain {
                     self.selected_cell=Some(at);
-                    self.selected_prefab_instance=self.world.map_at(at).and_then(|m|{
+                    let hit=self.world.map_at(at).map(|m|{
                         let x=(at.x-m.origin.x) as u32;
                         let y=(at.y-m.origin.y) as u32;
-                        self.world.tracked_prefab_at(m.id,x,y)
-                            .map(|p|p.instance_id.clone())
+                        (m.id,self.world.tracked_prefab_at(m.id,x,y)
+                            .map(|p|p.instance_id.clone()))
                     });
+                    self.selected_map=hit.as_ref().map(|v|v.0);
+                    self.selected_prefab_instance=hit.and_then(|v|v.1);
                     self.message=if self.selected_prefab_instance.is_some(){
                         "Building selected; use Move or Remove in the prefab panel".into()
                     }else{
@@ -3898,6 +3900,25 @@ impl MapStudioApp {
                 }else{
                     painter.rect_stroke(frame_rect,0.0,
                         Stroke::new(1.7,col),StrokeKind::Inside);
+                }
+            }
+        }
+        // A moving building remains unchanged until the user taps a new
+        // top-left location. Amber is a non-committal preview; actual
+        // placement validity is checked transactionally on tap.
+        if let Some(object)=self.prefab_move_target.as_ref().and_then(|id|
+            self.world.prefab_instances.iter().find(|p|&p.instance_id==id)){
+            if let Some(pointer)=ui.ctx().input(|i|i.pointer.hover_pos())
+                .filter(|p|rect.contains(*p)){
+                let at=self.grid_at(rect,pointer);
+                let top=self.screen_at(rect,at.x as f32,at.y as f32);
+                let ghost=Rect::from_min_size(top,
+                    vec2(object.width as f32*s,object.height as f32*s));
+                if rect.intersects(ghost){
+                    painter.rect_filled(ghost,0.0,
+                        Color32::from_rgba_unmultiplied(240,171,54,42));
+                    painter.rect_stroke(ghost,0.0,Stroke::new(2.0,
+                        Color32::from_rgb(235,153,28)),StrokeKind::Outside);
                 }
             }
         }
