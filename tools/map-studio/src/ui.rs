@@ -1,7 +1,7 @@
 //! Native egui map editor with an atlas of real Emerald metatiles.
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use crate::model::{Cell, EventKind, MapEvent, WarpMode, GridPoint, ExpandDirection, SpaceKind, World};
-use crate::{storage, export, tiles, choices, artwork, prefabs, projects};
+use crate::{storage, export, tiles, choices, artwork, prefabs, projects, github_sync};
 use std::{path::PathBuf, collections::HashMap, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -133,6 +133,13 @@ pub struct MapStudioApp {
     new_project_confirm: bool,
     new_project_name: String,
     new_project_target: projects::GameTarget,
+    github_window_open:bool,
+    github_repository:String,
+    github_branch:String,
+    github_token:String,
+    github_auto_pull:bool,
+    github_last_checked:Option<Instant>,
+    github_receiver:Option<std::sync::mpsc::Receiver<github_sync::SyncReply>>,
 }
 
 impl MapStudioApp {
@@ -184,6 +191,10 @@ impl MapStudioApp {
         }else{
             "Hold empty grid to draw a map · hold a map to move".to_string()
         };
+        // Only repository name and branch are persisted. The optional GitHub
+        // access token stays in RAM and must be re-entered when needed.
+        let github_link=save_path.as_deref().and_then(|path|
+            github_sync::load_link(path).ok().flatten());
         Self {
             world,
             mode: Mode::Terrain,
@@ -267,6 +278,15 @@ impl MapStudioApp {
             new_project_confirm: false,
             new_project_name: "New World".into(),
             new_project_target: projects::GameTarget::EmeraldExpansion,
+            github_window_open:false,
+            github_repository:github_link.as_ref()
+                .map(|link|link.repository.clone()).unwrap_or_default(),
+            github_branch:github_link.as_ref()
+                .map(|link|link.branch.clone()).unwrap_or_else(||"main".into()),
+            github_token:String::new(),
+            github_auto_pull:github_link.as_ref().is_some_and(|link|link.auto_pull),
+            github_last_checked:None,
+            github_receiver:None,
         }
     }
 
@@ -306,6 +326,9 @@ impl MapStudioApp {
                                 }
                             }
                         });
+                    }
+                    if ui.button("GitHub sync").clicked(){
+                        self.github_window_open=true;ui.close();
                     }
                     if ui.button("Backup JSON").clicked(){
                         self.try_backup();ui.close();
@@ -2334,6 +2357,16 @@ impl MapStudioApp {
             .map(|path|artwork::load_installed(&path)).unwrap_or_default());
         self.installed_packs=packages;
         self.fit_world();
+        self.github_receiver=None;
+        self.github_token.clear();
+        self.github_last_checked=None;
+        let link=self.save_path.as_deref().and_then(|path|
+            github_sync::load_link(path).ok().flatten());
+        self.github_repository=link.as_ref()
+            .map(|x|x.repository.clone()).unwrap_or_default();
+        self.github_branch=link.as_ref()
+            .map(|x|x.branch.clone()).unwrap_or_else(||"main".into());
+        self.github_auto_pull=link.as_ref().is_some_and(|x|x.auto_pull);
     }
 
     fn switch_workspace_project(&mut self,id:&str){
@@ -2389,6 +2422,170 @@ impl MapStudioApp {
             }
             Err(err)=>self.message=format!("New project blocked: {err}"),
         }
+    }
+
+    fn github_link(&self)->github_sync::GithubLink{
+        github_sync::GithubLink{
+            repository:self.github_repository.trim().into(),
+            branch:self.github_branch.trim().into(),
+            auto_pull:self.github_auto_pull,
+        }
+    }
+    fn save_github_settings(&mut self){
+        let result=(||->Result<(),String>{
+            let path=self.save_path.as_ref().ok_or("No active local project")?;
+            github_sync::save_link(path,&self.github_link())
+        })();
+        self.message=match result{
+            Ok(())=>"GitHub project link saved (access token not stored)".into(),
+            Err(err)=>format!("GitHub link invalid: {err}"),
+        };
+    }
+    fn start_github_request(&mut self,action:github_sync::SyncAction,ctx:&egui::Context){
+        if self.github_receiver.is_some(){return;}
+        self.commit_edit();
+        let result=(||->Result<std::sync::mpsc::Receiver<github_sync::SyncReply>,String>{
+            let path=self.save_path.as_ref().ok_or("No active saved project")?;
+            let project=self.active_project.as_ref()
+                .ok_or("Project manifest unavailable")?.clone();
+            let link=self.github_link();
+            link.validate()?;
+            if action==github_sync::SyncAction::Publish && self.github_token.trim().is_empty(){
+                return Err("Publishing requires a repository-scoped GitHub token".into());
+            }
+            // Never upload the project selector or unrelated project folders.
+            github_sync::save_link(path,&link)?;
+            storage::save(path,&self.world)?;
+            self.dirty_since=None;
+            let local_bytes=std::fs::read(path).map_err(|e|e.to_string())?;
+            let baseline=github_sync::load_cursor(path)?;
+            let access_token=self.github_token.clone();
+            let local_hash=github_sync::hash_project(&local_bytes);
+            let project_id=project.project_id.clone();
+            let (sender,receiver)=std::sync::mpsc::channel();
+            let context=ctx.clone();
+            std::thread::spawn(move||{
+                let outcome=github_sync::perform(
+                    action,link,access_token,project,local_bytes,baseline);
+                let _=sender.send(github_sync::SyncReply{
+                    project_id,local_hash,outcome,
+                });
+                context.request_repaint();
+            });
+            Ok(receiver)
+        })();
+        match result{
+            Ok(rx)=>{
+                self.github_receiver=Some(rx);
+                self.github_last_checked=Some(Instant::now());
+                self.message=match action{
+                    github_sync::SyncAction::Pull=>"Checking GitHub project revision…".into(),
+                    github_sync::SyncAction::Publish=>"Publishing active project to GitHub…".into(),
+                };
+            }
+            Err(err)=>self.message=format!("GitHub sync unavailable: {err}"),
+        }
+    }
+    fn poll_github_result(&mut self,ctx:&egui::Context){
+        let response=self.github_receiver.as_ref().map(|rx|rx.try_recv());
+        if let Some(result)=response{
+            match result{
+                Ok(reply)=>{
+                    self.github_receiver=None;
+                    if !self.active_project.as_ref().is_some_and(|p|p.project_id==reply.project_id){
+                        return;
+                    }
+                    let Some(path)=self.save_path.clone() else{return;};
+                    match reply.outcome{
+                        Err(err)=>self.message=format!("GitHub: {err}"),
+                        Ok(github_sync::SyncOutcome::Unchanged{cursor,message})=>{
+                            if let Some(cursor)=cursor{
+                                if let Err(err)=github_sync::save_cursor(&path,&cursor){
+                                    self.message=format!("GitHub cursor save failed: {err}");
+                                }else{self.message=message;}
+                            }else{self.message=message;}
+                        }
+                        Ok(github_sync::SyncOutcome::Published{cursor})=>{
+                            self.message=match github_sync::save_cursor(&path,&cursor){
+                                Ok(())=>"Published this project to GitHub".into(),
+                                Err(err)=>format!("Published, but local sync cursor failed: {err}"),
+                            };
+                        }
+                        Ok(github_sync::SyncOutcome::Incoming{bytes,cursor})=>{
+                            let current=serde_json::to_vec(&storage::Project::new(self.world.clone()));
+                            let unchanged=current.as_ref().ok().is_some_and(|data|
+                                github_sync::hash_project(data)==reply.local_hash);
+                            if self.dirty_since.is_some() || self.before_gesture.is_some()
+                                || !unchanged{
+                                self.message="GitHub update held: local changes occurred during download".into();
+                            }else{
+                                match storage::decode(&bytes).and_then(|world|self.install_world(world)){
+                                    Err(err)=>self.message=format!("Incoming GitHub project rejected: {err}"),
+                                    Ok(())=>{
+                                        self.message=match github_sync::save_cursor(&path,&cursor){
+                                            Ok(())=>"GitHub changes applied; previous project backed up".into(),
+                                            Err(err)=>format!("GitHub project applied but cursor failed: {err}"),
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>{
+                    self.github_receiver=None;
+                    self.message="GitHub request ended without a response".into();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty)=>{}
+            }
+        }
+        if self.github_auto_pull && self.github_receiver.is_none()
+            && self.active_project.is_some() && self.dirty_since.is_none()
+            && !self.github_repository.trim().is_empty(){
+            let interval=if self.github_token.is_empty(){
+                Duration::from_secs(300) // anonymous GitHub API rate limit
+            }else{Duration::from_secs(45)};
+            if self.github_last_checked.is_none_or(|last|last.elapsed()>=interval){
+                self.start_github_request(github_sync::SyncAction::Pull,ctx);
+            }else{ctx.request_repaint_after(Duration::from_secs(3));}
+        }
+    }
+    fn github_sync_dialog(&mut self,ctx:&egui::Context){
+        if !self.github_window_open{return;}
+        let mut open=true;
+        egui::Window::new("GitHub project sync")
+            .collapsible(false).resizable(true).default_width(320.0)
+            .open(&mut open).anchor(Align2::CENTER_CENTER,[0.0,0.0])
+            .show(ctx,|ui|{
+                if let Some(project)=&self.active_project{
+                    ui.small(format!("Project: {} · {}",project.name,
+                        &project.project_id[..8]));
+                }else{ui.label("No project available");}
+                ui.label("Project repository (owner/repo)");
+                ui.text_edit_singleline(&mut self.github_repository);
+                ui.label("Branch");
+                ui.text_edit_singleline(&mut self.github_branch);
+                ui.label("Fine-grained GitHub token (only needed for private pull or publish)");
+                ui.add(egui::TextEdit::singleline(&mut self.github_token)
+                    .password(true).hint_text("Token is never saved"));
+                ui.checkbox(&mut self.github_auto_pull,"Auto-check while editor is open");
+                ui.horizontal_wrapped(|ui|{
+                    if ui.button("Save link").clicked(){self.save_github_settings();}
+                    if ui.add_enabled(self.github_receiver.is_none(),
+                        egui::Button::new("Pull now")).clicked(){
+                        self.start_github_request(github_sync::SyncAction::Pull,ctx);
+                    }
+                    if ui.add_enabled(self.github_receiver.is_none(),
+                        egui::Button::new("Publish")).clicked(){
+                        self.start_github_request(github_sync::SyncAction::Publish,ctx);
+                    }
+                });
+                ui.small("Only Editor/projects/<this project's UUID>/ is synced.");
+                ui.small("Conflicting phone/GitHub changes are never silently overwritten.");
+                ui.small("Project content may be public if the selected GitHub repository is public.");
+                ui.small(&self.message);
+            });
+        if !open{self.github_window_open=false;}
     }
 
     fn project_dialogs(&mut self,ctx:&egui::Context) {
@@ -3531,8 +3728,10 @@ impl eframe::App for MapStudioApp {
         }
         self.size_dialog(root.ctx());
         self.project_dialogs(root.ctx());
+        self.github_sync_dialog(root.ctx());
         self.artwork_import_dialog(root.ctx());
         self.maybe_autosave(root.ctx());
+        self.poll_github_result(root.ctx());
     }
 }
 
