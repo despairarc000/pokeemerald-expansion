@@ -1,9 +1,15 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
 use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget}, compiled};
 
 const HELP:&str = "Map Studio CLI
+  workspace-new <root> <name> <emerald|firered>
+  workspace-list <root>
+  workspace-open <root> <project-uuid>
+  workspace-import <root> <name> <emerald|firered> <project.json|project.zip>
+  workspace-validate <root> <project-uuid>
+  workspace-publish <root> <project-uuid>
   new <project.json>
   inspect <project.json>
   add-map <project.json> <name> <x> <y> <width> <height>
@@ -52,6 +58,72 @@ fn direction(raw:&str)->Result<ExpandDirection,String> {
 fn run(args:&[String])->Result<(),String> {
     let action=field(args,1,"command")?;
     if action=="help" || action=="--help" {println!("{HELP}");return Ok(());}
+    // Every AI operation uses a stable project UUID; ordinary editor model
+    // commands continue to accept the selected Editor/.../project.json path.
+    if action.starts_with("workspace-"){
+        let root=Path::new(field(args,2,"workspace root")?);
+        let store=Workspace{root:root.to_path_buf()};
+        let target=|raw:&str|->Result<GameTarget,String>{
+            match raw{
+                "emerald"|"emerald_expansion"=>Ok(GameTarget::EmeraldExpansion),
+                "firered"=>Ok(GameTarget::FireRed),
+                _=>Err("Target must be emerald or firered".into()),
+            }
+        };
+        match action {
+            "workspace-new"=>{
+                let name=field(args,3,"project name")?;
+                let game=target(field(args,4,"target GBA")?)?;
+                let project=store.create(name,game,&World::new())?;
+                // Do not change the currently active project on creation.
+                println!("Created {} ({}) in Editor/projects/{}/",
+                    project.name,project.target.label(),project.project_id);
+            }
+            "workspace-list"=>{
+                for item in store.list()?{
+                    let selected=store.active_id()?.as_deref()==Some(&item.project_id);
+                    println!("{} {} [{}] {}",
+                        if selected{"*"}else{" "},item.project_id,
+                        item.target.label(),item.name);
+                }
+            }
+            "workspace-open"=>{
+                let id=field(args,3,"project UUID")?;
+                store.activate(id)?;
+                println!("Selected workspace project {id}");
+            }
+            "workspace-import"=>{
+                let name=field(args,3,"project name")?;
+                let game=target(field(args,4,"target GBA")?)?;
+                let file=Path::new(field(args,5,"source project")?);
+                if std::fs::metadata(file).map_err(|e|e.to_string())?.len()
+                    >map_studio::artwork::MAX_PACKAGE_BYTES as u64{
+                    return Err("Source project is too large".into());
+                }
+                let bytes=std::fs::read(file).map_err(|e|e.to_string())?;
+                let world=storage::decode_package(&bytes)?;
+                let project=store.create(name,game,&world)?;
+                println!("Imported {} maps as {}",
+                    world.maps.len(),project.project_id);
+            }
+            "workspace-validate"=>{
+                let id=field(args,3,"project UUID")?;
+                let manifest=store.load_manifest(id)?;
+                let world=store.load_world(id)?;
+                if manifest.target.can_export(){export::validate(&world)?;}
+                println!("Valid {} project {} ({} maps)",
+                    manifest.target.label(),id,world.maps.len());
+            }
+            "workspace-publish"=>{
+                let id=field(args,3,"project UUID")?;
+                let path=compiled::publish(&store,id)?;
+                println!("Published GBA map source to {}",path.display());
+                println!("Native binaries generated; full ROM integration is not yet verified");
+            }
+            _=>return Err(format!("Unknown workspace command: {action}\n{HELP}")),
+        }
+        return Ok(());
+    }
     let project=Path::new(field(args,2,"project path")?);
     if action=="new" {
         if project.exists(){return Err("Project already exists; refusing to overwrite".into());}
