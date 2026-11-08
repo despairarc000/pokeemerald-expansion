@@ -272,6 +272,48 @@ fn assess_publish(base:Option<&SyncCursor>,remote_sha:&str,
     Ok(remote_hash!=local_hash)
 }
 
+pub struct CloneData {
+    pub manifest:ProjectManifest,
+    pub world_bytes:Vec<u8>,
+    pub cursor:SyncCursor,
+}
+
+/// Import an existing GitHub project into a new Android package by its
+/// permanent UUID. Both manifest and world are verified before any UI save.
+pub fn clone_remote(link:GithubLink,token:String,project_id:String)
+    ->Result<CloneData,String>{
+    link.validate()?;
+    let valid=uuid::Uuid::parse_str(&project_id)
+        .map(|id|id.to_string()==project_id).unwrap_or(false);
+    if !valid{return Err("Enter a canonical GitHub project UUID".into());}
+    let client=Client::builder().timeout(Duration::from_secs(25))
+        .build().map_err(|e|e.to_string())?;
+    let prefix=format!("Editor/projects/{project_id}");
+    let manifest_file=match get_file(&client,&link,&token,
+        &format!("{prefix}/manifest.json"),8192,None)?{
+        RemoteResponse::File(file)=>file,
+        _=>return Err("GitHub project manifest not found".into()),
+    };
+    let manifest:ProjectManifest=serde_json::from_slice(&manifest_file.bytes)
+        .map_err(|e|format!("GitHub project manifest is invalid: {e}"))?;
+    manifest.validate()?;
+    if manifest.project_id!=project_id{
+        return Err("GitHub manifest ID differs from requested UUID".into());
+    }
+    let file=match get_file(&client,&link,&token,
+        &format!("{prefix}/project.json"),storage::MAX_PROJECT_BYTES,None)?{
+        RemoteResponse::File(file)=>file,
+        _=>return Err("GitHub project data not found".into()),
+    };
+    let world=storage::decode(&file.bytes)?;
+    world.check_integrity()?;
+    let hash=hash_project(&file.bytes);
+    Ok(CloneData{
+        manifest,cursor:cursor(&manifest,&link,file.sha,hash,file.etag),
+        world_bytes:file.bytes,
+    })
+}
+
 pub fn perform(action:SyncAction,link:GithubLink,token:String,
     project:ProjectManifest,local_bytes:Vec<u8>,baseline:Option<SyncCursor>)
     ->Result<SyncOutcome,String>{
@@ -379,6 +421,12 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn clone_id_must_be_canonical_and_path_safe(){
+        for id in ["../x","a/b","not-uuid","00000000-0000-0000-0000-000000000000/other"]{
+            assert!(uuid::Uuid::parse_str(id).map(|v|v.to_string()==id).unwrap_or(false)==false);
+        }
+    }
     #[test]
     fn simulate_remote_edit_phone_edit_and_first_pairing(){
         let hash_a="a".repeat(64);
