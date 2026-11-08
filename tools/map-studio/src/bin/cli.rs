@@ -1,7 +1,7 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
 use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles};
 
 const HELP:&str = "Map Studio CLI
   workspace-new <root> <name> <emerald|firered>
@@ -15,6 +15,8 @@ const HELP:&str = "Map Studio CLI
   add-map <project.json> <name> <x> <y> <width> <height>
   place-map <project.json> <name> <fixed-x> <fixed-y> <width> <height> <direction>
   paint <project.json> <x> <y> <metatile-id>
+  assets <project.json> <map-id>
+  place-prefab <project.json> <map-id> <source-prefab-index> <local-x> <local-y>
   erase <project.json> <x> <y>
   fill <project.json> <map-id> <metatile-id>
   move <project.json> <map-id> <x> <y>
@@ -213,6 +215,49 @@ fn run(args:&[String])->Result<(),String> {
             if !world.paint_metatile(p,tile){return Err("No change: outside map or invalid metatile ID".into());}
             changed=true;
         }
+        "assets" => {
+            let id:u32=int(args,3,"map-id")?;
+            let map=world.maps.iter().find(|m|m.id==id).ok_or("Map ID not found")?;
+            let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+                .ok_or("Unrecognized native tileset pair")?;
+            if pair.collection!="Emerald"{
+                return Err("Emerald prefab tool does not modify other GBA collections".into());
+            }
+            println!("Compatible native prefab assets for map {} ({})",id,pair.key);
+            for (index,prefab) in prefabs::emerald().iter().enumerate(){
+                if prefabs::compatible(prefab,pair){
+                    println!("  id={} | {} | {}x{} | primary={} secondary={}",
+                        index,prefab.name,prefab.width,prefab.height,
+                        prefab.primary_tileset,prefab.secondary_tileset);
+                }
+            }
+        }
+        "place-prefab" => {
+            let id:u32=int(args,3,"map-id")?;
+            let asset_index:usize=int(args,4,"source-prefab-index")?;
+            let x:u32=int(args,5,"local-x")?;
+            let y:u32=int(args,6,"local-y")?;
+            let asset=prefabs::emerald().get(asset_index)
+                .ok_or("Emerald source prefab index not found")?;
+            let map=world.maps.iter().find(|m|m.id==id)
+                .ok_or("Map ID not found")?;
+            let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+                .ok_or("Unknown native map tileset")?;
+            if pair.collection!="Emerald"{
+                return Err("Cannot use Emerald prefab on another GBA source".into());
+            }
+            let x:i32=x.try_into().map_err(|_|"Local X is too large")?;
+            let y:i32=y.try_into().map_err(|_|"Local Y is too large")?;
+            let pos=GridPoint::new(map.origin.x.checked_add(x)
+                .ok_or("Prefab coordinate overflow")?,
+                map.origin.y.checked_add(y).ok_or("Prefab coordinate overflow")?);
+            world.active_space_id=map.space_id;
+            let changed_count=world.try_paint_prefab(pos,asset)?;
+            if changed_count==0{return Err("Prefab already exists here".into());}
+            changed=true;
+            println!("Placed Emerald asset #{asset_index} {} at map #{id} local ({x},{y}), {} cells",
+                asset.name,changed_count);
+        }
         "erase" => {
             let p=GridPoint::new(coord(args,3,"x")?,coord(args,4,"y")?);
             if !world.erase(p){return Err("No cell was erased".into());}
@@ -294,6 +339,25 @@ mod tests {
         let args=vec!["bin".into(),"paint".into(),"p".into(),"-7".into(),"12".into(),"0x170".into()];
         assert_eq!(coord(&args,3,"x").unwrap(),-7);
         assert_eq!(int::<u16>(&args,5,"tile").unwrap(),0x170);
+    }
+    #[test]
+    fn source_prefab_cli_uses_native_full_footprint_transaction(){
+        let path=std::env::temp_dir().join(format!(
+            "mapstudio-cli-prefab-{}.json",uuid::Uuid::new_v4()));
+        let mut world=World::new();
+        let map_id=world.add_map("Town",GridPoint::new(0,0),18,18).unwrap();
+        world.set_map_tileset(map_id,"general/petalburg").unwrap();
+        storage::save(&path,&world).unwrap();
+        let p=path.to_string_lossy().to_string();
+        let args=|x:u32,y:u32|{
+            vec!["bin".into(),"place-prefab".into(),p.clone(),
+                map_id.to_string(),"1".into(),x.to_string(),y.to_string()]
+        };
+        assert!(run(&args(3,3)).is_ok());
+        let before=storage::load(&path).unwrap();
+        assert!(run(&args(17,17)).is_err());
+        assert_eq!(storage::load(&path).unwrap(),before);
+        let _=std::fs::remove_file(path);
     }
     #[test]
     fn script_must_never_overwrite_project_without_request() {
