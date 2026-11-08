@@ -249,3 +249,61 @@ manifest={"available":len(catalog),"omitted":[{"primary":p,"secondary":s,"reason
 (out/"catalog.json").write_text(json.dumps(manifest,indent=2))
 print(f"Generated {len(catalog)} real tile-pair atlases; omitted {len(omitted)} incomplete or unsupported pairs")
 for p,s,reason in omitted[:16]:print("SKIPPED",p,s,reason[:140])
+
+
+# Built-in Ruby source packs. These are genuinely different Ruby graphics and
+# source IDs from pret/pokeruby, not an Emerald clone or empty menu entries.
+# The playable game engine currently targets pokeemerald; therefore Ruby packs
+# stay browse-only until an explicit native tileset integration is tested.
+def build_ruby_builtins():
+    import zipfile
+    root_assets = root / "tools/map-studio/assets"
+    ruby = root_assets / "builtin-sources/ruby"
+    main = ruby / "primary/general"
+    prefabs = json.loads((root_assets / "porymap-ruby-prefabs.json").read_text())
+    assert len(prefabs) == 55, "Porymap Ruby built-in definitions changed"
+    output = out.parent / "builtin_packs"
+    output.mkdir(exist_ok=True)
+    for secondary_name, symbol, label in (
+        ("petalburg", "gTileset_Petalburg", "Petalburg"),
+        ("mauville", "gTileset_Mauville", "Mauville"),
+        ("rustboro", "gTileset_Rustboro", "Rustboro"),
+    ):
+        local = ruby / "secondary" / secondary_name
+        atlas = output / f"ruby_{secondary_name}.png"
+        primary_count, secondary_count, mask, valid_count = generate(main, local, atlas)
+        if valid_count < 40:
+            raise ValueError(f"Ruby {secondary_name}: only {valid_count} renderable tiles")
+        valid = lambda mid: 0 <= mid < 1024 and bool(mask[mid//8] & (1 << (mid % 8)))
+        compatible = [
+            p for p in prefabs
+            if p.get("primary_tileset", "") in ("", "gTileset_General")
+            and p.get("secondary_tileset", "") in ("", symbol)
+            and all(valid(tile["metatile_id"]) for tile in p["metatiles"])
+        ]
+        manifest = {
+            "format": "mapstudio-artwork-pack", "version": 1,
+            "collection": "Ruby", "engine": "pokeruby",
+            "source": "pret/pokeruby native source artwork; Porymap default Ruby prefab data",
+            "attribution": "Original Pokemon Ruby game artwork; Porymap prefab definitions LGPL-3.0, huderlem/porymap. Pokemon imagery retains original rights.",
+            "label": label, "category": "Towns", "pair_key": f"ruby/general/{secondary_name}",
+            "primary_symbol": "gTileset_General", "secondary_symbol": symbol,
+            "primary_count": primary_count, "secondary_count": secondary_count,
+            "valid_mask": list(mask),
+        }
+        package = output / f"ruby_{secondary_name}.zip"
+        with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=True))
+            z.writestr("prefabs.json", json.dumps(compatible, ensure_ascii=True))
+            z.write(atlas, "atlas.png")
+            for kind, folder in (("primary", main), ("secondary", local)):
+                for filename in ("tiles.png", "metatiles.bin", "metatile_attributes.bin"):
+                    z.write(folder / filename, f"{kind}/{filename}")
+                for pal in sorted((folder / "palettes").glob("*.pal")):
+                    z.write(pal, f"{kind}/palettes/{pal.name}")
+            z.write(root_assets / "PORYMAP-LICENSE.md", "LICENSE-PORYMAP.md")
+            z.write(root_assets / "PORYMAP-ATTRIBUTION.md", "ATTRIBUTION-PORYMAP.md")
+        assert len(zipfile.ZipFile(package).namelist()) <= 90
+        print(f"Ruby built-in {label}: {valid_count} metatiles and {len(compatible)} compatible prefabs")
+
+build_ruby_builtins()
