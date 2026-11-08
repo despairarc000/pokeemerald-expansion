@@ -520,26 +520,56 @@ impl World {
         false
     }
 
-    pub fn set_collision(&mut self, p: GridPoint, value: u8) -> bool {
-        if value > 3 { return false; }
-        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
-            let x = (p.x - map.origin.x) as u32;
-            let y = (p.y - map.origin.y) as u32;
-            if let Some(i) = map.index(x, y) {
-                if let Some(mut cell) = map.cells[i] {
-                    if cell.collision != value {
-                        cell.collision = value;
-                        map.cells[i] = Some(cell);
-                        return true;
+    /// Keep the canonical native cell array and optional prefab references in sync.
+    /// A hand-painted cell remains part of its prefab, while erasing it or
+    /// restoring the original underlay releases that position.
+    pub(crate) fn sync_prefab_cell(&mut self,map_id:u32,x:u32,y:u32,value:Option<Cell>){
+        for object in &mut self.prefab_instances {
+            if object.map_id!=map_id {continue;}
+            if let Some(index)=object.stamps.iter().position(|stamp|
+                object.x+stamp.x==x && object.y+stamp.y==y) {
+                if let Some(cell)=value {
+                    if object.stamps[index].before==Some(cell) {
+                        object.stamps.remove(index);
+                    }else{
+                        object.stamps[index].painted=cell;
                     }
+                }else{
+                    object.stamps.remove(index);
                 }
             }
         }
-        false
+        self.prefab_instances.retain(|object|!object.stamps.is_empty());
     }
 
+    /// One canonical entry point for brush, property, and eraser edits.
+    /// Object metadata is never left occupying an erased cell.
+    fn edit_cell(&mut self,p:GridPoint,change:impl FnOnce(Option<Cell>)->Option<Cell>)->bool{
+        let result={
+            let Some(map)=self.maps.iter_mut().find(|m|
+                m.space_id==self.active_space_id && m.contains(p)) else {return false;};
+            let x=(p.x-map.origin.x) as u32;
+            let y=(p.y-map.origin.y) as u32;
+            let Some(index)=map.index(x,y) else {return false;};
+            let before=map.cells[index];
+            let after=change(before);
+            if before==after {return false;}
+            map.cells[index]=after;
+            (map.id,x,y,after)
+        };
+        self.sync_prefab_cell(result.0,result.1,result.2,result.3);
+        true
+    }
 
-    pub fn assign_hidden_slot(&mut self,map_id:u32,index:usize)->Result<(),String>{
+    pub fn set_collision(&mut self, p: GridPoint, value: u8) -> bool {
+        if value>3 {return false;}
+        self.edit_cell(p,|old|old.map(|mut cell|{
+            cell.collision=value;
+            cell
+        }))
+    }
+
+        pub fn assign_hidden_slot(&mut self,map_id:u32,index:usize)->Result<(),String>{
         let used:Vec<String>=self.maps.iter().flat_map(|m|m.events.iter())
             .filter(|e|e.kind==EventKind::HiddenItem && !e.hidden_flag.is_empty())
             .map(|e|e.hidden_flag.clone()).collect();
@@ -771,29 +801,18 @@ impl World {
     }
 
 
-    pub fn paint_metatile(&mut self, p: GridPoint, id: u16) -> bool {
-        if id >= 1024 { return false; }
-        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
-            let Some(pair)=crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset) else{
-                return false;
-            };
-            if !crate::tiles::valid_in(pair,id){return false;}
-            let x = (p.x - map.origin.x) as u32;
-            let y = (p.y - map.origin.y) as u32;
-            if let Some(i) = map.index(x, y) {
-                let old = map.cells[i];
-                let value = Some(match old {
-                    Some(mut cell) => {
-                        cell.metatile_id = id;
-                        cell
-                    }
-                    None => Cell { terrain: TileKind::Grass, metatile_id: id,
-                        collision: 0, elevation: if id == 0x170 { 1 } else { 3 } },
-                });
-                if map.cells[i] != value { map.cells[i] = value; return true; }
-            }
-        }
-        false
+    pub fn paint_metatile(&mut self,p:GridPoint,id:u16)->bool{
+        if id>=1024{return false;}
+        let Some(map)=self.maps.iter().find(|m|
+            m.space_id==self.active_space_id && m.contains(p)) else{return false;};
+        let Some(pair)=crate::tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+            else{return false;};
+        if !crate::tiles::valid_in(pair,id){return false;}
+        self.edit_cell(p,|old|Some(match old{
+            Some(mut cell)=>{cell.metatile_id=id;cell},
+            None=>Cell{terrain:TileKind::Grass,metatile_id:id,
+                collision:0,elevation:if id==0x170{1}else{3}},
+        }))
     }
 
     /// Paint a source-authentic rectangle. Empty source slots remain empty, and
@@ -839,58 +858,45 @@ impl World {
         if source==Some(id){return 0;}
         let mut pending=std::collections::VecDeque::from([(start_x,start_y)]);
         let mut seen=vec![false;frame.cells.len()];
-        let mut changed=0;
+        let mut updated=Vec::new();
         while let Some((x,y))=pending.pop_front(){
-            if x>=width||y>=height {continue;}
+            if x>=width || y>=height{continue;}
             let index=y*width+x;
             if seen[index]{continue;}
             seen[index]=true;
-            if frame.cells[index].map(|cell|cell.metatile_id)!=source {continue;}
-            let new=match frame.cells[index] {
-                Some(mut cell)=>{cell.metatile_id=id;cell}
+            if frame.cells[index].map(|cell|cell.metatile_id)!=source{continue;}
+            let new=match frame.cells[index]{
+                Some(mut cell)=>{cell.metatile_id=id;cell},
                 None=>Cell{terrain:TileKind::Grass,metatile_id:id,collision:0,
-                    elevation:if id==0x170 {1}else{3}}
+                    elevation:if id==0x170{1}else{3}},
             };
             frame.cells[index]=Some(new);
-            changed+=1;
+            updated.push((x as u32,y as u32,new));
             if x>0{pending.push_back((x-1,y));}
             if y>0{pending.push_back((x,y-1));}
             if x+1<width{pending.push_back((x+1,y));}
             if y+1<height{pending.push_back((x,y+1));}
         }
-        changed
-    }
-
-    pub fn erase(&mut self, p: GridPoint) -> bool {
-        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
-            let x = (p.x - map.origin.x) as u32;
-            let y = (p.y - map.origin.y) as u32;
-            if let Some(i) = map.index(x, y) {
-                return map.cells[i].take().is_some();
-            }
+        let map_id=frame.id;
+        for (x,y,new) in &updated{
+            self.sync_prefab_cell(map_id,*x,*y,Some(*new));
         }
-        false
+        updated.len()
     }
 
-    pub fn set_elevation(&mut self, p: GridPoint, value: u8) -> bool {
-        if value > 15 { return false; }
-        if let Some(map) = self.maps.iter_mut().find(|m| m.space_id==self.active_space_id && m.contains(p)) {
-            let x = (p.x - map.origin.x) as u32;
-            let y = (p.y - map.origin.y) as u32;
-            if let Some(i) = map.index(x, y) {
-                if let Some(mut cell) = map.cells[i] {
-                    if cell.elevation != value {
-                        cell.elevation = value;
-                        map.cells[i] = Some(cell);
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+    pub fn erase(&mut self,p:GridPoint)->bool{
+        self.edit_cell(p,|_|None)
     }
 
-    pub fn remove_frame(&mut self, id:u32) -> Result<(),String> {
+    pub fn set_elevation(&mut self,p:GridPoint,value:u8)->bool{
+        if value>15{return false;}
+        self.edit_cell(p,|old|old.map(|mut cell|{
+            cell.elevation=value;
+            cell
+        }))
+    }
+
+        pub fn remove_frame(&mut self, id:u32) -> Result<(),String> {
         if !self.maps.iter().any(|m|m.id==id) {
             return Err("Map not found".into());
         }
