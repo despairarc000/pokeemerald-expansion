@@ -3,7 +3,7 @@
 //! Preview is read-only; commit is performed by the caller only after all
 //! operations, source constraints and whole-world integrity pass.
 
-use crate::{emerald_terrain, export, model::{Cell, EventKind, GridPoint, MapFrame, World},
+use crate::{emerald_terrain, emerald_library, export, model::{Cell, EventKind, GridPoint, MapFrame, World},
             prefabs, tiles};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -430,12 +430,20 @@ pub fn prepare(world:&World,request:&TransactionRequest)
         }})
 }
 
+/// Editor-only semantic ownership. Native metatile IDs and collision/elevation
+/// remain authoritative. Untracked (including hand-painted) cells default to
+/// background without rewriting their content or claiming prefab ownership.
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize)]
+#[serde(rename_all="snake_case")]
+pub enum SemanticLayer { Background, Macro, Building, Micro }
+
 #[derive(Clone,Debug,Serialize)]
 pub struct RegionCell {
     pub x:u32,pub y:u32,pub cell:Option<Cell>,
     pub source_label:Option<&'static str>,
     pub source_behavior:Option<&'static str>,
     pub object_id:Option<String>,
+    pub layer:SemanticLayer,
 }
 
 #[derive(Clone,Debug,Serialize)]
@@ -465,9 +473,19 @@ pub fn inspect_region(world:&World,map_id:u32,x:u32,y:u32,width:u32,height:u32)
         let metatile=cell.map(|c|c.metatile_id);
         let source_label=metatile.and_then(|id|tiles::source_label_in(pair,id));
         let source_behavior=metatile.and_then(|id|tiles::behavior_name_in(pair,id));
-        let object_id=world.tracked_prefab_at(map_id,col,row)
-            .map(|p|p.instance_id.clone());
-        cells.push(RegionCell{x:col,y:row,cell,source_label,source_behavior,object_id});
+        let owner=world.tracked_prefab_at(map_id,col,row);
+        let object_id=owner.map(|p|p.instance_id.clone());
+        let layer=owner.and_then(|p|prefabs::emerald().get(p.prefab_index))
+            .map(|asset|match emerald_library::group_for(asset){
+                emerald_library::Group::Background=>SemanticLayer::Background,
+                emerald_library::Group::Macro=>SemanticLayer::Macro,
+                emerald_library::Group::Structures=>SemanticLayer::Building,
+                emerald_library::Group::Micro=>SemanticLayer::Micro,
+                emerald_library::Group::All=>SemanticLayer::Background,
+            })
+            .unwrap_or(SemanticLayer::Background);
+        cells.push(RegionCell{x:col,y:row,cell,source_label,source_behavior,
+            object_id,layer});
     }}
     Ok(RegionInspection{
         map_id,map_name:map.name.clone(),native_pair:pair.key.to_owned(),
@@ -629,6 +647,42 @@ mod tests{
         assert!(prepare(&w,&request).unwrap_err_or_string().contains("STALE_REVISION"));
         assert_eq!(w,before);
     }
+    #[test]
+    fn untracked_native_cells_default_to_background_without_changing_art(){
+        let (mut w,id)=world("general/lilycove");
+        let position=GridPoint::new(13,24);
+        assert!(w.paint_metatile(position,1));
+        assert!(w.set_collision(position,1));
+        let original=w.maps[0].cell(3,4);
+        let revision_before=revision(&w).unwrap();
+        let cell=inspect_region(&w,id,3,4,1,1).unwrap().cells.remove(0);
+        assert_eq!(cell.layer,SemanticLayer::Background);
+        assert_eq!(cell.object_id,None);
+        assert_eq!(cell.cell,original);
+        assert_eq!(revision(&w).unwrap(),revision_before,
+            "Semantic classification must never mutate project contents");
+        let empty=inspect_region(&w,id,3,5,1,1).unwrap().cells.remove(0);
+        assert_eq!(empty.layer,SemanticLayer::Background);
+        assert_eq!(empty.cell,None,"An empty background cell is NOT invented grass");
+    }
+
+    #[test]
+    fn known_building_is_identified_and_erased_cell_reverts_to_background(){
+        let (mut w,id)=world("general/lilycove");
+        let asset=&prefabs::emerald()[0];
+        assert!(prefabs::compatible(asset,tiles::pair("general/lilycove").unwrap()));
+        let at=GridPoint::new(13,24);
+        w.try_paint_prefab(at,asset).unwrap();
+        let before=inspect_region(&w,id,3,4,1,1).unwrap().cells.remove(0);
+        assert_eq!(before.layer,SemanticLayer::Building);
+        assert!(before.object_id.is_some());
+        w.erase(at);
+        let after=inspect_region(&w,id,3,4,1,1).unwrap().cells.remove(0);
+        assert_eq!(after.layer,SemanticLayer::Background);
+        assert_eq!(after.object_id,None);
+        assert_eq!(after.cell,None);
+    }
+
     #[test]
     fn event_and_canvas_reject_unsafe_edit_and_preserve_source_state(){
         let (w,id)=world("general/lilycove");
