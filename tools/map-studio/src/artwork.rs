@@ -216,6 +216,9 @@ pub fn builtin_reference_packs()->Vec<Package>{
         ("ruby_petalburg",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/ruby_petalburg.zip"))),
         ("ruby_mauville",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/ruby_mauville.zip"))),
         ("ruby_rustboro",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/ruby_rustboro.zip"))),
+        ("oras_petalburg",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/oras_petalburg.zip"))),
+        ("oras_mauville",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/oras_mauville.zip"))),
+        ("oras_rustboro",include_bytes!(concat!(env!("OUT_DIR"),"/builtin_packs/oras_rustboro.zip"))),
     ];
     archives.iter().map(|(name,bytes)|{
         let mut package=decode(bytes).expect("Built-in Ruby art archive must decode");
@@ -247,14 +250,15 @@ mod tests{
     #[test]
     fn original_ruby_builtins_have_real_tiles_and_prefabs(){
         let packs=builtin_reference_packs();
-        assert_eq!(packs.len(),3);
-        assert!(packs.iter().all(|p|p.manifest.collection=="Ruby"
-            && p.manifest.engine=="pokeruby"
-            && !p.atlas.is_empty()
+        assert_eq!(packs.len(),6);
+        assert_eq!(packs.iter().filter(|p|p.manifest.collection=="Ruby").count(),3);
+        assert_eq!(packs.iter().filter(|p|p.manifest.collection=="ORAS Style").count(),3);
+        assert!(packs.iter().all(|p|!p.atlas.is_empty()
             && p.manifest.valid_mask.iter().any(|x|*x!=0)
             && p.embedded_archive.is_some()
             && p.native_pair().is_none()));
-        assert!(packs.iter().any(|p|!p.prefabs.is_empty()));
+        assert!(packs.iter().filter(|p|p.manifest.collection=="Ruby")
+            .any(|p|!p.prefabs.is_empty()));
     }
     #[test]
     fn zip_bomb_or_unrelated_zip_cannot_be_imported(){
