@@ -1,7 +1,7 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
 use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget}, compiled};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled};
 
 const HELP:&str = "Map Studio CLI
   workspace-new <root> <name> <emerald|firered>
