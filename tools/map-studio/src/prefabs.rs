@@ -76,37 +76,83 @@ pub fn compatible_indices(pair:&TilePair)->Vec<usize>{
 }
 
 impl World {
-    /// Paint an entire verified prefab without altering any neighboring map.
-    /// Unlike a loose rectangular selection, source-authored collision and
-    /// elevation values are applied intentionally.
-    pub fn paint_prefab(&mut self,at:GridPoint,prefab:&Prefab)->usize{
-        let Some(map)=self.maps.iter().find(|m|m.space_id==self.active_space_id && m.contains(at)) else{return 0;};
-        let Some(pair)=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset) else{return 0;};
-        if !compatible(prefab,pair){return 0;}
-        let map_id=map.id;
-        let mut changed=0;
-        for tile in &prefab.metatiles{
-            let (Some(x),Some(y))=(at.x.checked_add(tile.x as i32),at.y.checked_add(tile.y as i32))
-                else{continue;};
-            let pos=GridPoint::new(x,y);
-            let Some(map)=self.maps.iter_mut().find(|m|m.id==map_id && m.contains(pos))
-                else{continue;};
-            let local_x=(pos.x-map.origin.x) as u32;
-            let local_y=(pos.y-map.origin.y) as u32;
-            if let Some(index)=map.index(local_x,local_y){
-                let previous=map.cells[index];
-                let mut cell=previous.unwrap_or_else(||
-                    crate::model::Cell::new(crate::model::TileKind::Grass));
-                cell.metatile_id=tile.metatile_id;
-                cell.collision=tile.collision;
-                cell.elevation=tile.elevation;
-                if previous!=Some(cell){
-                    map.cells[index]=Some(cell);
-                    changed+=1;
+    /// Validate the ENTIRE source-authored footprint before changing a cell.
+    /// A placed prefab may replace unpainted cells or ordinary source grass,
+    /// but never silently overwrite a building, water, collision or event.
+    pub fn preview_prefab_placement(&self,at:GridPoint,prefab:&Prefab)
+        ->Result<(),String>{
+        let map=self.maps.iter().find(|m|m.space_id==self.active_space_id
+            && m.contains(at)).ok_or("Choose a point inside the target map")?;
+        let pair=tiles::pair_for(&map.primary_tileset,&map.secondary_tileset)
+            .ok_or("Unknown native map tileset")?;
+        if !compatible(prefab,pair){
+            return Err("Prefab requires another original source tileset".into());
+        }
+        let local_x=(i64::from(at.x)-i64::from(map.origin.x)) as u32;
+        let local_y=(i64::from(at.y)-i64::from(map.origin.y)) as u32;
+        if local_x.checked_add(prefab.width).is_none_or(|x|x>map.width)
+            || local_y.checked_add(prefab.height).is_none_or(|y|y>map.height){
+            return Err("The complete prefab must fit inside one map".into());
+        }
+        let mut seen=std::collections::HashSet::new();
+        for tile in &prefab.metatiles {
+            if !seen.insert((tile.x,tile.y)){
+                return Err("Prefab source defines a duplicate footprint tile".into());
+            }
+            let idx=map.index(local_x+tile.x,local_y+tile.y)
+                .ok_or("Prefab tile is outside the map")?;
+            if let Some(existing)=map.cells[idx]{
+                // The map's authentic General_Grass (id 1) is paintable
+                // ground. Never classify other source IDs as expendable.
+                if !(existing.metatile_id==1 && existing.collision==0)
+                    && !(existing.metatile_id==tile.metatile_id
+                        && existing.collision==tile.collision
+                        && existing.elevation==tile.elevation){
+                    return Err(format!(
+                        "Placement blocked by painted tile at {},{}",
+                        local_x+tile.x,local_y+tile.y));
                 }
             }
+            // Events cannot be overwritten accidentally. Existing events
+            // remain authoritative native map objects.
+            if map.events.iter().any(|e|e.x==local_x+tile.x && e.y==local_y+tile.y){
+                return Err("Prefab overlaps an existing event".into());
+            }
         }
-        changed
+        Ok(())
+    }
+
+    /// Transactional placement: complete stamp or no changes.
+    pub fn try_paint_prefab(&mut self,at:GridPoint,prefab:&Prefab)
+        ->Result<usize,String>{
+        self.preview_prefab_placement(at,prefab)?;
+        let map=self.maps.iter_mut().find(|m|
+            m.space_id==self.active_space_id && m.contains(at))
+            .ok_or("Target map disappeared")?;
+        let local_x=(at.x-map.origin.x) as u32;
+        let local_y=(at.y-map.origin.y) as u32;
+        let mut changed=0;
+        for tile in &prefab.metatiles {
+            let index=map.index(local_x+tile.x,local_y+tile.y)
+                .expect("preflight checked the full footprint");
+            let previous=map.cells[index];
+            let mut cell=previous.unwrap_or_else(||
+                crate::model::Cell::new(crate::model::TileKind::Grass));
+            cell.metatile_id=tile.metatile_id;
+            cell.collision=tile.collision;
+            cell.elevation=tile.elevation;
+            if previous!=Some(cell) {
+                map.cells[index]=Some(cell);
+                changed+=1;
+            }
+        }
+        Ok(changed)
+    }
+
+    /// Legacy caller convenience. New UI should use try_paint_prefab so
+    /// failed placement can show an exact error.
+    pub fn paint_prefab(&mut self,at:GridPoint,prefab:&Prefab)->usize{
+        self.try_paint_prefab(at,prefab).unwrap_or(0)
     }
 }
 
@@ -114,6 +160,31 @@ impl World {
 mod tests{
     use super::*;
     use crate::model::{GridPoint,World};
+    #[test]
+    fn complete_prefab_placement_never_clips_at_map_edges(){
+        let pair=tiles::pair(tiles::DEFAULT_PAIR).unwrap();
+        let p=&emerald()[compatible_indices(pair)[0]];
+        let mut world=World::new();
+        let id=world.add_map("Edge",GridPoint::new(0,0),32,32).unwrap();
+        world.set_map_tileset(id,pair.key).unwrap();
+        let before=world.clone();
+        assert!(world.try_paint_prefab(GridPoint::new(31,31),p)
+            .unwrap_err().contains("complete prefab"));
+        assert_eq!(world,before,"partial building was stamped");
+    }
+    #[test]
+    fn complete_prefab_placement_refuses_to_overwrite_existing_structure(){
+        let pair=tiles::pair(tiles::DEFAULT_PAIR).unwrap();
+        let p=&emerald()[compatible_indices(pair)[0]];
+        let mut world=World::new();
+        let id=world.add_map("Protected",GridPoint::new(0,0),32,32).unwrap();
+        world.set_map_tileset(id,pair.key).unwrap();
+        assert!(world.try_paint_prefab(GridPoint::new(4,4),p).unwrap()>0);
+        let before=world.clone();
+        let overlapping=GridPoint::new(5,5);
+        assert!(world.try_paint_prefab(overlapping,p).is_err());
+        assert_eq!(world,before,"existing building was overwritten");
+    }
     #[test]
     fn seventy_one_original_emerald_prefabs_are_parsed(){
         assert_eq!(emerald().len(),71);
