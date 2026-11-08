@@ -444,6 +444,10 @@ impl World {
             return Err("Move/remove tracked buildings before changing native tilesets".into());
         }
         let m=self.maps.iter_mut().find(|m|m.id==id).ok_or("Map not found")?;
+        if (m.primary_tileset!=tileset.primary || m.secondary_tileset!=tileset.secondary)
+            && m.cells.iter().any(Option::is_some){
+            return Err("Painted map tileset is locked; changing its source would reinterpret native IDs".into());
+        }
         if m.cells.iter().flatten().any(|cell|!crate::tiles::valid_in(tileset,cell.metatile_id)){
             return Err("The new tileset lacks a tile already painted on this map".into());
         }
@@ -1540,6 +1544,15 @@ mod editing_space_tests {
 #[cfg(test)]
 mod space_tileset_tests {
     use super::*;
+    #[test]
+    fn painted_map_source_cannot_be_silently_reinterpreted(){
+        let mut w=World::new();
+        let id=w.add_map("Town",GridPoint::new(0,0),16,16).unwrap();
+        w.paint_metatile(GridPoint::new(3,3),1);
+        let before=w.clone();
+        assert!(w.set_map_tileset(id,"general/lilycove").is_err());
+        assert_eq!(w,before);
+    }
     #[test]
     fn tileset_is_per_map_not_per_world(){
         let mut w=World::new();
