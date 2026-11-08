@@ -86,6 +86,7 @@ jobs:
           assert obj["available"]>=60,obj["available"]
           keys={p["key"] for p in obj["pairs"]}
           required={"general/petalburg":"general__petalburg.png",
+                    "general/lilycove":"general__lilycove.png",
                     "general/cave":"general__cave.png",
                     "building/generic_building":"building__generic_building.png"}
           assert set(required).issubset(keys),keys
@@ -113,6 +114,11 @@ jobs:
           shutil.copy2(sprites[0],audit/"npc-previews.png")
           print("Verified real atlas gallery and selected NPC previews")
           PY
+      - name: Reconstruct native Lilycove terrain reference for verified terrain rules
+        run: |
+          ATLAS="$(find target -name general__lilycove.png | head -n 1)"
+          test -n "$ATLAS"
+          python3 scripts/audit_emerald_terrain.py ../.. "$ATLAS" target/studio-asset-audit
       - uses: actions/upload-artifact@v4
         with:
           name: map-studio-source-visual-audit
