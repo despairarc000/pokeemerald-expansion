@@ -132,6 +132,8 @@ impl World {
             m.space_id==self.active_space_id && m.contains(at))
             .ok_or("Target map disappeared")?;
         let map_id=map.id;
+        let primary_tileset=map.primary_tileset.clone();
+        let secondary_tileset=map.secondary_tileset.clone();
         let local_x=(at.x-map.origin.x) as u32;
         let local_y=(at.y-map.origin.y) as u32;
         let mut stamps=Vec::with_capacity(prefab.metatiles.len());
@@ -171,8 +173,8 @@ impl World {
             self.prefab_instances.push(PlacedPrefab{
                 instance_id:uuid::Uuid::new_v4().to_string(),
                 map_id,prefab_index:source_index,
-                primary_tileset:map.primary_tileset.clone(),
-                secondary_tileset:map.secondary_tileset.clone(),
+                primary_tileset,
+                secondary_tileset,
                 x:local_x,y:local_y,width:prefab.width,height:prefab.height,
                 stamps,
             });
@@ -341,7 +343,7 @@ mod tests{
         world.remove_prefab_instance(&id).unwrap();
         world.check_integrity().unwrap();
     }
-        #[test]
+    #[test]
     fn complete_prefab_placement_never_clips_at_map_edges(){
         let pair=tiles::pair(tiles::DEFAULT_PAIR).unwrap();
         let p=&emerald()[compatible_indices(pair)[0]];
