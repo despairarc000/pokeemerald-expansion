@@ -1,7 +1,7 @@
 //! Headless entry point for AI agents, CI, and deterministic map compilation.
 //! Each mutating command updates the same versioned JSON project used by Android.
 use std::{env, path::Path};
-use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles};
+use map_studio::{model::{EventKind,GridPoint,TileKind,World,ExpandDirection}, storage, export, projects::{Workspace,GameTarget,ProjectManifest}, compiled, prefabs, tiles, emerald_terrain};
 
 const HELP:&str = "Map Studio CLI
   workspace-new <root> <name> <emerald|firered>
@@ -17,6 +17,7 @@ const HELP:&str = "Map Studio CLI
   paint <project.json> <x> <y> <metatile-id>
   assets <project.json> <map-id>
   place-prefab <project.json> <map-id> <source-prefab-index> <local-x> <local-y>
+  walkway <project.json> <map-id> <local-x1> <local-y1> <local-x2> <local-y2>
   erase <project.json> <x> <y>
   fill <project.json> <map-id> <metatile-id>
   move <project.json> <map-id> <x> <y>
@@ -257,6 +258,25 @@ fn run(args:&[String])->Result<(),String> {
             changed=true;
             println!("Placed Emerald asset #{asset_index} {} at map #{id} local ({x},{y}), {} cells",
                 asset.name,changed_count);
+        }
+        "walkway" => {
+            let id:u32=int(args,3,"map-id")?;
+            let local_x:i32=int(args,4,"local-x1")?;
+            let local_y:i32=int(args,5,"local-y1")?;
+            let local_x2:i32=int(args,6,"local-x2")?;
+            let local_y2:i32=int(args,7,"local-y2")?;
+            let map=world.maps.iter().find(|m|m.id==id).ok_or("Map ID not found")?;
+            let origin=map.origin;
+            let from=GridPoint::new(origin.x.checked_add(local_x)
+                .ok_or("Pavement X coordinate overflow")?,
+                origin.y.checked_add(local_y).ok_or("Pavement Y coordinate overflow")?);
+            let to=GridPoint::new(origin.x.checked_add(local_x2)
+                .ok_or("Pavement X coordinate overflow")?,
+                origin.y.checked_add(local_y2).ok_or("Pavement Y coordinate overflow")?);
+            let modified=emerald_terrain::draw_lilycove_walkway(&mut world,id,from,to)?;
+            if modified==0{return Err("Native walkway already present".into());}
+            changed=true;
+            println!("Painted {modified} native Lilycove paved walkway cells");
         }
         "erase" => {
             let p=GridPoint::new(coord(args,3,"x")?,coord(args,4,"y")?);
