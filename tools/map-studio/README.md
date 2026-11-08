@@ -31,6 +31,13 @@ loadable. This is a new interaction layer, not a destructive migration.
   \`map-studio-cli place-prefab <project.json> <map-id>
   <source-prefab-index> <local-x> <local-y>\` safely stamps the full
   footprint using the same Rust checks as the Android UI.
+- **Emerald terrain:** the new **Paths** picker exposes source-verified
+  Lilycove paved walkway metatile `0x22B` (555), present in the native
+  Lilycove City layout. Drawing a path respects map bounds, existing
+  buildings and events; blocked segments do not overwrite protected tiles.
+  AI can run `map-studio-cli walkway <project.json> <map-id> <x1> <y1>
+  <x2> <y2>` using map-local coordinates. This is real native pavement,
+  **not yet** full automatic junction/shoreline topology.
 - **GitHub:** opt-in auto-pull every 15 seconds when authenticated,
   conditional ETag reads of unchanged project data, and opt-in
   auto-publish of completed local autosaves. Both retain GitHub revision
