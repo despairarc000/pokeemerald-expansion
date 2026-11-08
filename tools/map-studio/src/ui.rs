@@ -2209,6 +2209,35 @@ impl MapStudioApp {
         Ok(())
     }
 
+    fn import_selected_as_project(&mut self){
+        self.commit_edit();
+        let result=(||->Result<(projects::ProjectManifest,World,PathBuf),String>{
+            let key=self.selected_backup.as_deref().ok_or("Select a backup first")?;
+            let bytes=self.read_restore_entry(key)?;
+            // Validate the entire project before creating a new workspace.
+            let world=storage::decode_package(&bytes)?;
+            let store=self.workspace.as_ref().ok_or("Project workspace is unavailable")?;
+            let current=self.save_path.as_ref().ok_or("Current project cannot be saved")?;
+            storage::save(current,&self.world)?;
+            let project=store.create(&self.new_project_name,self.new_project_target,&world)?;
+            store.activate(&project.project_id)?;
+            let path=store.project_path(&project.project_id)?;
+            Ok((project,world,path))
+        })();
+        match result{
+            Ok((project,world,path))=>{
+                self.world=world;
+                self.save_path=Some(path);
+                self.active_project=Some(project.clone());
+                self.reset_for_project_switch();
+                self.project_restore_open=false;
+                self.selected_backup=None;
+                self.message=format!("Imported separate {} project: {}",project.target.label(),project.name);
+            }
+            Err(err)=>self.message=format!("Project import blocked: {err}"),
+        }
+    }
+
     fn restore_selected_backup(&mut self) {
         let result=(||->Result<(),String>{
             let key=self.selected_backup.as_deref().ok_or("Select a backup first")?;
@@ -2625,25 +2654,41 @@ impl MapStudioApp {
                 .default_width(310.0).open(&mut open)
                 .anchor(Align2::CENTER_CENTER,[0.0,0.0])
                 .show(ctx,|ui|{
-                    ui.small("Import verified Map Studio JSON or editable/source ZIP backups. Current work is saved before replacement.");
+                    ui.small("Import a verified backup into its own project. The active project stays separate.");
                     if self.available_backups.is_empty(){
-                        ui.label("No readable Map Studio projects found in this installation's Downloads/MapStudio or recovery folder.");
+                        ui.label("No readable Map Studio backups found in this installation's Downloads/MapStudio or recovery folder.");
                     } else {
-                        egui::ScrollArea::vertical().max_height(190.0).show(ui,|ui|{
+                        egui::ScrollArea::vertical().max_height(155.0).show(ui,|ui|{
                             for (id,name) in &self.available_backups {
                                 ui.selectable_value(&mut self.selected_backup,Some(id.clone()),name);
                             }
                         });
                     }
+                    ui.label("Project name");
+                    ui.text_edit_singleline(&mut self.new_project_name);
+                    ui.horizontal_wrapped(|ui|{
+                        ui.radio_value(&mut self.new_project_target,
+                            projects::GameTarget::EmeraldExpansion,"Emerald");
+                        ui.radio_value(&mut self.new_project_target,
+                            projects::GameTarget::FireRed,"FireRed");
+                    });
                     ui.horizontal(|ui|{
                         if ui.add_enabled(self.selected_backup.is_some(),
-                            egui::Button::new("Import selected")).clicked() {
-                            self.restore_selected_backup();
+                            egui::Button::new("Import as new project")).clicked() {
+                            self.import_selected_as_project();
                         }
                         if ui.button("Cancel").clicked(){
                             self.project_restore_open=false;
                         }
                     });
+                    ui.collapsing("Advanced: replace active project",|ui|{
+                        ui.small("This replaces the current project's maps after saving a recovery backup.");
+                        if ui.add_enabled(self.selected_backup.is_some(),
+                            egui::Button::new("Replace active (backup first)")).clicked(){
+                            self.restore_selected_backup();
+                        }
+                    });
+                    ui.small(&self.message);
                 });
             if !open {self.project_restore_open=false;}
         }
