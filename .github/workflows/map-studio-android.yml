@@ -19,6 +19,7 @@ on:
       - feature/map-studio-v0-15-tileset-confirm-dock
       - feature/map-studio-v0-16-editor-controls-io-audit
       - feature/map-studio-v0-17-artwork-library
+      - feature/map-studio-matrix-json
     paths:
       - 'tools/map-studio/src/**'
       - 'tools/map-studio/scripts/**'
