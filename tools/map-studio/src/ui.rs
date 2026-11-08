@@ -2462,13 +2462,15 @@ impl MapStudioApp {
             let access_token=self.github_token.clone();
             let local_hash=github_sync::hash_project(&local_bytes);
             let project_id=project.project_id.clone();
+            let repository=link.repository.clone();
+            let branch=link.branch.clone();
             let (sender,receiver)=std::sync::mpsc::channel();
             let context=ctx.clone();
             std::thread::spawn(move||{
                 let outcome=github_sync::perform(
                     action,link,access_token,project,local_bytes,baseline);
                 let _=sender.send(github_sync::SyncReply{
-                    project_id,local_hash,outcome,
+                    project_id,repository,branch,local_hash,outcome,
                 });
                 context.request_repaint();
             });
@@ -2493,6 +2495,11 @@ impl MapStudioApp {
                 Ok(reply)=>{
                     self.github_receiver=None;
                     if !self.active_project.as_ref().is_some_and(|p|p.project_id==reply.project_id){
+                        return;
+                    }
+                    if self.github_repository.trim()!=reply.repository
+                        || self.github_branch.trim()!=reply.branch {
+                        self.message="GitHub reply discarded: connection settings changed during request".into();
                         return;
                     }
                     let Some(path)=self.save_path.clone() else{return;};
@@ -2697,6 +2704,10 @@ impl MapStudioApp {
     fn try_export(&mut self) {
         self.commit_edit();
         let result=(|| -> Result<String,String> {
+            let project=self.active_project.as_ref().ok_or("No active project")?;
+            if !project.target.can_export() {
+                return Err(format!("{} game-source export is not supported. The active project was not modified.",project.target.label()));
+            }
             let directory=self.output_dir()?;
             std::fs::create_dir_all(&directory).map_err(|e|e.to_string())?;
             let name=Self::filename("maps","zip");
