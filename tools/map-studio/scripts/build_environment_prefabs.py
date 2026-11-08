@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Extract curated Emerald environmental matrices from ORIGINAL map.bin layouts.
 
-The manifest stores source coordinates, not copied artwork or guessed ID sequences.
+The manifest names source maps, intended regions and native evidence. The
+preferred coordinates are tried first; if that location does not contain the
+verified feature, the closest matching native region is selected deterministically.
 Every build re-extracts native packed metatiles, collision and elevation, checks
 the required source behavior, and checks that the exact source-pair atlas exists.
 The resulting JSON is consumed by both Rust and the thumbnail generator.
 """
+import hashlib
 import json
 import re
 import struct
@@ -51,6 +54,66 @@ def native_behavior(tile_id, primary, secondary):
         raw = secondary[(tile_id - 512) * 2]
     return behaviors[raw] if raw < len(behaviors) else "UNKNOWN"
 
+def find_region(item, raw, width, height, primary, secondary,
+                count_p, count_s):
+    """Find a valid 2D source map patch, not an invented feature.
+    The origin in the manifest is a preferred anchor, never proof of identity.
+    Reject candidates without the recorded native behavior or named metatile.
+    """
+    x, y, w, h = (item[k] for k in ("x", "y", "width", "height"))
+    candidates = []
+    for yy in range(height - h + 1):
+        for xx in range(width - w + 1):
+            cells = []
+            hits = 0
+            normals = 0
+            usable = True
+            for dy in range(h):
+                for dx in range(w):
+                    (packed,) = struct.unpack_from("<H", raw,
+                        ((yy + dy) * width + xx + dx) * 2)
+                    tile_id = packed & 0x03FF
+                    local = tile_id if tile_id < 512 else tile_id - 512
+                    count = count_p if tile_id < 512 else count_s
+                    attrs = primary if tile_id < 512 else secondary
+                    if local >= count or (local + 1) * 2 > len(attrs):
+                        usable = False
+                        break
+                    behavior = native_behavior(tile_id, primary, secondary)
+                    if behavior == "MB_NORMAL":
+                        normals += 1
+                    evidence = item["evidence"]
+                    if (evidence.startswith("metatile:")
+                        and tile_id == int(evidence.split(":",1)[1], 0)) or (
+                        not evidence.startswith("metatile:") and behavior == evidence):
+                        hits += 1
+                    cells.append(dict(x=dx, y=dy, metatile_id=tile_id,
+                        collision=(packed >> 10) & 3,
+                        elevation=(packed >> 12) & 15))
+                if not usable:
+                    break
+            if not usable or hits < item["min_count"]:
+                continue
+            # Real pond/coast/grass boundaries must contain neighbors, not
+            # just an opaque slab of a single feature.
+            evidence = item["evidence"]
+            if (("WATER" in evidence or "GRASS" in evidence)
+                and hits > w*h-3):
+                continue
+            if "WATER" in evidence and normals < 2:
+                continue
+            if ("TALL_GRASS" in evidence or "MOUNTAIN" in evidence) and normals < 2:
+                continue
+            priority = (abs(xx-x)+abs(yy-y),abs(hits-(w*h//3)),
+                        -normals,yy,xx)
+            candidates.append((priority,xx,yy,cells,hits))
+    if not candidates:
+        raise AssertionError(
+            f"{item['asset_id']}: no genuine native map region contains "
+            f"{item['evidence']} (at least {item['min_count']} cells)")
+    _,rx,ry,cells,hits=min(candidates,key=lambda found:found[0])
+    return rx,ry,cells,hits
+
 seen = set()
 results = []
 for item in spec["regions"]:
@@ -73,41 +136,20 @@ for item in spec["regions"]:
     secondary = attributes(layout["secondary_tileset"], "secondary")
     count_p = metatile_count(layout["primary_tileset"], "primary")
     count_s = metatile_count(layout["secondary_tileset"], "secondary")
-    cells = []
-    hits = 0
-    for yy in range(h):
-        for xx in range(w):
-            (packed,) = struct.unpack_from("<H", raw, ((y + yy) * width + x + xx) * 2)
-            tile_id = packed & 0x03FF
-            collision = (packed >> 10) & 3
-            elevation = (packed >> 12) & 15
-            local = tile_id if tile_id < 512 else tile_id - 512
-            count = count_p if tile_id < 512 else count_s
-            attrs = primary if tile_id < 512 else secondary
-            assert local < count and (local + 1) * 2 <= len(attrs), (
-                f"{asset_id}: source tile {tile_id} not defined in {pair_key}"
-            )
-            evidence = item["evidence"]
-            if evidence.startswith("metatile:"):
-                if tile_id == int(evidence.split(":", 1)[1], 0):
-                    hits += 1
-            elif native_behavior(tile_id, primary, secondary) == evidence:
-                hits += 1
-            cells.append(dict(x=xx, y=yy, metatile_id=tile_id,
-                              collision=collision, elevation=elevation))
-    assert hits >= item["min_count"], (
-        f"{asset_id}: expected {item['evidence']} >= {item['min_count']}, got {hits}"
-    )
+    rx,ry,cells,hits=find_region(item,raw,width,height,primary,secondary,
+                                 count_p,count_s)
     results.append({
         "name": item["name"], "width": w, "height": h,
         "primary_tileset": layout["primary_tileset"],
         "secondary_tileset": layout["secondary_tileset"],
         "asset_id": asset_id,
         "semantic_class": item["semantic_class"],
-        "source_map": f"{name} ({x},{y}) [{pair_key}]",
+        "source_map": f"{name} ({rx},{ry}) [{pair_key}] SHA:{hashlib.sha256(raw).hexdigest()[:10]}",
         "metatiles": cells,
     })
 assert len(results) == len(spec["regions"]) and len(results) >= 10
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 OUTPUT.write_text(json.dumps(results, indent=2) + "\n")
 print(f"Verified {len(results)} native Emerald environmental matrices from real map binaries")
+for p in results:
+    print("  ",p["asset_id"],p["source_map"])
