@@ -1010,7 +1010,7 @@ impl MapStudioApp {
         });
         ui.horizontal(|ui|{
             if ui.selectable_label(self.artwork_view==ArtworkView::Prefabs,
-                "Buildings").clicked(){
+                "Assets").clicked(){
                 self.artwork_view=ArtworkView::Prefabs;
             }
             if ui.selectable_label(self.artwork_view==ArtworkView::Metatiles,
@@ -1226,7 +1226,7 @@ impl MapStudioApp {
                 self.selected_prefab=None;
                 self.tool_active=!self.prefab_select_mode;
                 self.message=if self.prefab_select_mode{
-                    "Tap a newly placed building to select the whole object".into()
+                    "Tap a placed asset to select its whole matrix".into()
                 }else{"Building selection disabled".into()};
             }
             if let Some(obj)=self.selected_prefab_instance.clone().and_then(|id|
@@ -1240,15 +1240,15 @@ impl MapStudioApp {
                     self.prefab_move_target=Some(instance_id.clone());
                     self.prefab_select_mode=false;
                     self.selected_prefab=None;
-                    self.message="Tap the new top-left tile of this building".into();
+                    self.message="Tap a new top-left tile for the selected asset".into();
                 }
                 if ui.small_button("Remove").clicked(){
                     self.begin_edit();
                     let result=self.world.remove_prefab_instance(&instance_id);
                     self.commit_edit();
                     self.message=match result{
-                        Ok(_)=>"Building removed; original ground restored · Undo available".into(),
-                        Err(err)=>format!("Building unchanged: {err}"),
+                        Ok(_)=>"Asset removed; underlying tiles restored · Undo available".into(),
+                        Err(err)=>format!("Asset unchanged: {err}"),
                     };
                     if self.world.prefab_instances.iter()
                         .all(|p|p.instance_id!=instance_id){
@@ -1264,7 +1264,7 @@ impl MapStudioApp {
         let current=self.current_pair();
         let entries=emerald_library::list(current,self.prefab_group);
         let ready=entries.iter().filter(|e|e.compatible).count();
-        ui.small(format!("{ready} ready · {} Emerald assets · source: {}",
+        ui.small(format!("{ready} usable · {} native Emerald assets · {}",
             entries.len(),current.label));
         if entries.is_empty(){
             ui.small("No objects in this category.");
@@ -1333,14 +1333,16 @@ impl MapStudioApp {
                             self.bucket_tool=false;
                             self.erase_tool=false;
                             self.tool_active=true;
-                            self.message=format!("{} selected · tap a clear area on the map",
-                                prefab.name);
+                            self.message=format!("{} selected · tap the map to stamp {} original Emerald tiles{}",
+                                prefab.name,prefab.metatiles.len(),
+                                if prefab.source_map.is_empty(){String::new()}
+                                else{format!(" · from {}",prefab.source_map)});
                         }else{
                             self.selected_prefab=None;
                             self.message=if let Some(source)=item.source_pair{
                                 format!("{} belongs to source {}. Create a compatible map; existing map tiles stay unchanged.",
                                     prefab.name,source.label)
-                            }else{format!("{} has no compatible native Emerald source asset",
+                            }else{format!("{} has no matching native Emerald source asset",
                                 prefab.name)};
                         }
                     }
