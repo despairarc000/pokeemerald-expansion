@@ -249,8 +249,10 @@ impl World {
         let source_space=map.space_id;
         let mut draft=self.clone();
         draft.remove_prefab_instance(instance_id)?;
+        let previous_space=draft.active_space_id;
         draft.active_space_id=source_space;
         draft.try_paint_prefab(to,prefab)?;
+        draft.active_space_id=previous_space;
         let last=draft.prefab_instances.last_mut()
             .ok_or("Moved prefab tracking was not created")?;
         last.instance_id=source.instance_id;
