@@ -2263,7 +2263,9 @@ impl MapStudioApp {
         self.preferred_pair=tiles::DEFAULT_PAIR.into();
         self.tileset_group="Towns".into();
         self.import_artwork_open=false;
-        self.artwork_view=ArtworkView::Metatiles;
+        self.artwork_view=ArtworkView::Prefabs;
+        self.prefab_group=emerald_library::Group::All;
+        self.prefab_stamped_this_touch=false;
         let mut packages=artwork::builtin_reference_packs();
         packages.extend(artwork::default_dir(self.save_path.as_deref())
             .map(|path|artwork::load_installed(&path)).unwrap_or_default());
@@ -2734,6 +2736,25 @@ impl MapStudioApp {
     }
 
     fn paint_line(&mut self, from: GridPoint, to: GridPoint) {
+        // A building is ONE placement, not a paint brush dragged across
+        // dozens of cells. Preflight every tile and write atomically.
+        if self.mode==Mode::Terrain && self.tool_active && !self.erase_tool
+            && !self.bucket_tool && self.active_pack.is_none(){
+            if let Some(index)=self.selected_prefab{
+                if self.prefab_stamped_this_touch{return;}
+                self.prefab_stamped_this_touch=true;
+                if let Some(prefab)=prefabs::emerald().get(index){
+                    let result=self.world.try_paint_prefab(from,prefab);
+                    self.message=match result{
+                        Ok(changed) if changed>0 =>format!(
+                            "Placed {} · {} cells · Undo to remove",prefab.name,changed),
+                        Ok(_)=>"Building already in place".into(),
+                        Err(err)=>format!("Cannot place {}: {err}",prefab.name),
+                    };
+                }
+                return;
+            }
+        }
         // Bresenham avoids holes when the finger moves faster than render frames.
         let (mut x, mut y) = (from.x, from.y);
         let dx = (to.x - x).abs();
@@ -2808,6 +2829,7 @@ impl MapStudioApp {
             return;
         }
         if pressed && response.is_pointer_button_down_on() {
+            self.prefab_stamped_this_touch=false;
             if let Some(screen)=pointer.filter(|pos|rect.contains(*pos)) {
                 let at=self.grid_at(rect,screen);
                 self.warp_focus=None;
@@ -3638,17 +3660,29 @@ impl eframe::App for MapStudioApp {
             self.last_window_size=window;
             root.ctx().request_repaint();
         }
+        // Android 15 edge-to-edge: inspect native WindowInsets, not an
+        // arbitrary 12pt top or 20pt bottom spacer. Subtract insets already
+        // applied by egui to avoid double-padding on other devices.
         #[cfg(target_os = "android")]
-        if window.y>580.0 {
-            egui::Panel::top("status_inset")
-                .show(root,|ui| { ui.add_space(12.0); });
+        {
+            let viewport=root.ctx().viewport_rect();
+            let content=root.ctx().content_rect();
+            let already_top=(content.top()-viewport.top()).max(0.0);
+            let already_bottom=(viewport.bottom()-content.bottom()).max(0.0);
+            let (system_top,system_bottom)=crate::android_export::safe_insets_logical(
+                root.ctx().pixels_per_point()).unwrap_or((28.0,20.0));
+            let missing_top=(system_top-already_top).max(0.0);
+            let missing_bottom=(system_bottom-already_bottom).max(0.0);
+            if missing_top>0.5{
+                egui::Panel::top("native_status_safe_area")
+                    .exact_size(missing_top).show(root,|_|{});
+            }
+            if missing_bottom>0.5{
+                egui::Panel::bottom("native_gesture_safe_area")
+                    .exact_size(missing_bottom).show(root,|_|{});
+            }
         }
         egui::Panel::top("header").show(root,|ui|self.header(ui));
-        // Android 15 edge-to-edge navigation can cover the bottom dock.
-        // Reserve a small system-gesture strip before laying out the panel.
-        #[cfg(target_os = "android")]
-        egui::Panel::bottom("system_navigation_inset")
-            .exact_size(20.0).show(root,|_|{});
         self.ensure_atlas_cache(root.ctx());
         let viewport=root.available_height().max(12.0);
         // All dimensions are computed from the *current* window, not the
