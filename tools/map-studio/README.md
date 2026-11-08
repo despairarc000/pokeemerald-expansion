@@ -1,6 +1,25 @@
 # Map Studio — Native Rust Android editor
 
 
+## Native sparse matrix editing (development branch)
+
+The original source JSON and native project files are preserved. The editor
+converts Porymap and source-derived environment assets into **real row-major
+matrices**, using `null` for transparent cells. Unlike the old coordinate-list
+output, `asset-json` emits `matrix[y][x]` rows, where every authored cell
+carries exact native metatile ID, collision, and elevation. Source pair
+compatibility remains mandatory; transparent positions never paint over the
+background. Rust placement preflights and stamps the same matrices.
+
+AI agents may fill a new section with a single `paint_matrix` JSON transaction,
+then use `preview-transaction` and `render-region` to inspect its actual
+source-atlas appearance before committing. This uses the existing World model
+and native validation, not a competing sliced/AI-only map format. See
+[Agent editing protocol](docs/AGENT_EDIT_PROTOCOL.md).
+
+**Verification scope:** unit tests and CI are required for this development
+branch; this does not claim a tested phone build or complete artwork coverage.
+
 ## v0.22 Shared AI + human editing engine (preview)
 
 **This adds a versioned structured transaction interface to the existing
