@@ -20,6 +20,16 @@ and native validation, not a competing sliced/AI-only map format. See
 **Verification scope:** unit tests and CI are required for this development
 branch; this does not claim a tested phone build or complete artwork coverage.
 
+## Automatic background classification (development branch)
+
+Map-region inspection now derives a semantic layer for each cell from its
+existing prefab ownership: background, macro environment, building, or micro
+detail. Anything without an identified object defaults to **background**.
+This is classification only: native Emerald metatile IDs, collisions,
+elevation, and empty/null cells are never rewritten to grass. Removing or
+erasing an owned prefab tile automatically exposes that position as
+background again; it does not leave an invisible occupancy record.
+
 ## v0.22 Shared AI + human editing engine (preview)
 
 **This adds a versioned structured transaction interface to the existing
