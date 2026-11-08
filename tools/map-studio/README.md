@@ -60,11 +60,14 @@ map registrations and a real GBA build remain separate steps.
 See [the review, tests and simulated workflows](docs/PROJECT_WORKSPACES.md),
 [Editor/](../../Editor/README.md) and [Compiled/](../../Compiled/README.md).
 
-**GitHub transfer is not live in this build.** The GitHub repo layout and
-CLI produce files that AI agents can edit through an authorized GitHub
-connection, but automatic authenticated pull/push between the Android
-private workspace and GitHub is a distinct unfinished transport step.
-Do not confuse local project switching with remote synchronization.
+**GitHub project sync is now opt-in.** Open **Project → GitHub sync** to
+configure an \`owner/repo\`, branch and fine-grained token for the selected
+UUID project. Publishing and pulling use the GitHub Contents API with
+optimistic revision checks, local backups and 45-second authenticated
+auto-checks (5 minutes unauthenticated). Tokens remain only in memory.
+Phone-to-GitHub network behavior still needs real-device acceptance testing;
+the app cannot clone an unknown existing UUID from GitHub on first install.
+See [GitHub Sync V1](docs/GITHUB_SYNC_V1.md).
 
 ## What's implemented
 
@@ -116,10 +119,10 @@ Run `cargo run --bin map-studio-cli -- help` for other commands.
 ## Remaining work
 
 - Verify Android startup of this new version, actual writing to Downloads, autosave after restart, pinch behavior and performance.
-- Add an Android system document picker for importing projects across unrelated app packages; local multi-project creation/switching is now implemented.
+- Add an Android system document picker for importing projects across unrelated app packages; local multi-project creation/switching and importing an accessible backup as a separate project are implemented.
 - Expand per-tileset metadata, script editing, warps and native events; prove exported maps in an actual GBA ROM/emulator.
 - Fix and verify safe small-map camera-neighbor copying before promising 5x5 map traversal.
-- Implement **GitHub Pull/Publish** with secure user authorization, then a separate live collaboration service and API. **No automatic AI-to-phone sync exists yet.**
+- Verify **GitHub Contents Pull/Publish** on a real Android device, implement a secure user-friendly GitHub OAuth pairing flow (the current V1 uses an in-memory fine-grained token), add remote project discovery/clone; full collaboration is separate and still missing.
 
 Keep this tool isolated from the Emerald ROM runtime.
 ## Phone editor UX (next build)
