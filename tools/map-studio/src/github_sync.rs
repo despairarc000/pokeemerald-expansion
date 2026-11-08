@@ -76,7 +76,17 @@ pub struct SyncReply{
 }
 struct RemoteFile{sha:String,bytes:Vec<u8>}
 fn digest(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
-pub fn hash_project(bytes:&[u8])->String{digest(bytes)}
+/// Hash normalized world data, not the indentation used by an AI editor.
+pub fn hash_project(bytes:&[u8])->String{
+    // Malformed project inputs are rejected by storage::decode before sync;
+    // hashing their raw bytes keeps this utility total for UI diagnostics.
+    match storage::decode(bytes).and_then(|world|
+        serde_json::to_vec(&storage::Project::new(world)).map_err(|e|e.to_string()))
+    {
+        Ok(canonical)=>digest(&canonical),
+        Err(_)=>digest(bytes),
+    }
+}
 fn cursor_path(project_file:&Path)->PathBuf{project_file.with_file_name("sync.json")}
 fn link_path(project_file:&Path)->PathBuf{project_file.with_file_name("github-link.json")}
 fn safe_write(path:&Path,bytes:&[u8])->Result<(),String>{
@@ -221,7 +231,7 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
     project.validate()?;
     let local_world=storage::decode(&local_bytes)?;
     local_world.check_integrity()?;
-    let hash=digest(&local_bytes);
+    let hash=hash_project(&local_bytes);
     let client=Client::builder().timeout(Duration::from_secs(25))
         .build().map_err(|e|e.to_string())?;
     let prefix=format!("Editor/projects/{}",project.project_id);
@@ -260,12 +270,12 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
                 if hash!=b.local_hash{
                     return Err("Conflict: both the phone and GitHub changed. Export a backup and resolve manually.".into());
                 }
-            }else if digest(&remote.bytes)!=hash{
+            }else if hash_project(&remote.bytes)!=hash{
                 return Err("Remote project differs from the phone's unpaired copy. Import or reconcile it before syncing.".into());
             }
             let _world=storage::decode(&remote.bytes)?;
-            let new_cursor=cursor(&project,&link,remote.sha,digest(&remote.bytes));
-            if digest(&remote.bytes)==hash{
+            let new_cursor=cursor(&project,&link,remote.sha,hash_project(&remote.bytes));
+            if hash_project(&remote.bytes)==hash{
                 return Ok(SyncOutcome::Unchanged{
                     cursor:Some(new_cursor),message:"Paired with matching GitHub project".into(),
                 });
@@ -289,7 +299,7 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
                     Ok(SyncOutcome::Published{cursor:cursor(&project,&link,sha,hash)})
                 }
                 Some(remote)=>{
-                    let remote_hash=digest(&remote.bytes);
+                    let remote_hash=hash_project(&remote.bytes);
                     if let Some(b)=&base {
                         if remote.sha!=b.remote_sha{
                             if remote_hash==hash{
@@ -321,6 +331,23 @@ pub fn perform(action:SyncAction,link:GithubLink,token:String,
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn same_world_with_different_json_format_has_same_sync_hash(){
+        let world=crate::model::World::new();
+        let compact=serde_json::to_vec(&storage::Project::new(world.clone())).unwrap();
+        let pretty=serde_json::to_vec_pretty(&storage::Project::new(world)).unwrap();
+        assert_ne!(compact,pretty);
+        assert_eq!(hash_project(&compact),hash_project(&pretty));
+        assert_eq!(hash_project(&compact).len(),64);
+    }
+    #[test]
+    fn actual_map_edit_changes_canonical_hash(){
+        let mut world=crate::model::World::new();
+        let before=serde_json::to_vec(&storage::Project::new(world.clone())).unwrap();
+        world.add_map("New Area",crate::model::GridPoint::new(0,0),8,8).unwrap();
+        let after=serde_json::to_vec_pretty(&storage::Project::new(world)).unwrap();
+        assert_ne!(hash_project(&before),hash_project(&after));
+    }
     #[test]
     fn validates_remote_addresses_without_allowing_other_hosts(){
         let good=GithubLink{
