@@ -141,6 +141,8 @@ pub struct MapStudioApp {
     github_branch:String,
     github_token:String,
     github_auto_pull:bool,
+    github_auto_publish:bool,
+    github_retry_after:Duration,
     github_last_checked:Option<Instant>,
     github_receiver:Option<std::sync::mpsc::Receiver<github_sync::SyncReply>>,
 }
@@ -301,6 +303,8 @@ impl MapStudioApp {
                 .map(|link|link.branch.clone()).unwrap_or_else(||"main".into()),
             github_token:String::new(),
             github_auto_pull:github_link.as_ref().is_some_and(|link|link.auto_pull),
+            github_auto_publish:github_link.as_ref().is_some_and(|link|link.auto_publish),
+            github_retry_after:Duration::ZERO,
             github_last_checked:None,
             github_receiver:None,
         }
@@ -2281,6 +2285,8 @@ impl MapStudioApp {
         self.github_branch=link.as_ref()
             .map(|x|x.branch.clone()).unwrap_or_else(||"main".into());
         self.github_auto_pull=link.as_ref().is_some_and(|x|x.auto_pull);
+        self.github_auto_publish=link.as_ref().is_some_and(|x|x.auto_publish);
+        self.github_retry_after=Duration::ZERO;
     }
 
     fn switch_workspace_project(&mut self,id:&str){
@@ -2351,6 +2357,7 @@ impl MapStudioApp {
             repository:self.github_repository.trim().into(),
             branch:self.github_branch.trim().into(),
             auto_pull:self.github_auto_pull,
+            auto_publish:self.github_auto_publish,
         }
     }
     fn save_github_settings(&mut self){
@@ -2419,6 +2426,13 @@ impl MapStudioApp {
             match result{
                 Ok(reply)=>{
                     self.github_receiver=None;
+                    self.github_retry_after=if reply.outcome.is_ok(){
+                        Duration::ZERO
+                    }else if self.github_retry_after.is_zero(){
+                        Duration::from_secs(30)
+                    }else{
+                        (self.github_retry_after*2).min(Duration::from_secs(300))
+                    };
                     if !self.active_project.as_ref().is_some_and(|p|p.project_id==reply.project_id){
                         return;
                     }
@@ -2477,15 +2491,44 @@ impl MapStudioApp {
                 Err(std::sync::mpsc::TryRecvError::Empty)=>{}
             }
         }
-        if self.github_auto_pull && self.github_receiver.is_none()
+        // Foreground sync is opt-in. When enabled, publish clean autosaved
+        // local edits first. GitHub's blob-SHA precondition stops competing
+        // AI changes from being overwritten. Anonymous polling remains slow
+        // to respect the unauthenticated API budget.
+        if (self.github_auto_pull || self.github_auto_publish)
+            && self.github_receiver.is_none()
             && self.active_project.is_some() && self.dirty_since.is_none()
+            && self.before_gesture.is_none()
             && !self.github_repository.trim().is_empty(){
             let interval=if self.github_token.is_empty(){
-                Duration::from_secs(300) // anonymous GitHub API rate limit
-            }else{Duration::from_secs(45)};
+                Duration::from_secs(300)
+            }else{Duration::from_secs(15)};
+            let interval=interval.max(self.github_retry_after);
             if self.github_last_checked.is_none_or(|last|last.elapsed()>=interval){
-                self.start_github_request(github_sync::SyncAction::Pull,ctx);
-            }else{ctx.request_repaint_after(Duration::from_secs(3));}
+                let pending_local=if self.github_auto_publish
+                    && !self.github_token.trim().is_empty(){
+                    match (self.save_path.as_deref(),self.active_project.as_ref()){
+                        (Some(path),Some(project))=>{
+                            match (github_sync::load_cursor(path),std::fs::read(path)){
+                                (Ok(Some(base)),Ok(bytes))
+                                    if base.project_id==project.project_id
+                                    && base.repository==self.github_repository.trim()
+                                    && base.branch==self.github_branch.trim() =>
+                                    github_sync::hash_project(&bytes)!=base.local_hash,
+                                _=>false,
+                            }
+                        }
+                        _=>false,
+                    }
+                }else{false};
+                if pending_local{
+                    self.start_github_request(github_sync::SyncAction::Publish,ctx);
+                }else if self.github_auto_pull{
+                    self.start_github_request(github_sync::SyncAction::Pull,ctx);
+                }
+            }else{
+                ctx.request_repaint_after(Duration::from_secs(3));
+            }
         }
     }
     fn github_sync_dialog(&mut self,ctx:&egui::Context){
@@ -2506,7 +2549,13 @@ impl MapStudioApp {
                 ui.label("Fine-grained GitHub token (only needed for private pull or publish)");
                 ui.add(egui::TextEdit::singleline(&mut self.github_token)
                     .password(true).hint_text("Token is never saved"));
-                ui.checkbox(&mut self.github_auto_pull,"Auto-check while editor is open");
+                ui.checkbox(&mut self.github_auto_pull,
+                    "Auto-pull while editor is open (15s with token)");
+                ui.checkbox(&mut self.github_auto_publish,
+                    "Auto-publish saved phone edits (opt-in)");
+                if self.github_auto_publish && self.github_token.trim().is_empty(){
+                    ui.small("Publishing needs a token each session; it is never saved.");
+                }
                 ui.horizontal_wrapped(|ui|{
                     if ui.button("Save link").clicked(){self.save_github_settings();}
                     if ui.add_enabled(self.github_receiver.is_none(),
