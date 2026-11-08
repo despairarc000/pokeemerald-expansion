@@ -64,7 +64,11 @@ feature phone-verified, test authenticating to a repository, publishing a
 new UUID project, editing the actual JSON through an AI, pulling the new
 revision, checking offline behavior, and provoking conflicts on a device.
 
-The app cannot discover a different preexisting UUID on GitHub and adopt it
-as a local project yet; first-time pairing works by publishing an existing
-local project. A future import/clone flow can add that without changing
-the Editor/Compiled/ directory model.
+The app can now clone an existing GitHub project **by explicit UUID**.
+From the GitHub Sync dialog, enter the repository, branch and project ID
+found in `Editor/projects/<UUID>/`, then select **Clone existing project**.
+The manifest and world are validated before a create-only local import;
+existing local UUID directories are never overwritten. This lets the
+v0.18 Emerald Rebuild Preview reconnect to a project from another Android
+package without uninstalling it. Automatic remote project discovery is
+still not implemented.
