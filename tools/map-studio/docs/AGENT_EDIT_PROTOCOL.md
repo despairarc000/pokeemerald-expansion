@@ -38,7 +38,13 @@ and tracked prefab UUID (if any). Each cell also exposes an editor-only
 is automatically `background` **without modifying its ID, collision, elevation,
 or existing artwork**. Even an empty, unpainted cell is classified as background
 but its `cell` value remains `null` (never fabricated grass). Explicit object
-ownership is distinguished by the non-null prefab UUID. Empty cells remain null. Rendering uses the
+ownership is distinguished by the non-null prefab UUID. Empty cells remain null.
+
+`inspect-region` also includes a **`matrix`** with the exact same
+`matrix[y][x]` cell shape accepted by `paint_matrix`. This supports a simple
+agent loop: inspect a region, edit matrix entries in JSON, preview the full
+transaction and PNG, then commit. The older flat `cells` collection remains
+for existing clients and per-cell source labels. Rendering uses the
 matching native atlas, with no invented tiles or borrowed source palettes.
 
 ## Transaction JSON
