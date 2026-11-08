@@ -8,37 +8,39 @@ pub const THUMB_SIZE:usize=96;
 pub const THUMB_COLS:usize=8;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum Group{All,Homes,Services,Landmarks,Nature,Other}
+pub enum Group{All,Background,Macro,Structures,Micro}
 impl Group{
-    pub const ALL:[Self;6]=[
-        Self::All,Self::Homes,Self::Services,
-        Self::Landmarks,Self::Nature,Self::Other
+    pub const ALL:[Self;5]=[
+        Self::All,Self::Background,Self::Macro,Self::Structures,Self::Micro
     ];
     pub const fn name(self)->&'static str{
         match self{
-            Self::All=>"All",Self::Homes=>"Homes",Self::Services=>"Services",
-            Self::Landmarks=>"Landmarks",Self::Nature=>"Nature",Self::Other=>"Other"
+            Self::All=>"All",
+            Self::Background=>"Background",
+            Self::Macro=>"Environment",
+            Self::Structures=>"Buildings",
+            Self::Micro=>"Details",
         }
     }
 }
-pub fn group_for(name:&str)->Group{
-    let value=name.to_ascii_lowercase();
-    if ["house","home","cottage","residence","villa"].iter().any(|s|value.contains(s)){
-        return Group::Homes;
+/// Classifies for discovery only; does not add paint or occupancy restrictions.
+pub fn group_for(prefab:&prefabs::Prefab)->Group{
+    match prefab.semantic_class.as_str(){
+        "background"=>return Group::Background,
+        "macro"=>return Group::Macro,
+        "micro"=>return Group::Micro,
+        _=>{}
     }
-    if ["mart","center","shop","store","harbor","shipyard","hotel","lab","market",
-        "school","fan club","battle tent"].iter().any(|s|value.contains(s)){
-        return Group::Services;
+    let value=prefab.name.to_ascii_lowercase();
+    if ["tree","rock","bush","flower","grass","shrub","garden"]
+        .iter().any(|s|value.contains(s)){
+        return Group::Micro;
     }
-    if ["gym","contest","museum","corp","tower","facility","frontier","safari",
-        "hideout","hall"].iter().any(|s|value.contains(s)){
-        return Group::Landmarks;
+    if ["overpass","bridge","shore","river","pond","cliff"]
+        .iter().any(|s|value.contains(s)){
+        return Group::Macro;
     }
-    if ["tree","rock","bush","pond","water","garden","flower","sand","grass",
-        "bridge"].iter().any(|s|value.contains(s)){
-        return Group::Nature;
-    }
-    Group::Other
+    Group::Structures
 }
 pub struct Entry{
     pub index:usize,
@@ -59,16 +61,17 @@ pub fn source_pair(index:usize)->Option<&'static TilePair>{
 }
 pub fn list(current:&TilePair,group:Group)->Vec<Entry>{
     let mut entries:Vec<_>=prefabs::emerald().iter().enumerate()
-        .filter(|(_,prefab)|group==Group::All || group_for(&prefab.name)==group)
+        .filter(|(_,prefab)|group==Group::All || group_for(prefab)==group)
         .map(|(index,prefab)|Entry{
             index,source_pair:source_pair(index),
             compatible:current.collection=="Emerald" && prefabs::compatible(prefab,current),
-            category:group_for(&prefab.name),
+            category:group_for(prefab),
         })
         .collect();
     // Source-ready first; all others stay in the same gallery, without a
     // second expandable list or an intermediate "Load" action.
-    entries.sort_by_key(|e|(!e.compatible,e.index));
+    entries.sort_by_key(|e|(!e.compatible,
+        e.category==Group::Structures,e.index));
     entries
 }
 
@@ -79,7 +82,7 @@ mod tests{
     fn all_emerald_prefabs_remain_discoverable(){
         let map=tiles::pair("general/lilycove").unwrap();
         let items=list(map,Group::All);
-        assert_eq!(items.len(),71);
+        assert_eq!(items.len(),85);
         assert_eq!(items.iter().filter(|x|x.compatible).count(),
             prefabs::compatible_indices(map).len());
         assert!(items.iter().take_while(|x|x.compatible).count()>0);
@@ -101,8 +104,12 @@ mod tests{
     }
     #[test]
     fn groups_are_presentation_only_and_never_change_source_tiles(){
-        assert_eq!(group_for("House Large"),Group::Homes);
-        assert_eq!(group_for("Mart"),Group::Services);
-        assert_eq!(group_for("Gym"),Group::Landmarks);
+        assert_eq!(group_for(&prefabs::emerald()[0]),Group::Structures);
+        assert_eq!(group_for(&prefabs::emerald()[71]),Group::Background);
+        assert_eq!(group_for(&prefabs::emerald()[73]),Group::Macro);
+        assert_eq!(group_for(&prefabs::emerald()[78]),Group::Micro);
+        let pair=tiles::pair("general/rustboro").unwrap();
+        assert!(list(pair,Group::Micro).iter().any(|item|item.compatible
+            && item.index>=71));
     }
 }
