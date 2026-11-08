@@ -26,7 +26,9 @@ fn at(map:&MapFrame,x:i32,y:i32)->Result<usize,String>{
 fn can_replace(cell:Option<Cell>)->bool{
     match cell{
         None=>true,
-        Some(c) if c.collision==0 && c.metatile_id==1=>true,
+        // Verified Emerald source foliage can be cleared for walkways.
+        // Other scenery, raised cliffs, water and prefab tiles stay protected.
+        Some(c) if c.collision==0 && matches!(c.metatile_id,1|0x00D|0x015)=>true,
         Some(c) if c.collision==0 && is_pavement(c.metatile_id)=>true,
         _=>false
     }
@@ -202,6 +204,16 @@ mod tests{
         assert!(draw_lilycove_walkway(&mut world,id,
             GridPoint::new(16,27),GridPoint::new(22,27)).is_err());
         assert_eq!(world,before);
+    }
+    #[test]
+    fn walkway_replaces_only_verified_walkable_grass_variants(){
+        let (mut world,id)=test_world();
+        world.paint_metatile(GridPoint::new(16,27),0x015);
+        world.paint_metatile(GridPoint::new(17,27),0x00D);
+        assert!(draw_lilycove_walkway(&mut world,id,
+            GridPoint::new(16,27),GridPoint::new(17,27)).unwrap()>0);
+        assert_eq!(world.maps[0].cell(6,7).unwrap().metatile_id,0x233);
+        assert_eq!(world.maps[0].cell(7,7).unwrap().metatile_id,0x233);
     }
     #[test]
     fn different_tileset_never_uses_lilycove_native_ids(){
