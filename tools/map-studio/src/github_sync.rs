@@ -16,6 +16,8 @@ pub struct GithubLink {
     pub branch:String,
     #[serde(default)]
     pub auto_pull:bool,
+    #[serde(default)]
+    pub auto_publish:bool,
 }
 impl GithubLink{
     pub fn validate(&self)->Result<(),String>{
@@ -429,7 +431,7 @@ mod tests{
     fn validates_remote_addresses_without_allowing_other_hosts(){
         let good=GithubLink{
             repository:"despairarc000/map-projects".into(),branch:"develop/maps".into(),
-            auto_pull:true,
+            auto_pull:true,auto_publish:false,
         };
         assert!(good.validate().is_ok());
         assert!(url_for(&good,"Editor/projects/example/project.json").unwrap()
@@ -444,7 +446,7 @@ mod tests{
     #[test]
     fn credentials_never_enter_persisted_metadata(){
         let link=GithubLink{
-            repository:"example/maps".into(),branch:"main".into(),auto_pull:false,
+            repository:"example/maps".into(),branch:"main".into(),auto_pull:false,auto_publish:false,
         };
         let data=serde_json::to_string(&link).unwrap();
         assert!(!data.contains("token"));
@@ -458,7 +460,7 @@ mod tests{
             target_commit:None,
         };
         let link=GithubLink{
-            repository:"example/map-projects".into(),branch:"main".into(),auto_pull:false,
+            repository:"example/map-projects".into(),branch:"main".into(),auto_pull:false,auto_publish:false,
         };
         let c=cursor(&project,&link,"f".repeat(40),"a".repeat(64),None);
         assert!(c.matches(&project,&link));
