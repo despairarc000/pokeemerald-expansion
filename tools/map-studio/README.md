@@ -22,6 +22,50 @@ This is a native `eframe` / `egui` / `wgpu` Android editor with source-generated
   Use a successful newer Android workflow artifact for device testing; do not
   assume a repository commit itself creates a downloadable APK.
 
+## Multi-project workspaces — newest development branch
+
+Map Studio now uses isolated local \`Editor/projects/<UUID>/\` workspaces with
+a \`manifest.json\` and the existing versioned \`project.json\`. Use
+**Project → New project** to create an independent GBA world, or
+**Project → Switch project** to select an existing one. The current world
+is saved before switching; per-project undo history, imported package
+selection and active map state are reset.
+
+The very first app launch safely **copies**, rather than deletes, a previous
+single-file \`map-studio-project.json\` when it exists in this installation's
+private data directory. If that legacy file is corrupt, project bootstrap
+fails without creating a replacement. This Projects Preview uses the **new**
+Android package \`dev.despairarc.mapstudio.projectspreview\` so previous
+preview installations are not replaced or uninstalled. Consequently it cannot
+read another Android package's private legacy autosave automatically; export a
+backup from the old app first. The old MediaStore import browser is not a full
+cross-package document picker yet, and old app storage remains private.
+
+Project IDs are UUIDs; in-world map IDs are local to each project. The
+manifest records the target game (Emerald Expansion or FireRed), its GitHub
+source repository and optional pinned source commit. FireRed projects can
+be created and edited but **their native game-source export is intentionally
+blocked** until the engine-specific exporter is implemented and verified.
+FRLG artwork present in the Emerald game fork remains usable as Emerald art;
+it does not imply FireRed ROM compatibility.
+
+\`Compiled/projects/<UUID>\` contains output-only game source generated
+by \`workspace-publish\` via the CLI: native \`map.bin\`, \`border.bin\`,
+\`map.json\`, \`scripts.inc\`, and numeric-layout source inputs. A project
+UUID is incorporated into all compiled map symbols. Output is staged and
+atomically swapped only after validation. This is **not an APK** and is not
+equivalent to a compiled/verified GBA ROM. Integration with the target game's
+map registrations and a real GBA build remain separate steps.
+
+See [the review, tests and simulated workflows](docs/PROJECT_WORKSPACES.md),
+[Editor/](../../Editor/README.md) and [Compiled/](../../Compiled/README.md).
+
+**GitHub transfer is not live in this build.** The GitHub repo layout and
+CLI produce files that AI agents can edit through an authorized GitHub
+connection, but automatic authenticated pull/push between the Android
+private workspace and GitHub is a distinct unfinished transport step.
+Do not confuse local project switching with remote synchronization.
+
 ## What's implemented
 
 - White-grid canvas, adjoining colored map frames, touch painting, pinch zoom, panning and frame creation/movement/resizing.
@@ -72,7 +116,7 @@ Run `cargo run --bin map-studio-cli -- help` for other commands.
 ## Remaining work
 
 - Verify Android startup of this new version, actual writing to Downloads, autosave after restart, pinch behavior and performance.
-- Add an Android document picker/project importer and full edit workflow for multiple saved projects.
+- Add an Android system document picker for importing projects across unrelated app packages; local multi-project creation/switching is now implemented.
 - Expand per-tileset metadata, script editing, warps and native events; prove exported maps in an actual GBA ROM/emulator.
 - Fix and verify safe small-map camera-neighbor copying before promising 5x5 map traversal.
 - Implement **GitHub Pull/Publish** with secure user authorization, then a separate live collaboration service and API. **No automatic AI-to-phone sync exists yet.**
