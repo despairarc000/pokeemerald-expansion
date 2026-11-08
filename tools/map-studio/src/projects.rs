@@ -158,6 +158,28 @@ impl Workspace {
         if let Err(err)=result {let _=fs::remove_dir_all(&dir);return Err(err);}
         Ok(manifest)
     }
+    /// Clone an existing remote project without assigning a different UUID.
+    /// It is create-only: a GitHub clone must never overwrite a local copy.
+    pub fn import_existing(&self,manifest:&ProjectManifest,world:&World)
+        ->Result<(),String>{
+        manifest.validate()?;
+        world.check_integrity()?;
+        let dir=self.project_dir(&manifest.project_id)?;
+        fs::create_dir_all(self.projects_root()).map_err(|e|e.to_string())?;
+        fs::create_dir(&dir).map_err(|e|format!(
+            "Project already exists locally or cannot be created: {e}"))?;
+        let result=(||->Result<(),String>{
+            storage::save(&self.project_path(&manifest.project_id)?,world)?;
+            let data=serde_json::to_vec_pretty(manifest).map_err(|e|e.to_string())?;
+            atomic_write(&self.manifest_path(&manifest.project_id)?,&data)
+        })();
+        if let Err(err)=result{
+            let _=fs::remove_dir_all(&dir);
+            return Err(err);
+        }
+        Ok(())
+    }
+
     pub fn activate(&self,id:&str)->Result<(),String>{
         self.load_world(id)?;
         atomic_write(&self.active_path(),format!("{id}\n").as_bytes())
@@ -213,6 +235,25 @@ mod tests{
     use super::*;
     fn root(label:&str)->PathBuf{
         std::env::temp_dir().join(format!("mapstudio-workspace-{label}-{}",Uuid::new_v4()))
+    }
+    #[test]
+    fn remote_clone_preserves_id_and_never_overwrites_local_copy(){
+        let dir=root("remote-clone");
+        let store=Workspace{root:dir.clone()};
+        let template=ProjectManifest{
+            manifest_version:MANIFEST_VERSION,
+            project_id:Uuid::new_v4().to_string(),name:"Existing GitHub world".into(),
+            target:GameTarget::EmeraldExpansion,
+            target_repository:GameTarget::EmeraldExpansion.repository().into(),
+            target_commit:None,
+        };
+        let mut world=World::new();
+        world.add_map("Town",crate::model::GridPoint::new(1,2),8,8).unwrap();
+        store.import_existing(&template,&world).unwrap();
+        assert_eq!(store.load_world(&template.project_id).unwrap(),world);
+        assert!(store.import_existing(&template,&World::new()).is_err());
+        assert_eq!(store.load_world(&template.project_id).unwrap(),world);
+        let _=fs::remove_dir_all(dir);
     }
     #[test]
     fn separate_projects_may_share_map_numbers_but_not_paths(){
